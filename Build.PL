@@ -11,6 +11,9 @@ my $build = My::SVN::Builder->new(
     requires        => {
         perl                    => '5.8.0',
     },
+    build_requires      => {
+        'ExtUtils::MakeMaker'   => '6.31',   # for INSTALL_BASE
+    },
     configure_requires  => {
         'Module::Build'         => '0.26',
     },
