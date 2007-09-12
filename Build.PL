@@ -22,3 +22,9 @@ my $build = My::SVN::Builder->new(
 );
 $build->create_build_script;
 
+print "\n\nSubversion will now be configured.\n\n";
+sleep 1;
+
+$build->_run_svn_configure;
+
+print "\n\nYou should now run ./Build.\n";
