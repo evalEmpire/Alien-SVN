@@ -14,6 +14,10 @@ provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
     version: 1.4.5.0
+no_index:
+  directory:
+    - inc
+    - src
 generated_by: Module::Build version 0.2808
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

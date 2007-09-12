@@ -18,6 +18,10 @@ my $build = My::SVN::Builder->new(
         'Module::Build'         => '0.26',
     },
 
+    no_index => {
+        directory => [qw(inc src)]
+    },
+
     create_makefile_pl => 'passthrough',
 );
 $build->create_build_script;
