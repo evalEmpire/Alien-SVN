@@ -9,10 +9,10 @@ my $build = My::SVN::Builder->new(
     license         => 'perl',
     author          => 'Michael G Schwern <mschwern@cpan.org>',
     requires        => {
+        perl                    => '5.8.0',
     },
-    build_requires  => {
+    configure_requires  => {
         'Module::Build'         => '0.26',
-        'Test::More'            => '0.40',
     },
 
     create_makefile_pl => 'passthrough',
