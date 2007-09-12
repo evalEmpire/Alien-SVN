@@ -23,12 +23,7 @@ sub ACTION_code {
     my $self = shift;
     
     $self->SUPER::ACTION_code;
-    $self->_build_svn_core;
-}
 
-sub _build_svn_core {
-    my $self = shift;
-    
     _chdir_to_svn;
     
     _run("./configure")     or do { warn "configuring SVN failed";      return 0 };
