@@ -1,3 +1,10 @@
+1.4.5.2  Fri Sep 21 04:40:01 PDT 2007
+    Bug Fixes
+    * Last minute change to the last version broke the build.
+    
+    Portability Fixes
+    * Fixed the running of configure so it works on Cygwin.
+
 1.4.5.1  Thu Sep 20 17:41:55 PDT 2007
     Now it really works!  Tried it on a clean Ubuntu machine with no
     SVN libraries installed.
