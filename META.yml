@@ -10,6 +10,7 @@ requires:
   perl: 5.8.0
 build_requires:
   ExtUtils::MakeMaker: 6.31
+  Test::More: 0.40
 provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
