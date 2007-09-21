@@ -1,0 +1,9 @@
+1.4.5.1  Thu Sep 20 17:41:55 PDT 2007
+    Now it really works!  Tried it on a clean Ubuntu machine with no
+    SVN libraries installed.
+    
+    Portability considerations remain.
+
+1.4.5.0  Wed Sep 12 03:10:01 PDT 2007
+    First release.  Turns out it doesn't really work unless libsvn is
+    already installed.
