@@ -14,6 +14,23 @@ provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
     version: 1.4.5.0
+  SVN::Base:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Base.pm
+  SVN::Client:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Client.pm
+  SVN::Core:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Core.pm
+    version: 1.4.5
+  SVN::Delta:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Delta.pm
+  SVN::Fs:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Fs.pm
+  SVN::Ra:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Ra.pm
+  SVN::Repos:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Repos.pm
+  SVN::Wc:
+    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Wc.pm
 no_index:
   directory:
     - inc

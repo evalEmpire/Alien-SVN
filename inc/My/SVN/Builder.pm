@@ -1,5 +1,7 @@
 package My::SVN::Builder;
 
+use File::Basename;
+
 use base 'Module::Build';
 
 use Cwd;
@@ -23,6 +25,26 @@ sub _chdir_to_native {
 
 sub _chdir_back {
     chdir $Orig_CWD;
+}
+
+
+sub _svn_provides {
+    my $class = shift;
+    
+    my @pms = <src/subversion-1.4.5/subversion/bindings/swig/perl/native/*.pm>;
+
+    my %provides;
+    for my $pm (@pms) {
+        my $module = 'SVN::' . basename($pm, ".pm");
+
+        $provides{$module} = { file => $pm };
+    }
+    
+    $provides{"SVN::Core"}{version} = '1.4.5';
+
+    _chdir_back;
+    
+    return \%provides;
 }
 
 

@@ -22,6 +22,10 @@ my $build = My::SVN::Builder->new(
         directory => [qw(inc src)]
     },
 
+    meta_merge => {
+        provides => My::SVN::Builder->_svn_provides(),
+    },
+
     create_makefile_pl => 'passthrough',
 );
 $build->create_build_script;
