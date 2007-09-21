@@ -106,6 +106,8 @@ sub ACTION_code {
 
     _chdir_to_svn;
 
+    _run("make")
+        or do { warn "building subversion failed"; return 0 };
     _run("make swig-pl-lib")
         or do { warn "building swig-pl-lib failed"; return 0 };
 
