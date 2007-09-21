@@ -146,6 +146,9 @@ sub ACTION_install {
     
     _chdir_to_svn;
 
+    _run("make install-lib")
+        or do { warn "installing libs failed"; return 0 };
+
     _run("make install-swig-pl-lib")
         or do { warn "installing swig-pl-lib failed"; return 0 };
 
