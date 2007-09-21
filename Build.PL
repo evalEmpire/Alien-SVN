@@ -28,15 +28,26 @@ my $build = My::SVN::Builder->new(
 );
 $build->create_build_script;
 
-print "\n\nSubversion will now be configured.\n\n";
-sleep 1;
-
-if( $build->_run_svn_configure ) {
-    print "\n\nYou should now run ./Build.\n";
+my $run_configure = 'y';
+if( -e 'src/subversion-1.4.5/config.status' ) {
+    $run_configure = $build->prompt(
+        "Looks like Subversion has already been configured.\n".
+        "Do you want to re-run configure?",
+        "n"
+    );
 }
-else {
-    print <<'END';
-Something went wrong with the Subversion configuration.
-You should correct it and re-run Build.PL.
+
+if( $run_configure =~ /^y/i ) {
+    print "\n\nSubversion will now be configured.\n\n";
+    sleep 1;
+
+    if( $build->_run_svn_configure ) {
+        print "\n\nYou should now run ./Build.\n";
+    }
+    else {
+        print <<'END';
+    Something went wrong with the Subversion configuration.
+    You should correct it and re-run Build.PL.
 END
+    }
 }
