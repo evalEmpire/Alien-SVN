@@ -2,7 +2,17 @@
     Now it really works!  Tried it on a clean Ubuntu machine with no
     SVN libraries installed.
     
-    Portability considerations remain.
+    Bug Fixes
+    * Now doing a complete SVN build to ensure everything is built properly
+    * All the SVN libraries are installed along with the Perl bindings
+    
+    Portability Fixes
+    * Now uses $Config{make} instead of a hard coded make
+    * Asks what make to use.
+
+    Installation improvements
+    * Asks if the user wants to run Subversion's configure (default yes)
+    * Checks if configure has already been run and asks if it has (default no)
 
 1.4.5.0  Wed Sep 12 03:10:01 PDT 2007
     First release.  Turns out it doesn't really work unless libsvn is
