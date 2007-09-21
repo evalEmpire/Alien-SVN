@@ -42,10 +42,11 @@ bindings for you.
 It requires a C compiler and make.
 END
 
-$build->{your_make} = $build->prompt(
+my $make = $build->prompt(
     "Which make should I use to build Subversion?",
     $Config{make}
 );
+$build->notes('your_make', $make);
 
 my $run_configure = 'y';
 if( -e 'src/subversion-1.4.5/config.status' ) {

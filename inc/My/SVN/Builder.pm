@@ -9,7 +9,7 @@ use Cwd;
 sub _run {
     my($self, $prog, @args) = @_;
     
-    $prog = $self->{your_make} if $prog eq 'make';
+    $prog = $self->notes('your_make') if $prog eq 'make';
     
     print "Running $prog @args\n";
     return system($prog, @args) == 0 ? 1 : 0;
@@ -95,7 +95,7 @@ sub _run_svn_configure {
     
     _chdir_to_svn;
     
-    $self->_run("./configure", $self->_configure_args)
+    $self->_run("sh", "configure", $self->_configure_args)
         or do { warn "configuring SVN failed";      return 0 };
     
     _chdir_back;
