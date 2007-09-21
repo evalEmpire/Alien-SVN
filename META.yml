@@ -13,7 +13,7 @@ build_requires:
 provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
-    version: 1.4.5.0
+    version: 1.4.5.1
   SVN::Base:
     file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Base.pm
   SVN::Client:

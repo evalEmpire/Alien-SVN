@@ -1,6 +1,6 @@
 package Alien::SVN;
 
-use version;  our $VERSION = qw(1.4.5.0);
+use version;  our $VERSION = qw(1.4.5.1);
 
 =head1 NAME
 
@@ -10,7 +10,7 @@ Alien::SVN - A wrapper for installing the SVN Perl bindings
 
 Alien::SVN is a wrapper to install the Perl bindings for subversion, also known as L<SVN::Core>.  If your module needs L<SVN::Core> it can depend on L<Alien::SVN> instead and then the CPAN shell can handle automatic installation.
 
-It comes with a copy of Subversion 1.4.5 which it will compile but only installs the Perl bindings.  B<Subversion itself will not be installed>.
+It comes with a copy of Subversion 1.4.5 which it will compile but only installs the Perl and Subversion libraries.  B<The subversion binaries will not be installed>.
 
 =head1 LICENSE
 
