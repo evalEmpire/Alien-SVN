@@ -9,10 +9,14 @@ use Config;
 
 my $build = My::SVN::Builder->new(
     module_name     => 'Alien::SVN',
-    license         => 'perl',
+
+    # perl for Alien::SVN, Apache for subversion and SVN::* modules.
+    license         => 'open_source',
+
     author          => 'Michael G Schwern <schwern@pobox.com>',
     requires        => {
         perl                    => '5.8.0',
+        version                 => '0.70',
     },
     build_requires      => {
         'ExtUtils::MakeMaker'   => '6.31',   # for INSTALL_BASE
@@ -29,6 +33,13 @@ my $build = My::SVN::Builder->new(
 
     meta_merge => {
         provides => My::SVN::Builder->_svn_provides(),
+        
+        resources => {
+            license     => 'http://dev.perl.org/licenses/',
+            bugtracker  =>
+                'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN',
+            repository  => 'http://svn.schwern.org/svn/CPAN/Alien-SVN',
+        },
     },
 );
 $build->create_build_script;

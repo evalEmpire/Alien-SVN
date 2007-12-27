@@ -25,7 +25,8 @@ Report early, report often.
 Alien::SVN is copyright 2007 Michael G Schwern E<lt>schwern@pobox.comE<gt> and is
 licensed under the same terms as Perl itself.  See L<http://www.perl.com/perl/misc/Artistic.html> for licensing.
 
-Subversion and SVN::Core are copyright (c) 2000-2006 CollabNet L<http://www.colabnet.net>.
+This product includes software developed by CollabNet L<http://www.Collab.Net/>.
+Subversion and SVN::Core are copyright (c) 2000-2007 CollabNet L<http://www.colabnet.net>.
 All rights reserved.  See L<http://subversion.tigris.org/license-1.html> for licensing.
 
 =cut
