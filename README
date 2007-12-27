@@ -1,0 +1,29 @@
+NAME
+    Alien::SVN - A wrapper for installing the SVN Perl bindings
+
+DESCRIPTION
+    Alien::SVN is a wrapper to install the Perl bindings for subversion,
+    also known as SVN::Core. If your module needs SVN::Core it can depend on
+    Alien::SVN instead and then the CPAN shell can handle automatic
+    installation. This is particularly useful for programs like SVK.
+
+    It comes with a copy of Subversion 1.4.6 which it will compile but only
+    installs the Perl and Subversion libraries. The subversion binaries will
+    not be installed.
+
+BUGS and FEEDBACK
+    Please send bug reports, problems and feedback to <bug-Alien-SVN> at
+    <rt.cpan.org>. Or use the web interface at <http://rt.cpan.org>.
+
+    Report early, report often.
+
+LICENSE
+    Alien::SVN is copyright 2007 Michael G Schwern <schwern@pobox.com> and
+    is licensed under the same terms as Perl itself. See
+    <http://www.perl.com/perl/misc/Artistic.html> for licensing.
+
+    This product includes software developed by CollabNet
+    <http://www.Collab.Net/>. Subversion and SVN::Core are copyright (c)
+    2000-2007 CollabNet <http://www.colabnet.net>. All rights reserved. See
+    <http://subversion.tigris.org/license-1.html> for licensing.
+

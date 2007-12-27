@@ -41,6 +41,8 @@ my $build = My::SVN::Builder->new(
             repository  => 'http://svn.schwern.org/svn/CPAN/Alien-SVN',
         },
     },
+    
+    create_readme => 1,
 );
 $build->create_build_script;
 

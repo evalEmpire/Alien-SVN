@@ -3,13 +3,12 @@ name: Alien-SVN
 version: 1.4.6.0
 author: []
 abstract: A wrapper for installing the SVN Perl bindings
-license: perl
-resources:
-  license: http://dev.perl.org/licenses/
+license: open_source
 configure_requires:
   Module::Build: 0.28
 requires:
   perl: 5.8.0
+  version: 0.70
 build_requires:
   ExtUtils::MakeMaker: 6.31
   Module::Build: 0.28
@@ -43,3 +42,7 @@ generated_by: Module::Build version 0.280801
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2
+resources:
+  bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN
+  license: http://dev.perl.org/licenses/
+  repository: http://svn.schwern.org/svn/CPAN/Alien-SVN
