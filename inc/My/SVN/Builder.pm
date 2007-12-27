@@ -80,14 +80,17 @@ sub _makemaker_args {
     return map { "$_=$mm_args{$_}" } keys %mm_args;
 }
 
-sub _configure_args {
+sub _default_configure_args {
     my $self = shift;
 
     my $props = $self->{properties};
     my $prefix = $props->{install_base} || $props->{prefix};
     
-    return() unless $prefix;
-    return "--prefix=$prefix";
+    my @args;
+    push @args, "--prefix=\Q$prefix" if $prefix;
+    push @args, "--with-perl5=\Q$^X";
+    
+    return join ' ', @args;
 }
 
 sub _run_svn_configure {
@@ -95,7 +98,7 @@ sub _run_svn_configure {
     
     _chdir_to_svn;
     
-    $self->_run("sh", "configure", $self->_configure_args)
+    $self->_run("sh", "configure", $self->notes("configure_args"))
         or do { warn "configuring SVN failed";      return 0 };
     
     _chdir_back;

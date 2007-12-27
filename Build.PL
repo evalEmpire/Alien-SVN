@@ -64,6 +64,13 @@ else {
 }
 
 if( $run_configure =~ /^y/i ) {
+    my $configure_args = $build->prompt(
+        "\n\nWould you like to pass any arguments to configure?", 
+        $build->_default_configure_args
+    );
+
+    $build->notes("configure_args", $configure_args);
+
     print "\n\nSubversion will now be configured.\n\n";
     sleep 1;
 
