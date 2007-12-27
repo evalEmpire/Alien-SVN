@@ -5,6 +5,7 @@ use File::Basename;
 use base 'Module::Build';
 
 use Cwd;
+use Config;
 
 sub _run {
     my($self, $prog, @args) = @_;
@@ -87,8 +88,13 @@ sub _default_configure_args {
     my $prefix = $props->{install_base} || $props->{prefix};
     
     my @args;
-    push @args, "--prefix=\Q$prefix" if $prefix;
-    push @args, "--with-perl5=\Q$^X";
+    if( $prefix ) {
+        push @args, "--prefix=$prefix";
+    }
+    else {
+        $self->notes("libdir", "$Config{installsitearch}/Alien/SVN");
+        push @args, "--libdir=" . $self->notes("libdir");
+    }
     
     return join ' ', @args;
 }
@@ -98,7 +104,7 @@ sub _run_svn_configure {
     
     _chdir_to_svn;
     
-    $self->_run("sh", "configure", $self->notes("configure_args"))
+    $self->_run("sh configure \Q@{[$self->notes('configure_args')]}")
         or do { warn "configuring SVN failed";      return 0 };
     
     _chdir_back;
@@ -119,7 +125,7 @@ sub ACTION_code {
     _chdir_back;
     _chdir_to_native;
 
-    $self->_run("perl", "Makefile.PL", $self->_makemaker_args)
+    $self->_run($^X, "Makefile.PL", $self->_makemaker_args)
         or do { warn "running Makefile.PL failed"; return 0 };
     $self->_run("make") or do { warn "building SV::Core failed"; return 0 };
     

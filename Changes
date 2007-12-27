@@ -1,3 +1,17 @@
+1.4.6.0
+    Features
+    * Upgraded to subversion 1.4.6.
+
+    Bug Fixes
+    * --with-perl was the wrong solution to the "not default perl" issue.
+      Fixed it correctly.
+
+    Installer Improvements
+    * Will now install into your perl architecture directory.  This avoids
+      interfering with, or interference from, other installations of libsvn.
+    * The license has been clarified.  It's now just "open source" because
+      of the mixed Perl (Alien::SVN) and Apache (Subversion) licensing.
+
 1.4.5.3  Wed Dec 26 00:04:27 PST 2007
     Bug Fixes
     * Added --with-perl to the default Subversion configuration so
@@ -7,7 +21,7 @@
     Doc Fixes
     * Add bug and feedback instructions.
 
-    Installer improvements
+    Installer Improvements
     * Users can now override the Subversion configure arguments.  This is
       handy for things like --disable-neon-version-check.
 
@@ -30,7 +44,7 @@
     * Now uses $Config{make} instead of a hard coded make
     * Asks what make to use.
 
-    Installation improvements
+    Installation Improvements
     * Asks if the user wants to run Subversion's configure (default yes)
     * Checks if configure has already been run and asks if it has (default no)
 
