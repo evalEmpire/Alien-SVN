@@ -135,6 +135,8 @@ sub ACTION_code {
 sub ACTION_test {
     my $self = shift;
     
+    $self->depends_on('code');
+    
     _chdir_to_native;
     
     my $test_status = $self->_run("make test");
