@@ -1,3 +1,16 @@
+1.4.5.3  Wed Dec 26 00:04:27 PST 2007
+    Bug Fixes
+    * Added --with-perl to the default Subversion configuration so
+      Alien::SVN should work properly if your perl is not the default
+      perl.
+
+    Doc Fixes
+    * Add bug and feedback instructions.
+
+    Installer improvements
+    * Users can now override the Subversion configure arguments.  This is
+      handy for things like --disable-neon-version-check.
+
 1.4.5.2  Fri Sep 21 04:40:01 PDT 2007
     Bug Fixes
     * Last minute change to the last version broke the build.
