@@ -58,8 +58,7 @@ if( -e 'src/subversion-1.4.5/config.status' ) {
 }
 else {
     $run_configure = $build->prompt(
-        "Run Subversion's configure now?",
-        $ENV{PERL_RELEASING} ? 'n' : 'y'
+        "Run Subversion's configure now?", 'y'
     );
 }
 
