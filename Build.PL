@@ -16,11 +16,11 @@ my $build = My::SVN::Builder->new(
     },
     build_requires      => {
         'ExtUtils::MakeMaker'   => '6.31',   # for INSTALL_BASE
+        'Module::Build'         => '0.28',
         'Test::More'            => '0.40',
     },
     configure_requires  => {
         'Module::Build'         => '0.28',
-        'Config'                => 0,
     },
 
     no_index => {
