@@ -5,6 +5,7 @@ lib/Alien/SVN.pm
 MANIFEST
 META.yml
 README
+src/neon_no_la.patch
 src/subversion/aclocal.m4
 src/subversion/autogen.sh
 src/subversion/BUGS
