@@ -85,18 +85,18 @@ sub _default_configure_args {
     my $self = shift;
 
     my $props = $self->{properties};
-    my $prefix = $props->{install_base} || $props->{prefix};
+    my $prefix = $props->{install_base} || 
+                 $props->{prefix}       ||
+                 $Config{siteprefix};
+
+    my %args = (
+        prefix => $prefix,
+        libdir => File::Spec->catdir(
+            $self->install_destination('arch'), 'Alien', 'SVN'
+        ),
+    );
     
-    my @args;
-    if( $prefix ) {
-        push @args, "--prefix=$prefix";
-    }
-    else {
-        $self->notes("libdir", "$Config{installsitearch}/Alien/SVN");
-        push @args, "--libdir=" . $self->notes("libdir");
-    }
-    
-    return join ' ', @args;
+    return join ' ', map { "--$_=$args{$_}" } sort keys %args;
 }
 
 sub _run_svn_configure {
