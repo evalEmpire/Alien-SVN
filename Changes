@@ -5,6 +5,7 @@
     Bug Fixes
     * --with-perl was the wrong solution to the "not default perl" issue.
       Fixed it correctly.
+    * Add a work around for FreeBSD's gutting of neon's libtool la file.
 
     Installer Improvements
     * Will now install into your perl architecture directory.  This avoids
