@@ -17,7 +17,7 @@ sub _run {
 
 my $Orig_CWD = cwd;
 sub _chdir_to_svn {
-    chdir 'src/subversion-1.4.5' or die $!;
+    chdir 'src/subversion' or die $!;
 }
 
 sub _chdir_to_native {
@@ -33,7 +33,7 @@ sub _chdir_back {
 sub _svn_provides {
     my $class = shift;
     
-    my @pms = <src/subversion-1.4.5/subversion/bindings/swig/perl/native/*.pm>;
+    my @pms = <src/subversion/subversion/bindings/swig/perl/native/*.pm>;
 
     my %provides;
     for my $pm (@pms) {
@@ -42,7 +42,7 @@ sub _svn_provides {
         $provides{$module} = { file => $pm };
     }
     
-    $provides{"SVN::Core"}{version} = '1.4.5';
+    $provides{"SVN::Core"}{version} = '1.4.6';
 
     _chdir_back;
     

@@ -1,42 +1,45 @@
 ---
 name: Alien-SVN
-version: 1.4.5.1
+version: 1.4.6.0
 author: []
 abstract: A wrapper for installing the SVN Perl bindings
 license: perl
 resources:
   license: http://dev.perl.org/licenses/
+configure_requires:
+  Module::Build: 0.28
 requires:
   perl: 5.8.0
 build_requires:
   ExtUtils::MakeMaker: 6.31
+  Module::Build: 0.28
   Test::More: 0.40
 provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
-    version: 1.4.5.1
+    version: 1.4.6.0
   SVN::Base:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Base.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Base.pm
   SVN::Client:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Client.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Client.pm
   SVN::Core:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Core.pm
-    version: 1.4.5
+    file: src/subversion/subversion/bindings/swig/perl/native/Core.pm
+    version: 1.4.6
   SVN::Delta:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Delta.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Delta.pm
   SVN::Fs:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Fs.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Fs.pm
   SVN::Ra:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Ra.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Ra.pm
   SVN::Repos:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Repos.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Repos.pm
   SVN::Wc:
-    file: src/subversion-1.4.5/subversion/bindings/swig/perl/native/Wc.pm
+    file: src/subversion/subversion/bindings/swig/perl/native/Wc.pm
 no_index:
   directory:
     - inc
     - src
-generated_by: Module::Build version 0.2808
+generated_by: Module::Build version 0.280801
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2

@@ -49,7 +49,7 @@ my $make = $build->prompt(
 $build->notes('your_make', $make);
 
 my $run_configure = 'y';
-if( -e 'src/subversion-1.4.5/config.status' ) {
+if( -e 'src/subversion/config.status' ) {
     $run_configure = $build->prompt(
         "Looks like Subversion has already been configured.\n".
         "Do you want to re-run configure?",
