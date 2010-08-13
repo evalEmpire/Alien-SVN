@@ -67,7 +67,7 @@ typedef enum
 
   /* Resolve the conflicted hunks by choosing the corresponding text
      from the post-conflict base copy file.
-     
+
      Note: this is a placeholder, not actually implemented in 1.5. */
   svn_cl__accept_theirs_conflict,
 
@@ -82,7 +82,8 @@ typedef enum
   svn_cl__accept_edit,
 
   /* Launch user's resolver and resolve conflict with edited file. */
-  svn_cl__accept_launch,
+  svn_cl__accept_launch
+
 } svn_cl__accept_t;
 
 /* --accept action user input words */
@@ -96,7 +97,9 @@ typedef enum
 #define SVN_CL__ACCEPT_EDIT "edit"
 #define SVN_CL__ACCEPT_LAUNCH "launch"
 
-/* Return svn_cl__accept_t value corresponding to word. */
+/* Return the svn_cl__accept_t value corresponding to WORD, using exact
+ * case-sensitive string comparison. Return svn_cl__accept_invalid if WORD
+ * is empty or is not one of the known values. */
 svn_cl__accept_t
 svn_cl__accept_from_word(const char *word);
 
@@ -140,6 +143,9 @@ typedef struct svn_cl__opt_state_t
 
   /* Flag which is only set if the '-c' option was used. */
   svn_boolean_t used_change_arg;
+
+  /* Flag which is only set if the '-r' option was used. */
+  svn_boolean_t used_revision_arg;
 
   /* Max number of log messages to get back from svn_client_log2. */
   int limit;
@@ -187,6 +193,7 @@ typedef struct svn_cl__opt_state_t
   const char *new_target;        /* diff target */
   svn_boolean_t relocate;        /* rewrite urls (svn switch) */
   const char *config_dir;        /* over-riding configuration directory */
+  apr_array_header_t *config_options; /* over-riding configuration options */
   svn_boolean_t autoprops;       /* enable automatic properties */
   svn_boolean_t no_autoprops;    /* disable automatic properties */
   const char *native_eol;        /* override system standard eol marker */
@@ -197,7 +204,8 @@ typedef struct svn_cl__opt_state_t
                                     THIS IS TEMPORARY (LAST OF CHANGELISTS) */
   svn_boolean_t keep_changelists;/* don't remove changelists after commit */
   svn_boolean_t keep_local;      /* delete path only from repository */
-  svn_boolean_t all_revprops;    /* retrieve all props */
+  svn_boolean_t all_revprops;    /* retrieve all revprops */
+  svn_boolean_t no_revprops;     /* retrieve no revprops */
   apr_hash_t *revprop_table;     /* table of revision properties to get/set */
   svn_boolean_t parents;         /* create intermediate directories */
   svn_boolean_t use_merge_history; /* use/display extra merge information */
@@ -205,6 +213,8 @@ typedef struct svn_cl__opt_state_t
   svn_cl__show_revs_t show_revs; /* mergeinfo flavor */
   svn_depth_t set_depth;         /* new sticky ambient depth value */
   svn_boolean_t reintegrate;     /* use "reintegrate" merge-source heuristic */
+  svn_boolean_t trust_server_cert; /* trust server SSL certs that would
+                                      otherwise be rejected as "untrusted" */
 } svn_cl__opt_state_t;
 
 
@@ -288,7 +298,8 @@ svn_cl__try(svn_error_t *err,
 
 
 /* Our cancellation callback. */
-svn_error_t *svn_cl__check_cancel(void *baton);
+svn_error_t *
+svn_cl__check_cancel(void *baton);
 
 
 
@@ -302,8 +313,9 @@ typedef struct {
   svn_cmdline_prompt_baton_t *pb;
 } svn_cl__conflict_baton_t;
 
-/* Return address of newly allocated and initialized
-   svn_cl__conflict_baton_t. */
+/* Create and return a conflict baton, allocated from POOL, with the values
+   ACCEPT_WHICH, CONFIG, EDITOR_CMD and PB placed in the same-named fields
+   of the baton, and its 'external_failed' field initialised to FALSE. */
 svn_cl__conflict_baton_t *
 svn_cl__conflict_baton_make(svn_cl__accept_t accept_which,
                             apr_hash_t *config,
@@ -313,7 +325,8 @@ svn_cl__conflict_baton_make(svn_cl__accept_t accept_which,
 
 /* A conflict-resolution callback which prompts the user to choose
    one of the 3 fulltexts, edit the merged file on the spot, or just
-   skip the conflict (to be resolved later). */
+   skip the conflict (to be resolved later).
+   Implements @c svn_wc_conflict_resolver_func_t. */
 svn_error_t *
 svn_cl__conflict_handler(svn_wc_conflict_result_t **result,
                          const svn_wc_conflict_description_t *desc,
@@ -325,11 +338,11 @@ svn_cl__conflict_handler(svn_wc_conflict_result_t **result,
 /*** Command-line output functions -- printing to the user. ***/
 
 /* Print out commit information found in COMMIT_INFO to the console.
- * POOL is used for temporay allocations. 
- * COMMIT_INFO should not be NULL. 
+ * POOL is used for temporay allocations.
+ * COMMIT_INFO should not be NULL.
  */
-svn_error_t *svn_cl__print_commit_info(svn_commit_info_t *commit_info,
-                                       apr_pool_t *pool);
+svn_error_t *
+svn_cl__print_commit_info(svn_commit_info_t *commit_info, apr_pool_t *pool);
 
 
 /* Convert the date in DATA to a human-readable UTF-8-encoded string
@@ -355,20 +368,21 @@ svn_cl__time_cstring_to_human_cstring(const char **human_cstring,
 
    When DETAILED is set, and REPOS_LOCKS is set, treat missing repository locks
    as broken WC locks. */
-svn_error_t *svn_cl__print_status(const char *path,
-                                  svn_wc_status2_t *status,
-                                  svn_boolean_t detailed,
-                                  svn_boolean_t show_last_committed,
-                                  svn_boolean_t skip_unrecognized,
-                                  svn_boolean_t repos_locks,
-                                  apr_pool_t *pool);
+svn_error_t *
+svn_cl__print_status(const char *path,
+                     const svn_wc_status2_t *status,
+                     svn_boolean_t detailed,
+                     svn_boolean_t show_last_committed,
+                     svn_boolean_t skip_unrecognized,
+                     svn_boolean_t repos_locks,
+                     apr_pool_t *pool);
 
 
 /* Print STATUS for PATH in XML to stdout.  Use POOL for temporary
    allocations. */
 svn_error_t *
 svn_cl__print_status_xml(const char *path,
-                         svn_wc_status2_t *status,
+                         const svn_wc_status2_t *status,
                          apr_pool_t *pool);
 
 
@@ -383,16 +397,6 @@ svn_error_t *
 svn_cl__print_prop_hash(apr_hash_t *prop_hash,
                         svn_boolean_t names_only,
                         apr_pool_t *pool);
-
-/* Print a single xml property name-value pair to OUTSTR.  If OUTSTR is NULL,
-   allocate it first from pool, otherwise append the xml to it.  Escape
-   property values which are not xml safe, as determined by
-   svn_xml_is_xml_safe(). */
-void
-svn_cl__print_xml_prop(svn_stringbuf_t **outstr,
-                       const char* propname,
-                       svn_string_t *propval,
-                       apr_pool_t *pool);
 
 /* Same as svn_cl__print_prop_hash(), only output xml to OUTSTR.  If OUTSTR is
    NULL, allocate it first from pool, otherwise append the xml to it. */
@@ -480,17 +484,24 @@ svn_cl__edit_file_externally(const char *path,
 
 /* Search for a merge tool command in environment variables,
    and use it to perform the merge of the four given files.
+   WC_PATH is the path of the file that is in conflict, relative
+   to the merge target.
    Use POOL for all allocations.
 
    CONFIG is a hash of svn_config_t * items keyed on a configuration
    category (SVN_CONFIG_CATEGORY_CONFIG et al), and may be NULL.
+
+   Upon success, set *REMAINS_IN_CONFLICT to indicate whether the
+   merge result contains conflict markers.
    */
 svn_error_t *
 svn_cl__merge_file_externally(const char *base_path,
                               const char *their_path,
                               const char *my_path,
                               const char *merged_path,
+                              const char *wc_path,
                               apr_hash_t *config,
+                              svn_boolean_t *remains_in_conflict,
                               apr_pool_t *pool);
 
 
@@ -539,58 +550,88 @@ void svn_cl__get_notifier(svn_wc_notify_func2_t *notify_func_p,
 
    NOTE: While the baton itself will be allocated from POOL, the items
    add to it are added by reference, not duped into POOL!*/
-svn_error_t *svn_cl__make_log_msg_baton(void **baton,
-                                        svn_cl__opt_state_t *opt_state,
-                                        const char *base_dir,
-                                        apr_hash_t *config,
-                                        apr_pool_t *pool);
+svn_error_t *
+svn_cl__make_log_msg_baton(void **baton,
+                           svn_cl__opt_state_t *opt_state,
+                           const char *base_dir,
+                           apr_hash_t *config,
+                           apr_pool_t *pool);
 
 /* A function of type svn_client_get_commit_log3_t. */
-svn_error_t *svn_cl__get_log_message(const char **log_msg,
-                                     const char **tmp_file,
-                                     const apr_array_header_t *commit_items,
-                                     void *baton,
-                                     apr_pool_t *pool);
+svn_error_t *
+svn_cl__get_log_message(const char **log_msg,
+                        const char **tmp_file,
+                        const apr_array_header_t *commit_items,
+                        void *baton,
+                        apr_pool_t *pool);
 
 /* Handle the cleanup of a log message, using the data in the
    LOG_MSG_BATON, in the face of COMMIT_ERR.  This may mean removing a
    temporary file left by an external editor, or it may be a complete
    no-op.  COMMIT_ERR may be NULL to indicate to indicate that the
-   function should act as though no commit error occurred.
+   function should act as though no commit error occurred. Use POOL
+   for temporary allocations.
 
    All error returns from this function are guaranteed to at least
    include COMMIT_ERR, and perhaps additional errors attached to the
    end of COMMIT_ERR's chain.  */
-svn_error_t *svn_cl__cleanup_log_msg(void *log_msg_baton,
-                                     svn_error_t *commit_err);
+svn_error_t *
+svn_cl__cleanup_log_msg(void *log_msg_baton,
+                        svn_error_t *commit_err,
+                        apr_pool_t *pool);
 
 /* Add a message about --force if appropriate */
-svn_error_t *svn_cl__may_need_force(svn_error_t *err);
+svn_error_t *
+svn_cl__may_need_force(svn_error_t *err);
 
 /* Write the STRING to the stdio STREAM, returning an error if it fails. */
-svn_error_t *svn_cl__error_checked_fputs(const char *string,
-                                         FILE* stream);
+svn_error_t *
+svn_cl__error_checked_fputs(const char *string, FILE* stream);
 
 /* If STRING is non-null, append it, wrapped in a simple XML CDATA element
    named TAGNAME, to the string SB.  Use POOL for temporary allocations. */
-void svn_cl__xml_tagged_cdata(svn_stringbuf_t **sb,
-                              apr_pool_t *pool,
-                              const char *tagname,
-                              const char *string);
+void
+svn_cl__xml_tagged_cdata(svn_stringbuf_t **sb,
+                         apr_pool_t *pool,
+                         const char *tagname,
+                         const char *string);
 
 /* Print the XML prolog and document root element start-tag to stdout, using
    TAGNAME as the root element name.  Use pool for temporary allocations. */
-svn_error_t *svn_cl__xml_print_header(const char *tagname,
-                                      apr_pool_t *pool);
+svn_error_t *
+svn_cl__xml_print_header(const char *tagname, apr_pool_t *pool);
 
 /* Print the XML document root element end-tag to stdout, using TAGNAME as the
    root element name.  Use pool for temporary allocations. */
-svn_error_t *svn_cl__xml_print_footer(const char *tagname,
-                                      apr_pool_t *pool);
+svn_error_t *
+svn_cl__xml_print_footer(const char *tagname, apr_pool_t *pool);
 
-/* Return a (non-localised) string representation of KIND, being "dir" or
-   "file" or, in any other case, the empty string. */
-const char *svn_cl__node_kind_str(svn_node_kind_t kind);
+
+/* For use in XML output, return a non-localised string representation
+ * of KIND, being "none" or "dir" or "file" or, in any other case,
+ * the empty string. */
+const char *
+svn_cl__node_kind_str_xml(svn_node_kind_t kind);
+
+/* Return a (possibly localised) string representation of KIND, being "none" or
+   "dir" or "file" or, in any other case, the empty string. */
+const char *
+svn_cl__node_kind_str_human_readable(svn_node_kind_t kind);
+
+
+/** Provides an XML name for a given OPERATION.
+ * Note: POOL is currently not used.
+ */
+const char *
+svn_cl__operation_str_xml(svn_wc_operation_t operation, apr_pool_t *pool);
+
+/** Return a possibly localized human readable string for
+ * a given OPERATION.
+ * Note: POOL is currently not used.
+ */
+const char *
+svn_cl__operation_str_human_readable(svn_wc_operation_t operation,
+                                     apr_pool_t *pool);
 
 
 /* If PROPNAME is one of the svn: properties with a boolean value, and
@@ -599,25 +640,43 @@ const char *svn_cl__node_kind_str(svn_node_kind_t kind);
  * setting the property to this value might not do what they expect.
  * Perform temporary allocations in POOL.
  */
-void svn_cl__check_boolean_prop_val(const char *propname,
-                                    const char *propval,
-                                    apr_pool_t *pool);
+void
+svn_cl__check_boolean_prop_val(const char *propname,
+                               const char *propval,
+                               apr_pool_t *pool);
 
 /* De-streamifying wrapper around svn_client_get_changelists(), which
    is called for each target in TARGETS to populate *PATHS (a list of
    paths assigned to one of the CHANGELISTS. */
-svn_error_t *svn_cl__changelist_paths(apr_array_header_t **paths,
-                                      const apr_array_header_t *changelists,
-                                      const apr_array_header_t *targets,
-                                      svn_depth_t depth,
-                                      svn_client_ctx_t *ctx,
-                                      apr_pool_t *pool);
+svn_error_t *
+svn_cl__changelist_paths(apr_array_header_t **paths,
+                         const apr_array_header_t *changelists,
+                         const apr_array_header_t *targets,
+                         svn_depth_t depth,
+                         svn_client_ctx_t *ctx,
+                         apr_pool_t *pool);
 
 svn_error_t *
 svn_cl__args_to_target_array_print_reserved(apr_array_header_t **targets_p,
                                             apr_getopt_t *os,
                                             apr_array_header_t *known_targets,
+                                            svn_client_ctx_t *ctx,
                                             apr_pool_t *pool);
+
+/* Return a string allocated in POOL that is a copy of STR but with each
+ * line prefixed with INDENT. A line is all characters up to the first
+ * CR-LF, LF-CR, CR or LF, or the end of STR if sooner. */
+const char *
+svn_cl__indent_string(const char *str,
+                      const char *indent,
+                      apr_pool_t *pool);
+
+
+/* Return a string showing NODE's kind, URL and revision, to the extent that
+ * that information is available in NODE. */
+const char *
+svn_cl__node_description(const svn_wc_conflict_version_t *node,
+                         apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

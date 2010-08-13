@@ -94,7 +94,8 @@
 %apply apr_hash_t **HASH_SVN_STRING {
   apr_hash_t **props,
   apr_hash_t **original_props,
-  apr_hash_t **table_p
+  apr_hash_t **table_p,
+  apr_hash_t **revprops
 };
 %apply apr_hash_t **HASH_SVN_STRING_MAYBENULL {
   /* svn_config_read_auth_data() */
@@ -350,6 +351,13 @@
 %typemap(in) apr_hash_t *path_revs
 {
   $1 = svn_swig_py_path_revs_hash_from_dict($input, _global_pool);
+}
+#endif
+
+#ifdef SWIGPERL
+%typemap(in) apr_hash_t *path_revs
+{
+  $1 = svn_swig_pl_objs_to_hash_of_revnum_t($input, _global_pool);
 }
 #endif
 
@@ -659,6 +667,16 @@
 /* -----------------------------------------------------------------------
    Input of apr_array_header_t * <svn_opt_revision_range_t *>
 */
+#ifdef SWIGPYTHON
+%typemap(in) apr_array_header_t *REVISION_RANGE_LIST {
+  $1 = (apr_array_header_t *) svn_swig_py_struct_ptr_list_to_array($input,
+    $descriptor(svn_opt_revision_range_t *), _global_pool);
+  if (PyErr_Occurred()) {
+    SWIG_fail;
+  }
+}
+#endif
+
 #ifdef SWIGRUBY
 %typemap(in) apr_array_header_t *REVISION_RANGE_LIST {
   $1 = svn_swig_rb_array_to_apr_array_revision_range($input, _global_pool);

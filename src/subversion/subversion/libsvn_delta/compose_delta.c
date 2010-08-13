@@ -574,8 +574,10 @@ build_range_list(apr_size_t offset, apr_size_t limit, range_index_t *ndx)
       else
         {
           /* TODO: (Potential optimization) Investigate if it would
-             make sense to forbid range_from_target lengths shorter
-             than, say, VD_KEY_SIZE (see vdelta.c) */
+             make sense to forbid short range_from_target lengths
+             (this comment originally said "shorter than, say,
+             VD_KEY_SIZE (see vdelta.c)", but Subversion no longer
+             uses vdelta). */
 
           if (offset >= node->limit)
             node = node->next;
@@ -600,8 +602,8 @@ build_range_list(apr_size_t offset, apr_size_t limit, range_index_t *ndx)
         }
     }
 
-  assert(!"A range's offset isn't smaller than its limit? Impossible!");
-  return range_list;
+  /* A range's offset isn't smaller than its limit? Impossible! */
+  SVN_ERR_MALFUNCTION_NO_RETURN();
 }
 
 

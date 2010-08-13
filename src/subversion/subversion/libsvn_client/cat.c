@@ -22,7 +22,6 @@
 
 /*** Includes. ***/
 
-#include <assert.h>
 #include "svn_client.h"
 #include "svn_string.h"
 #include "svn_error.h"
@@ -41,31 +40,27 @@
 
 /* Helper function to handle copying a potentially translated version of
    local file PATH to OUTPUT.  REVISION must be one of the following: BASE,
-   COMMITTED, WORKING, or UNSPECIFIED.  If the revision is UNSPECIFIED, it
-   will default to BASE.  Uses POOL for temporary allocations. */
+   COMMITTED, WORKING.  Uses POOL for temporary allocations. */
 static svn_error_t *
 cat_local_file(const char *path,
                svn_stream_t *output,
                svn_wc_adm_access_t *adm_access,
                const svn_opt_revision_t *revision,
+               svn_cancel_func_t cancel_func,
+               void *cancel_baton,
                apr_pool_t *pool)
 {
   const svn_wc_entry_t *entry;
   apr_hash_t *kw = NULL;
   svn_subst_eol_style_t style;
   apr_hash_t *props;
-  const char *base;
   svn_string_t *eol_style, *keywords, *special;
   const char *eol = NULL;
   svn_boolean_t local_mod = FALSE;
   apr_time_t tm;
-  apr_file_t *input_file;
   svn_stream_t *input;
 
-  assert(revision->kind == svn_opt_revision_working ||
-         revision->kind == svn_opt_revision_base ||
-         revision->kind == svn_opt_revision_committed ||
-         revision->kind == svn_opt_revision_unspecified);
+  SVN_ERR_ASSERT(SVN_CLIENT__REVKIND_IS_LOCAL_TO_WC(revision->kind));
 
   SVN_ERR(svn_wc__entry_versioned(&entry, path, adm_access, FALSE, pool));
 
@@ -76,14 +71,15 @@ cat_local_file(const char *path,
 
   if (revision->kind != svn_opt_revision_working)
     {
-      SVN_ERR(svn_wc_get_pristine_copy_path(path, &base, pool));
+      SVN_ERR(svn_wc_get_pristine_contents(&input, path, pool, pool));
       SVN_ERR(svn_wc_get_prop_diffs(NULL, &props, path, adm_access, pool));
     }
   else
     {
       svn_wc_status2_t *status;
 
-      base = path;
+      SVN_ERR(svn_stream_open_readonly(&input, path, pool, pool));
+
       SVN_ERR(svn_wc_prop_list(&props, path, adm_access, pool));
       SVN_ERR(svn_wc_status2(&status, path, adm_access, pool));
       if (status->text_status != svn_wc_status_normal)
@@ -137,19 +133,16 @@ cat_local_file(const char *path,
                entry->url, tm, author, pool));
     }
 
-  SVN_ERR(svn_io_file_open(&input_file, base,
-                           APR_READ, APR_OS_DEFAULT, pool));
-  input = svn_stream_from_aprfile2(input_file, FALSE, pool);
+  /* Our API contract says that OUTPUT will not be closed. The two paths
+     below close it, so disown the stream to protect it. The input will
+     be closed, which is good (since we opened it). */
+  output = svn_stream_disown(output, pool);
 
-  if ( eol || kw )
-    SVN_ERR(svn_subst_translate_stream3(input, output, eol, FALSE, kw,
-                                        TRUE, pool));
-  else
-    SVN_ERR(svn_stream_copy(input, output, pool));
+  /* Wrap the output stream if translation is needed. */
+  if (eol != NULL || kw != NULL)
+    output = svn_subst_stream_translated(output, eol, FALSE, kw, TRUE, pool);
 
-  SVN_ERR(svn_stream_close(input));
-
-  return SVN_NO_ERROR;
+  return svn_stream_copy3(input, output, cancel_func, cancel_baton, pool);
 }
 
 svn_error_t *
@@ -169,15 +162,23 @@ svn_client_cat2(svn_stream_t *out,
   const char *url;
   svn_stream_t *output = out;
 
+  /* ### Inconsistent default revision logic in this command. */
+  if (peg_revision->kind == svn_opt_revision_unspecified)
+    {
+      peg_revision = svn_cl__rev_default_to_head_or_working(peg_revision,
+                                                            path_or_url);
+      revision = svn_cl__rev_default_to_head_or_base(revision, path_or_url);
+    }
+  else
+    {
+      peg_revision = svn_cl__rev_default_to_head_or_working(peg_revision,
+                                                            path_or_url);
+      revision = svn_cl__rev_default_to_peg(revision, peg_revision);
+    }
+
   if (! svn_path_is_url(path_or_url)
-      && (peg_revision->kind == svn_opt_revision_base
-          || peg_revision->kind == svn_opt_revision_working
-          || peg_revision->kind == svn_opt_revision_committed
-          || peg_revision->kind == svn_opt_revision_unspecified)
-      && (revision->kind == svn_opt_revision_base
-          || revision->kind == svn_opt_revision_working
-          || revision->kind == svn_opt_revision_committed
-          || revision->kind == svn_opt_revision_unspecified))
+      && SVN_CLIENT__REVKIND_IS_LOCAL_TO_WC(peg_revision->kind)
+      && SVN_CLIENT__REVKIND_IS_LOCAL_TO_WC(revision->kind))
     {
       svn_wc_adm_access_t *adm_access;
 
@@ -186,11 +187,10 @@ svn_client_cat2(svn_stream_t *out,
                                0, ctx->cancel_func, ctx->cancel_baton,
                                pool));
 
-      SVN_ERR(cat_local_file(path_or_url, out, adm_access, revision, pool));
+      SVN_ERR(cat_local_file(path_or_url, out, adm_access, revision,
+                             ctx->cancel_func, ctx->cancel_baton, pool));
 
-      SVN_ERR(svn_wc_adm_close(adm_access));
-
-      return SVN_NO_ERROR;
+      return svn_wc_adm_close2(adm_access, pool);
     }
 
   /* Get an RA plugin for this filesystem object. */
@@ -265,15 +265,4 @@ svn_client_cat2(svn_stream_t *out,
     SVN_ERR(svn_stream_close(output));
 
   return SVN_NO_ERROR;
-}
-
-svn_error_t *
-svn_client_cat(svn_stream_t *out,
-               const char *path_or_url,
-               const svn_opt_revision_t *revision,
-               svn_client_ctx_t *ctx,
-               apr_pool_t *pool)
-{
-  return svn_client_cat2(out, path_or_url, revision, revision,
-                         ctx, pool);
 }

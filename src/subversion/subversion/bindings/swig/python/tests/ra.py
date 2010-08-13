@@ -1,7 +1,13 @@
 import unittest, os, setup_path
 
 from svn import core, repos, fs, delta, client, ra
-from StringIO import StringIO
+from sys import version_info # For Python version check
+if version_info[0] >= 3:
+  # Python >=3.0
+  from io import StringIO
+else:
+  # Python <3.0
+  from StringIO import StringIO
 
 from trac.versioncontrol.tests.svn_fs import SubversionRepositoryTestSetup, \
   REPOS_PATH, REPOS_URL
@@ -56,14 +62,14 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
 
   def test_get_dir2(self):
     (dirents,_,props) = ra.get_dir2(self.ra_ctx, '', 1, core.SVN_DIRENT_KIND)
-    self.assert_(dirents.has_key('trunk'))
-    self.assert_(dirents.has_key('branches'))
-    self.assert_(dirents.has_key('tags'))
+    self.assert_('trunk' in dirents)
+    self.assert_('branches' in dirents)
+    self.assert_('tags' in dirents)
     self.assertEqual(dirents['trunk'].kind, core.svn_node_dir)
     self.assertEqual(dirents['branches'].kind, core.svn_node_dir)
     self.assertEqual(dirents['tags'].kind, core.svn_node_dir)
-    self.assert_(props.has_key(core.SVN_PROP_ENTRY_UUID))
-    self.assert_(props.has_key(core.SVN_PROP_ENTRY_LAST_AUTHOR))
+    self.assert_(core.SVN_PROP_ENTRY_UUID in props)
+    self.assert_(core.SVN_PROP_ENTRY_LAST_AUTHOR in props)
 
     (dirents,_,_) = ra.get_dir2(self.ra_ctx, 'trunk', 1, core.SVN_DIRENT_KIND)
 
@@ -71,7 +77,7 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
 
     (dirents,_,_) = ra.get_dir2(self.ra_ctx, 'trunk', 10, core.SVN_DIRENT_KIND)
 
-    self.assert_(dirents.has_key('README2.txt'))
+    self.assert_('README2.txt' in dirents)
     self.assertEqual(dirents['README2.txt'].kind,core.svn_node_file)
 
   def test_commit3(self):
@@ -161,7 +167,7 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
         if file_baton is not None:
           editor.close_file(file_baton, None, pool)
         return dir_baton
-      delta.path_driver(editor, edit_baton, -1, all_paths.keys(), driver_cb)
+      delta.path_driver(editor, edit_baton, -1, list(all_paths.keys()), driver_cb)
       editor.close_edit(edit_baton)
     except:
       try:
@@ -185,7 +191,7 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
       self.assertEqual(author, info.author)
       self.assertEqual(date, info.date)
       self.assertEqual(message, revprops['svn:log'])
-      for (path, change) in changed_paths.iteritems():
+      for (path, change) in changed_paths.items():
         path = path.lstrip('/')
         self.assert_(path in all_paths)
         if path in to_delete:
@@ -230,12 +236,12 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
         reporter.finish_report(reporter_baton)
     finally:
         ra.reparent(self.ra_ctx, sess_url)
-      
+
     self.assertEqual("A test.\n", editor.textdeltas[0].new_data)
     self.assertEqual(1, len(editor.textdeltas))
 
   def test_get_locations(self):
-    locations = ra.get_locations(self.ra_ctx, "trunk/README.txt", 2, range(1,5))
+    locations = ra.get_locations(self.ra_ctx, "trunk/README.txt", 2, list(range(1,5)))
     self.assertEqual(locations, {
         2: '/trunk/README.txt',
         3: '/trunk/README.txt',
@@ -287,7 +293,7 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
       called[0] = True
       self.assertEqual(log_entry.revision, rev)
       if discover_changed_paths:
-        self.assertEqual(log_entry.changed_paths.keys(), ['/bla3'])
+        self.assertEqual(list(log_entry.changed_paths.keys()), ['/bla3'])
         changed_path = log_entry.changed_paths['/bla3']
         self.assert_(changed_path.action in ['A', 'D', 'R', 'M'])
         self.assertEqual(changed_path.copyfrom_path, None)
@@ -299,8 +305,7 @@ class SubversionRepositoryAccessTestCase(unittest.TestCase):
       elif len(log_revprops) == 0:
         self.assert_(log_entry.revprops == None or len(log_entry.revprops) == 0)
       else:
-        revprop_names = log_entry.revprops.keys()
-        revprop_names.sort()
+        revprop_names = sorted(log_entry.revprops.keys())
         log_revprops.sort()
         self.assertEqual(revprop_names, log_revprops)
         for i in log_revprops:

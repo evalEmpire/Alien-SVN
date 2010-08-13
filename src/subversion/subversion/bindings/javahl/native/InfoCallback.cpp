@@ -19,8 +19,8 @@
  * @brief Implementation of the class InfoCallback
  */
 
-#include "SVNClient.h"
 #include "InfoCallback.h"
+#include "CreateJ.h"
 #include "EnumMapper.h"
 #include "JNIUtil.h"
 #include "svn_time.h"
@@ -118,7 +118,8 @@ InfoCallback::createJavaInfo2(const char *path, const svn_info_t *info,
                              "ZILjava/lang/String;JJJ"
                              "Ljava/lang/String;Ljava/lang/String;"
                              "Ljava/lang/String;Ljava/lang/String;"
-                             "Ljava/lang/String;Ljava/lang/String;JJ)V");
+                             "Ljava/lang/String;Ljava/lang/String;JJI"
+                             "L"JAVA_PACKAGE"/ConflictDescriptor;)V");
       if (mid == 0 || JNIUtil::isJavaExceptionThrown())
         return NULL;
     }
@@ -144,7 +145,7 @@ InfoCallback::createJavaInfo2(const char *path, const svn_info_t *info,
   if (JNIUtil::isJavaExceptionThrown())
     return NULL;
 
-  jobject jlock = SVNClient::createJavaLock(info->lock);
+  jobject jlock = CreateJ::Lock(info->lock);
   if (JNIUtil::isJavaExceptionThrown())
     return NULL;
 
@@ -176,6 +177,10 @@ InfoCallback::createJavaInfo2(const char *path, const svn_info_t *info,
   if (JNIUtil::isJavaExceptionThrown())
     return NULL;
 
+  jobject jdesc = CreateJ::ConflictDescriptor(info->tree_conflict);
+  if (JNIUtil::isJavaExceptionThrown())
+    return NULL;
+
   jlong jworkingSize = info->working_size == SVN_INFO_SIZE_UNKNOWN
     ? -1 : (jlong) info->working_size;
   jlong jreposSize = info->size == SVN_INFO_SIZE_UNKNOWN
@@ -194,7 +199,8 @@ InfoCallback::createJavaInfo2(const char *path, const svn_info_t *info,
                                   (jlong) info->prop_time, jchecksum,
                                   jconflictOld, jconflictNew, jconflictWrk,
                                   jprejfile, jchangelist,
-                                  jworkingSize, jreposSize);
+                                  jworkingSize, jreposSize,
+                                  EnumMapper::mapDepth(info->depth), jdesc);
   if (JNIUtil::isJavaExceptionThrown())
     return NULL;
 
@@ -247,6 +253,10 @@ InfoCallback::createJavaInfo2(const char *path, const svn_info_t *info,
     return NULL;
 
   env->DeleteLocalRef(jchangelist);
+  if (JNIUtil::isJavaExceptionThrown())
+    return NULL;
+
+  env->DeleteLocalRef(jdesc);
   if (JNIUtil::isJavaExceptionThrown())
     return NULL;
 

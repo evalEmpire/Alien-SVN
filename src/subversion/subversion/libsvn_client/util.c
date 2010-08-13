@@ -16,7 +16,6 @@
  * ====================================================================
  */
 
-#include <assert.h>
 #include <apr_pools.h>
 #include <apr_strings.h>
 
@@ -56,11 +55,17 @@ string_hash_dup(apr_hash_t *hash, apr_pool_t *pool)
   return new_hash;
 }
 
+svn_client_commit_item3_t *
+svn_client_commit_item3_create(apr_pool_t *pool)
+{
+  return apr_pcalloc(pool, sizeof(svn_client_commit_item3_t));
+}
+
 svn_error_t *
 svn_client_commit_item_create(const svn_client_commit_item3_t **item,
                               apr_pool_t *pool)
 {
-  *item = apr_pcalloc(pool, sizeof(svn_client_commit_item3_t));
+  *item = svn_client_commit_item3_create(pool);
   return SVN_NO_ERROR;
 }
 
@@ -176,7 +181,7 @@ svn_client__path_relative_to_root(const char **rel_path,
   svn_error_t *err = SVN_NO_ERROR;
   svn_boolean_t need_wc_cleanup = FALSE;
 
-  assert(repos_root != NULL || ra_session != NULL);
+  SVN_ERR_ASSERT(repos_root != NULL || ra_session != NULL);
 
   /* If we have a WC path... */
   if (! svn_path_is_url(path_or_url))
@@ -219,14 +224,14 @@ svn_client__path_relative_to_root(const char **rel_path,
           goto cleanup;
         }
       rel_url = svn_path_uri_decode(rel_url, pool);
-      *rel_path = include_leading_slash 
+      *rel_path = include_leading_slash
                     ? apr_pstrcat(pool, "/", rel_url, NULL) : rel_url;
     }
 
  cleanup:
   if (need_wc_cleanup)
     {
-      svn_error_t *err2 = svn_wc_adm_close(adm_access);
+      svn_error_t *err2 = svn_wc_adm_close2(adm_access, pool);
       if (! err)
         err = err2;
       else
@@ -293,10 +298,10 @@ svn_client__get_repos_root(const char **repos_root,
  cleanup:
   if (sesspool)
     svn_pool_destroy(sesspool);
-    
+
   if (need_wc_cleanup)
     {
-      svn_error_t *err2 = svn_wc_adm_close(adm_access);
+      svn_error_t *err2 = svn_wc_adm_close2(adm_access, pool);
       if (! err)
         err = err2;
       else
@@ -313,4 +318,38 @@ svn_client__default_walker_error_handler(const char *path,
                                          apr_pool_t *pool)
 {
   return err;
+}
+
+
+const svn_opt_revision_t *
+svn_cl__rev_default_to_head_or_base(const svn_opt_revision_t *revision,
+                                    const char *path_or_url)
+{
+  static svn_opt_revision_t head_rev = { svn_opt_revision_head, { 0 } };
+  static svn_opt_revision_t base_rev = { svn_opt_revision_base, { 0 } };
+
+  if (revision->kind == svn_opt_revision_unspecified)
+    return svn_path_is_url(path_or_url) ? &head_rev : &base_rev;
+  return revision;
+}
+
+const svn_opt_revision_t *
+svn_cl__rev_default_to_head_or_working(const svn_opt_revision_t *revision,
+                                       const char *path_or_url)
+{
+  static svn_opt_revision_t head_rev = { svn_opt_revision_head, { 0 } };
+  static svn_opt_revision_t work_rev = { svn_opt_revision_working, { 0 } };
+
+  if (revision->kind == svn_opt_revision_unspecified)
+    return svn_path_is_url(path_or_url) ? &head_rev : &work_rev;
+  return revision;
+}
+
+const svn_opt_revision_t *
+svn_cl__rev_default_to_peg(const svn_opt_revision_t *revision,
+                           const svn_opt_revision_t *peg_revision)
+{
+  if (revision->kind == svn_opt_revision_unspecified)
+    return peg_revision;
+  return revision;
 }

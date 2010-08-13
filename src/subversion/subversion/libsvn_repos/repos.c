@@ -15,13 +15,12 @@
  * ====================================================================
  */
 
-#include <assert.h>
-
 #include <apr_pools.h>
 #include <apr_file_io.h>
 
 #include "svn_pools.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_utf.h"
 #include "svn_time.h"
@@ -253,9 +252,7 @@ create_locks(svn_repos_t *repos, apr_pool_t *pool)
             _("Creating lock dir"));
 
   SVN_ERR(create_db_lock(repos, pool));
-  SVN_ERR(create_db_logs_lock(repos, pool));
-
-  return SVN_NO_ERROR;
+  return create_db_logs_lock(repos, pool);
 }
 
 
@@ -270,8 +267,8 @@ create_locks(svn_repos_t *repos, apr_pool_t *pool)
 #define PREWRITTEN_HOOKS_TEXT                                                 \
   "# For more examples and pre-written hooks, see those in"                NL \
   "# the Subversion repository at"                                         NL \
-  "# http://svn.collab.net/repos/svn/trunk/tools/hook-scripts/ and"        NL \
-  "# http://svn.collab.net/repos/svn/trunk/contrib/hook-scripts/"          NL
+  "# http://svn.apache.org/repos/asf/subversion/trunk/tools/hook-scripts/ and"        NL \
+  "# http://svn.apache.org/repos/asf/subversion/trunk/contrib/hook-scripts/"          NL
 
 
 static svn_error_t *
@@ -380,6 +377,17 @@ PREWRITTEN_HOOKS_TEXT
 "#"                                                                          NL
 "#   [1] REPOS-PATH   (the path to this repository)"                         NL
 "#   [2] TXN-NAME     (the name of the txn about to be committed)"           NL
+"#"                                                                          NL
+"#   [STDIN] LOCK-TOKENS ** the lock tokens are passed via STDIN."           NL
+"#"                                                                          NL
+"#   If STDIN contains the line \"LOCK-TOKENS:\\n\" (the \"\\n\" denotes a"  NL
+"#   single newline), the lines following it are the lock tokens for"        NL
+"#   this commit.  The end of the list is marked by a line containing"       NL
+"#   only a newline character."                                              NL
+"#"                                                                          NL
+"#   Each lock token line consists of a URI-escaped path, followed"          NL
+"#   by the separator character '|', followed by the lock token string,"     NL
+"#   followed by a newline."                                                 NL
 "#"                                                                          NL
 "# The default working directory for the invocation is undefined, so"        NL
 "# the program should set one explicitly if it cares."                       NL
@@ -537,6 +545,13 @@ PREWRITTEN_HOOKS_TEXT
 "#   [1] REPOS-PATH   (the path to this repository)"                         NL
 "#   [2] PATH         (the path in the repository about to be locked)"       NL
 "#   [3] USER         (the user creating the lock)"                          NL
+"#   [4] COMMENT      (the comment of the lock)"                             NL
+"#   [5] STEAL-LOCK   (1 if the user is trying to steal the lock, else 0)"   NL
+"#"                                                                          NL
+"# If the hook program outputs anything on stdout, the output string will"   NL
+"# be used as the lock token for this lock operation.  If you choose to use" NL
+"# this feature, you must guarantee the tokens generated are unique across"  NL
+"# the repository each time."                                                NL
 "#"                                                                          NL
 "# The default working directory for the invocation is undefined, so"        NL
 "# the program should set one explicitly if it cares."                       NL
@@ -618,6 +633,8 @@ PREWRITTEN_HOOKS_TEXT
 "#   [1] REPOS-PATH   (the path to this repository)"                         NL
 "#   [2] PATH         (the path in the repository about to be unlocked)"     NL
 "#   [3] USER         (the user destroying the lock)"                        NL
+"#   [4] TOKEN        (the lock token to be destroyed)"                      NL
+"#   [5] BREAK-UNLOCK (1 if the user is breaking the lock, else 0)"          NL
 "#"                                                                          NL
 "# The default working directory for the invocation is undefined, so"        NL
 "# the program should set one explicitly if it cares."                       NL
@@ -726,8 +743,7 @@ PREWRITTEN_HOOKS_TEXT
 "REPOS=\"$1\""                                                               NL
 "REV=\"$2\""                                                                 NL
                                                                              NL
-"commit-email.pl \"$REPOS\" \"$REV\" commit-watchers@example.org"            NL
-"log-commit.py --repository \"$REPOS\" --revision \"$REV\""                  NL;
+"mailer.py commit \"$REPOS\" \"$REV\" /path/to/mailer.conf"                  NL;
 
 #undef SCRIPT_NAME
 
@@ -912,8 +928,8 @@ PREWRITTEN_HOOKS_TEXT
 "PROPNAME=\"$4\""                                                            NL
 "ACTION=\"$5\""                                                              NL
 ""                                                                           NL
-"commit-email.pl --revprop-change \"$REPOS\" \"$REV\" \"$USER\" \"$PROPNAME\" "
-"watchers@example.org"                                                       NL;
+"mailer.py propchange2 \"$REPOS\" \"$REV\" \"$USER\" \"$PROPNAME\" "
+"\"$ACTION\" /path/to/mailer.conf"                                           NL;
 
 #undef SCRIPT_NAME
 
@@ -1133,10 +1149,8 @@ create_repos_structure(svn_repos_t *repos,
     SVN_ERR(svn_io_file_write_full(f, readme_footer, strlen(readme_footer),
                                    &written, pool));
 
-    SVN_ERR(svn_io_file_close(f, pool));
+    return svn_io_file_close(f, pool);
   }
-
-  return SVN_NO_ERROR;
 }
 
 
@@ -1372,9 +1386,7 @@ svn_repos_open(svn_repos_t **repos_p,
   /* Fetch a repository object initialized with a shared read/write
      lock on the database. */
 
-  SVN_ERR(get_repos(repos_p, path, FALSE, FALSE, TRUE, pool));
-
-  return SVN_NO_ERROR;
+  return get_repos(repos_p, path, FALSE, FALSE, TRUE, pool);
 }
 
 
@@ -1389,7 +1401,7 @@ svn_repos_upgrade(const char *path,
   const char *format_path;
   int format;
   apr_pool_t *subpool = svn_pool_create(pool);
-  
+
   /* Fetch a repository object; for the Berkeley DB backend, it is
      initialized with an EXCLUSIVE lock on the database.  This will at
      least prevent others from trying to read or write to it while we
@@ -1407,12 +1419,12 @@ svn_repos_upgrade(const char *path,
   format_path = svn_path_join(repos->path, SVN_REPOS__FORMAT, subpool);
   SVN_ERR(svn_io_read_version_file(&format, format_path, subpool));
   SVN_ERR(svn_io_write_version_file(format_path, format, subpool));
-  
+
   /* Try to upgrade the filesystem. */
   SVN_ERR(svn_fs_upgrade(repos->db_path, subpool));
 
   /* Now overwrite our format file with the latest version. */
-  SVN_ERR(svn_io_write_version_file(format_path, SVN_REPOS__FORMAT_NUMBER, 
+  SVN_ERR(svn_io_write_version_file(format_path, SVN_REPOS__FORMAT_NUMBER,
                                     subpool));
 
   /* Close shop and free the subpool, to release the exclusive lock. */
@@ -1432,9 +1444,7 @@ svn_repos_delete(const char *path,
   SVN_ERR(svn_fs_delete_fs(db_path, pool));
 
   /* ...then blow away everything else.  */
-  SVN_ERR(svn_io_remove_dir2(path, FALSE, NULL, NULL, pool));
-
-  return SVN_NO_ERROR;
+  return svn_io_remove_dir2(path, FALSE, NULL, NULL, pool);
 }
 
 
@@ -1468,7 +1478,7 @@ svn_repos_has_capability(svn_repos_t *repos,
       svn_mergeinfo_catalog_t ignored;
       apr_array_header_t *paths = apr_array_make(pool, 1,
                                                  sizeof(char *));
-      
+
       SVN_ERR(svn_fs_revision_root(&root, repos->fs, 0, pool));
       APR_ARRAY_PUSH(paths, const char *) = "";
       err = svn_fs_get_mergeinfo(&ignored, root, paths, FALSE, FALSE, pool);
@@ -1580,27 +1590,6 @@ svn_repos_recover3(const char *path,
   return SVN_NO_ERROR;
 }
 
-
-svn_error_t *
-svn_repos_recover2(const char *path,
-                   svn_boolean_t nonblocking,
-                   svn_error_t *(*start_callback)(void *baton),
-                   void *start_callback_baton,
-                   apr_pool_t *pool)
-{
-  return svn_repos_recover3(path, nonblocking,
-                            start_callback, start_callback_baton,
-                            NULL, NULL,
-                            pool);
-}
-
-svn_error_t *
-svn_repos_recover(const char *path,
-                  apr_pool_t *pool)
-{
-  return svn_repos_recover2(path, FALSE, NULL, NULL, pool);
-}
-
 svn_error_t *svn_repos_db_logfiles(apr_array_header_t **logfiles,
                                    const char *path,
                                    svn_boolean_t only_unused,
@@ -1682,16 +1671,11 @@ static svn_error_t *hotcopy_structure(void *baton,
   target = svn_path_join(ctx->dest, sub_path, pool);
 
   if (finfo->filetype == APR_DIR)
-    {
-      SVN_ERR(create_repos_dir(target, pool));
-    }
+    return create_repos_dir(target, pool);
   else if (finfo->filetype == APR_REG)
-    {
-
-      SVN_ERR(svn_io_copy_file(path, target, TRUE, pool));
-    }
-
-  return SVN_NO_ERROR;
+    return svn_io_copy_file(path, target, TRUE, pool);
+  else
+    return SVN_NO_ERROR;
 }
 
 
@@ -1708,9 +1692,7 @@ lock_db_logs_file(svn_repos_t *repos,
      repositories created before hotcopy functionality.  */
   svn_error_clear(create_db_logs_lock(repos, pool));
 
-  SVN_ERR(svn_io_file_lock2(lock_file, exclusive, FALSE, pool));
-
-  return SVN_NO_ERROR;
+  return svn_io_file_lock2(lock_file, exclusive, FALSE, pool);
 }
 
 
@@ -1769,11 +1751,9 @@ svn_repos_hotcopy(const char *src_path,
                          clean_logs, pool));
 
   /* Destination repository is ready.  Stamp it with a format number. */
-  SVN_ERR(svn_io_write_version_file
+  return svn_io_write_version_file
           (svn_path_join(dst_repos->path, SVN_REPOS__FORMAT, pool),
-           dst_repos->format, pool));
-
-  return SVN_NO_ERROR;
+           dst_repos->format, pool);
 }
 
 /* Return the library version number. */

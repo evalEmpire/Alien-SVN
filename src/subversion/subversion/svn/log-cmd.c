@@ -2,7 +2,7 @@
  * log-cmd.c -- Display log messages
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -15,12 +15,6 @@
  * history and logs, available at http://subversion.tigris.org/.
  * ====================================================================
  */
-
-/* ==================================================================== */
-
-
-
-/*** Includes. ***/
 
 #define APR_WANT_STRFUNC
 #define APR_WANT_STDIO
@@ -35,6 +29,8 @@
 #include "svn_xml.h"
 #include "svn_time.h"
 #include "svn_cmdline.h"
+#include "svn_props.h"
+
 #include "cl.h"
 
 #include "svn_private_config.h"
@@ -192,20 +188,19 @@ log_entry_receiver(void *baton,
     {
       lines = svn_cstring_count_newlines(message) + 1;
       SVN_ERR(svn_cmdline_printf(pool,
-                                 (lines != 1)
-                                 ? " | %d lines"
-                                 : " | %d line", lines));
+                                 Q_(" | %d line", " | %d lines", lines),
+                                 lines));
     }
 
   SVN_ERR(svn_cmdline_printf(pool, "\n"));
 
-  if (log_entry->changed_paths)
+  if (log_entry->changed_paths2)
     {
       apr_array_header_t *sorted_paths;
       int i;
 
       /* Get an array of sorted hash keys. */
-      sorted_paths = svn_sort__hash(log_entry->changed_paths,
+      sorted_paths = svn_sort__hash(log_entry->changed_paths2,
                                     svn_sort_compare_items_as_paths, pool);
 
       SVN_ERR(svn_cmdline_printf(pool,
@@ -215,8 +210,8 @@ log_entry_receiver(void *baton,
           svn_sort__item_t *item = &(APR_ARRAY_IDX(sorted_paths, i,
                                                    svn_sort__item_t));
           const char *path = item->key;
-          svn_log_changed_path_t *log_item
-            = apr_hash_get(log_entry->changed_paths, item->key, item->klen);
+          svn_log_changed_path2_t *log_item
+            = apr_hash_get(log_entry->changed_paths2, item->key, item->klen);
           const char *copy_data = "";
 
           if (log_item->copyfrom_path
@@ -295,7 +290,7 @@ log_entry_receiver(void *baton,
  *   errors with helpful hints about the -m and -F options.
  *
  * * subversion/libsvn_client/commit.c
- *   (svn_client_commit): Actually capture and propogate &quot;no external
+ *   (svn_client_commit): Actually capture and propagate &quot;no external
  *   editor&quot; errors.</msg>
  * </logentry>
  * </log>
@@ -355,7 +350,7 @@ log_entry_receiver_xml(void *baton,
   /* <date>xxx</date> */
   svn_cl__xml_tagged_cdata(&sb, pool, "date", date);
 
-  if (log_entry->changed_paths)
+  if (log_entry->changed_paths2)
     {
       apr_hash_index_t *hi;
       char *path;
@@ -364,13 +359,13 @@ log_entry_receiver_xml(void *baton,
       svn_xml_make_open_tag(&sb, pool, svn_xml_normal, "paths",
                             NULL);
 
-      for (hi = apr_hash_first(pool, log_entry->changed_paths);
+      for (hi = apr_hash_first(pool, log_entry->changed_paths2);
            hi != NULL;
            hi = apr_hash_next(hi))
         {
           void *val;
           char action[2];
-          svn_log_changed_path_t *log_item;
+          svn_log_changed_path2_t *log_item;
 
           apr_hash_this(hi, (void *) &path, NULL, &val);
           log_item = val;
@@ -381,21 +376,20 @@ log_entry_receiver_xml(void *baton,
               && SVN_IS_VALID_REVNUM(log_item->copyfrom_rev))
             {
               /* <path action="X" copyfrom-path="xxx" copyfrom-rev="xxx"> */
-              svn_stringbuf_t *escpath = svn_stringbuf_create("", pool);
-              svn_xml_escape_attr_cstring(&escpath,
-                                          log_item->copyfrom_path, pool);
               revstr = apr_psprintf(pool, "%ld",
                                     log_item->copyfrom_rev);
               svn_xml_make_open_tag(&sb, pool, svn_xml_protect_pcdata, "path",
                                     "action", action,
-                                    "copyfrom-path", escpath->data,
-                                    "copyfrom-rev", revstr, NULL);
+                                    "copyfrom-path", log_item->copyfrom_path,
+                                    "copyfrom-rev", revstr,
+                                    "kind", svn_cl__node_kind_str_xml(log_item->node_kind), NULL);
             }
           else
             {
               /* <path action="X"> */
               svn_xml_make_open_tag(&sb, pool, svn_xml_protect_pcdata, "path",
-                                    "action", action, NULL);
+                                    "action", action,
+                                    "kind", svn_cl__node_kind_str_xml(log_item->node_kind), NULL);
             }
           /* xxx</path> */
           svn_xml_escape_cdata_cstring(&sb, path, pool);
@@ -427,9 +421,7 @@ log_entry_receiver_xml(void *baton,
   else
     svn_xml_make_close_tag(&sb, pool, "logentry");
 
-  SVN_ERR(svn_cl__error_checked_fputs(sb->data, stdout));
-
-  return SVN_NO_ERROR;
+  return svn_cl__error_checked_fputs(sb->data, stdout);
 }
 
 
@@ -455,6 +447,10 @@ svn_cl__log(apr_getopt_t *os,
         return svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
                                 _("'with-all-revprops' option only valid in"
                                   " XML mode"));
+      if (opt_state->no_revprops)
+        return svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+                                _("'with-no-revprops' option only valid in"
+                                  " XML mode"));
       if (opt_state->revprop_table != NULL)
         return svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
                                 _("'with-revprop' option only valid in"
@@ -462,8 +458,8 @@ svn_cl__log(apr_getopt_t *os,
     }
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   /* Add "." if user passed 0 arguments */
   svn_opt_push_implicit_dot_target(targets, pool);
@@ -473,52 +469,27 @@ svn_cl__log(apr_getopt_t *os,
   /* Determine if they really want a two-revision range. */
   if (opt_state->used_change_arg)
     {
-      if (opt_state->start_revision.value.number < 
-          opt_state->end_revision.value.number)
-        opt_state->start_revision = opt_state->end_revision;
-      else
-        opt_state->end_revision = opt_state->start_revision;
+      if (opt_state->used_revision_arg && opt_state->revision_ranges->nelts > 1)
+        {
+          return svn_error_create
+            (SVN_ERR_CLIENT_BAD_REVISION, NULL,
+             _("-c and -r are mutually exclusive"));
+        }
+      for (i = 0; i < opt_state->revision_ranges->nelts; i++)
+        {
+          svn_opt_revision_range_t *range;
+          range = APR_ARRAY_IDX(opt_state->revision_ranges, i,
+                                svn_opt_revision_range_t *);
+          if (range->start.value.number < range->end.value.number)
+            range->start = range->end;
+          else
+            range->end = range->start;
+        }
     }
 
   /* Strip peg revision if targets contains an URI. */
   SVN_ERR(svn_opt_parse_path(&peg_revision, &true_path, target, pool));
   APR_ARRAY_IDX(targets, 0, const char *) = true_path;
-
-  if ((opt_state->start_revision.kind != svn_opt_revision_unspecified)
-      && (opt_state->end_revision.kind == svn_opt_revision_unspecified))
-    {
-      /* If the user specified exactly one revision, then start rev is
-         set but end is not.  We show the log message for just that
-         revision by making end equal to start.
-
-         Note that if the user requested a single dated revision, then
-         this will cause the same date to be resolved twice.  The
-         extra code complexity to get around this slight inefficiency
-         doesn't seem worth it, however.  */
-
-      opt_state->end_revision = opt_state->start_revision;
-    }
-  else if (opt_state->start_revision.kind == svn_opt_revision_unspecified)
-    {
-      /* Default to any specified peg revision.  Otherwise, if the
-         first target is an URL, then we default to HEAD:0.  Lastly,
-         the default is BASE:0 since WC@HEAD may not exist. */
-      if (peg_revision.kind == svn_opt_revision_unspecified)
-        {
-          if (svn_path_is_url(target))
-            opt_state->start_revision.kind = svn_opt_revision_head;
-          else
-            opt_state->start_revision.kind = svn_opt_revision_base;
-        }
-      else
-        opt_state->start_revision = peg_revision;
-
-      if (opt_state->end_revision.kind == svn_opt_revision_unspecified)
-        {
-          opt_state->end_revision.kind = svn_opt_revision_number;
-          opt_state->end_revision.value.number = 0;
-        }
-    }
 
   if (svn_path_is_url(target))
     {
@@ -553,6 +524,10 @@ svn_cl__log(apr_getopt_t *os,
 
       if (opt_state->all_revprops)
         revprops = NULL;
+      else if(opt_state->no_revprops)
+        {
+          revprops = apr_array_make(pool, 0, sizeof(char *));
+        }
       else if (opt_state->revprop_table != NULL)
         {
           apr_hash_index_t *hi;
@@ -581,10 +556,9 @@ svn_cl__log(apr_getopt_t *os,
           if (!opt_state->quiet)
             APR_ARRAY_PUSH(revprops, const char *) = SVN_PROP_REVISION_LOG;
         }
-      SVN_ERR(svn_client_log4(targets,
+      SVN_ERR(svn_client_log5(targets,
                               &peg_revision,
-                              &(opt_state->start_revision),
-                              &(opt_state->end_revision),
+                              opt_state->revision_ranges,
                               opt_state->limit,
                               opt_state->verbose,
                               opt_state->stop_on_copy,
@@ -605,10 +579,9 @@ svn_cl__log(apr_getopt_t *os,
       APR_ARRAY_PUSH(revprops, const char *) = SVN_PROP_REVISION_DATE;
       if (!opt_state->quiet)
         APR_ARRAY_PUSH(revprops, const char *) = SVN_PROP_REVISION_LOG;
-      SVN_ERR(svn_client_log4(targets,
+      SVN_ERR(svn_client_log5(targets,
                               &peg_revision,
-                              &(opt_state->start_revision),
-                              &(opt_state->end_revision),
+                              opt_state->revision_ranges,
                               opt_state->limit,
                               opt_state->verbose,
                               opt_state->stop_on_copy,

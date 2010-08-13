@@ -81,13 +81,17 @@ store_locks_callback(void *baton,
 
   if (lb->adm_access)
     {
+      const char *base_path = svn_wc_adm_access_path(lb->adm_access);
       char *path = apr_hash_get(lb->urls_to_paths, rel_url,
                                 APR_HASH_KEY_STRING);
-      abs_path = svn_path_join(svn_wc_adm_access_path(lb->adm_access),
-                               path, lb->pool);
+      abs_path = svn_path_join(base_path, path, lb->pool);
 
       SVN_ERR(svn_wc_adm_probe_retrieve(&adm_access, lb->adm_access,
                                         abs_path, lb->pool));
+
+      /* Notify a valid working copy path */
+      notify->path = abs_path;
+      notify->path_prefix = base_path;
 
       if (do_lock)
         {
@@ -116,6 +120,8 @@ store_locks_callback(void *baton,
             notify->lock_state = svn_wc_notify_lock_state_unchanged;
         }
     }
+  else
+    notify->url = rel_url; /* Notify that path is actually a url  */
 
   if (lb->ctx->notify_func2)
     lb->ctx->notify_func2(lb->ctx->notify_baton2, notify, pool);
@@ -428,7 +434,7 @@ svn_client_lock(const apr_array_header_t *targets,
 
   /* Unlock the wc. */
   if (adm_access)
-    SVN_ERR(svn_wc_adm_close(adm_access));
+    return svn_wc_adm_close2(adm_access, pool);
 
   return SVN_NO_ERROR;
 }
@@ -476,7 +482,7 @@ svn_client_unlock(const apr_array_header_t *targets,
 
   /* Unlock the wc. */
   if (adm_access)
-    SVN_ERR(svn_wc_adm_close(adm_access));
+    return svn_wc_adm_close2(adm_access, pool);
 
   return SVN_NO_ERROR;
 }

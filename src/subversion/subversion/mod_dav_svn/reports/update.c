@@ -2,7 +2,7 @@
  * update.c: handle the update-report request and response
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -19,7 +19,6 @@
 #include <apr_pools.h>
 #include <apr_strings.h>
 #include <apr_xml.h>
-#include <apr_md5.h>
 
 #include <http_request.h>
 #include <http_log.h>
@@ -28,12 +27,12 @@
 #include "svn_pools.h"
 #include "svn_repos.h"
 #include "svn_fs.h"
-#include "svn_md5.h"
 #include "svn_base64.h"
 #include "svn_xml.h"
 #include "svn_path.h"
 #include "svn_dav.h"
 #include "svn_props.h"
+#include "private/svn_log.h"
 
 #include "../dav_svn.h"
 
@@ -298,11 +297,12 @@ add_helper(svn_boolean_t is_dir,
       if (! is_dir)
         {
           /* files have checksums */
-          unsigned char digest[APR_MD5_DIGESTSIZE];
-          SVN_ERR(svn_fs_file_md5_checksum
-                  (digest, uc->rev_root, real_path, pool));
+          svn_checksum_t *checksum;
+          SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_md5,
+                                       uc->rev_root, real_path, TRUE,
+                                       pool));
 
-          child->text_checksum = svn_md5_digest_to_cstring(digest, pool);
+          child->text_checksum = svn_checksum_to_cstring(checksum, pool);
         }
       else
         {
@@ -657,7 +657,7 @@ upd_change_xxx_prop(void *baton,
             }
           else
             {
-              qval = svn_base64_encode_string(value, pool)->data;
+              qval = svn_base64_encode_string2(value, TRUE, pool)->data;
               SVN_ERR(dav_svn__send_xml(b->uc->bb, b->uc->output,
                                         "<S:set-prop name=\"%s\" "
                                         "encoding=\"base64\">" DEBUG_CR,
@@ -765,7 +765,7 @@ upd_open_file(const char *path,
 
 
 /* We have our own window handler and baton as a simple wrapper around
-   the real handler (which converts vdelta windows to base64-encoded
+   the real handler (which converts txdelta windows to base64-encoded
    svndiff data).  The wrapper is responsible for sending the opening
    and closing XML tags around the svndiff data. */
 struct window_handler_baton
@@ -914,11 +914,11 @@ dav_svn__update_report(const dav_resource *resource,
   svn_revnum_t revnum = SVN_INVALID_REVNUM;
   svn_revnum_t from_revnum = SVN_INVALID_REVNUM;
   int ns;
+  /* entry_counter and entry_is_empty are for operational logging. */
   int entry_counter = 0;
   svn_boolean_t entry_is_empty = FALSE;
   svn_error_t *serr;
   dav_error *derr = NULL;
-  apr_status_t apr_err;
   const char *src_path = NULL;
   const char *dst_path = NULL;
   const dav_svn_repos *repos = resource->info->repos;
@@ -1335,32 +1335,12 @@ dav_svn__update_report(const dav_resource *resource,
       {
         /* diff/merge don't ask for inline text-deltas. */
         if (uc.send_all)
-          action = apr_psprintf(resource->pool,
-                                "switch %s %s@%ld%s",
-                                svn_path_uri_encode(spath, resource->pool),
-                                svn_path_uri_encode(dst_path, resource->pool),
-                                revnum, log_depth);
+          action = svn_log__switch(spath, dst_path, revnum,
+                                   requested_depth, resource->pool);
         else
-          {
-            if (strcmp(spath, dst_path) == 0)
-              action = apr_psprintf(resource->pool,
-                                    "diff %s r%ld:%ld%s%s",
-                                    svn_path_uri_encode(spath, resource->pool),
-                                    from_revnum,
-                                    revnum, log_depth,
-                                    ignore_ancestry ? " ignore-ancestry" : "");
-            else
-              action = apr_psprintf(resource->pool,
-                                    "diff %s@%ld %s@%ld%s%s",
-                                    svn_path_uri_encode(spath, resource->pool),
-                                    from_revnum,
-                                    svn_path_uri_encode(dst_path,
-                                                        resource->pool),
-                                    revnum, log_depth,
-                                    (ignore_ancestry
-                                     ? " ignore-ancestry"
-                                     : ""));
-          }
+          action = svn_log__diff(spath, from_revnum, dst_path, revnum,
+                                 requested_depth, ignore_ancestry,
+                                 resource->pool);
       }
 
     /* Otherwise, it must be checkout, export, update, or status -u. */
@@ -1369,29 +1349,17 @@ dav_svn__update_report(const dav_resource *resource,
         /* svn_client_checkout() creates a single root directory, then
            reports it (and it alone) to the server as being empty. */
         if (entry_counter == 1 && entry_is_empty)
-          action = apr_psprintf(resource->pool,
-                                "checkout-or-export %s r%ld%s",
-                                svn_path_uri_encode(spath, resource->pool),
-                                revnum,
-                                log_depth);
+          action = svn_log__checkout(spath, revnum, requested_depth,
+                                     resource->pool);
         else
           {
             if (text_deltas)
-              action = apr_psprintf(resource->pool,
-                                    "update %s r%ld%s%s",
-                                    svn_path_uri_encode(spath,
-                                                        resource->pool),
-                                    revnum,
-                                    log_depth,
-                                    (send_copyfrom_args
-                                     ? " send-copyfrom-args" : ""));
+              action = svn_log__update(spath, revnum, requested_depth,
+                                       send_copyfrom_args,
+                                       resource->pool);
             else
-              action = apr_psprintf(resource->pool,
-                                    "status %s r%ld%s",
-                                    svn_path_uri_encode(spath,
-                                                        resource->pool),
-                                    revnum,
-                                    log_depth);
+              action = svn_log__status(spath, revnum, requested_depth,
+                                       resource->pool);
           }
       }
 
@@ -1513,25 +1481,14 @@ dav_svn__update_report(const dav_resource *resource,
 
  cleanup:
 
-  /* Flush the contents of the brigade (returning an error only if we
-     don't already have one). */
-  if ((! derr) && ((apr_err = ap_fflush(output, uc.bb))))
-    derr = dav_svn__convert_err(svn_error_create(apr_err, 0, NULL),
-                                HTTP_INTERNAL_SERVER_ERROR,
-                                "Error flushing brigade.",
-                                resource->pool);
-
-  /* if an error was produced EITHER by the dir_delta drive or the
-     resource-walker... */
-  if (derr)
-    {
-      if (rbaton)
-        svn_error_clear(svn_repos_abort_report(rbaton, resource->pool));
-      return derr;
-    }
+  /* If an error was produced EITHER by the dir_delta drive or the
+     resource-walker, abort the report. */
+  if (derr && rbaton)
+    svn_error_clear(svn_repos_abort_report(rbaton, resource->pool));
 
   /* Destroy our subpool. */
   svn_pool_destroy(subpool);
 
-  return NULL;
+  return dav_svn__final_flush_or_error(resource->info->r, uc.bb, output,
+                                       derr, resource->pool);
 }

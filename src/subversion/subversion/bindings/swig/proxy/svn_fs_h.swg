@@ -15,11 +15,13 @@
 #ifdef SWIGPYTHON
 %apply CALLABLE_CALLBACK {
   svn_fs_warning_callback_t,
-  svn_fs_get_locks_callback_t
+  svn_fs_get_locks_callback_t,
+  svn_fs_pack_notify_t
 };
 %apply CALLABLE_CALLBACK * {
   svn_fs_warning_callback_t *,
-  svn_fs_get_locks_callback_t *
+  svn_fs_get_locks_callback_t *,
+  svn_fs_pack_notify_t *
 };
 #endif
 
@@ -29,7 +31,8 @@
   void *baton,
   void *warning_baton,
   void *cancel_baton,
-  void *get_locks_baton
+  void *get_locks_baton,
+  void *notify_baton
 };
 #endif
 
@@ -46,6 +49,7 @@
 %opaque_proxy(svn_fs_id_t);
 %opaque_proxy(svn_fs_txn_t);
 %opaque_proxy(svn_fs_root_t);
+%proxy(svn_fs_path_change2_t);
 %proxy(svn_fs_path_change_t);
 %opaque_proxy(svn_fs_history_t);
 %proxy(svn_fs_dirent_t);
@@ -64,10 +68,16 @@ static svn_error_t * svn_fs_invoke_get_locks_callback(
   return _obj(baton, lock, pool);
 }
 
+static svn_error_t * svn_fs_invoke_pack_notify(
+  svn_fs_pack_notify_t _obj, void *baton, apr_int64_t shard, svn_fs_pack_notify_action_t action, apr_pool_t *pool) {
+  return _obj(baton, shard, action, pool);
+}
+
 %}
 
 #ifdef SWIGPYTHON
 %funcptr_proxy(svn_fs_warning_callback_t, svn_fs_invoke_warning_callback);
 %funcptr_proxy(svn_fs_get_locks_callback_t, svn_fs_invoke_get_locks_callback);
+%funcptr_proxy(svn_fs_pack_notify_t, svn_fs_invoke_pack_notify);
 
 #endif

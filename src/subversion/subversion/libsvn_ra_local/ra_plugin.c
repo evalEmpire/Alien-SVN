@@ -34,9 +34,6 @@
 #define APR_WANT_STRFUNC
 #include <apr_want.h>
 
-#include <assert.h>
-
-
 /*----------------------------------------------------------------*/
 
 /*** Miscellaneous helper functions ***/
@@ -408,6 +405,28 @@ svn_ra_local__get_schemes(apr_pool_t *pool)
   return schemes;
 }
 
+/* Do nothing.
+ *
+ * Why is this acceptable?  As of now, FS warnings are used for only
+ * two things: failures to close BDB repositories and failures to
+ * interact with memcached in FSFS (new in 1.6).  In 1.5 and earlier,
+ * we did not call svn_fs_set_warning_func in ra_local, which means
+ * that any BDB-closing failure would have led to abort()s; the fact
+ * that this hasn't led to huge hues and cries makes it seem likely
+ * that this just doesn't happen that often, at least not through
+ * ra_local.  And as far as memcached goes, it seems unlikely that
+ * somebody is going to go through the trouble of setting up and
+ * running memcached servers but then use ra_local access.  So we
+ * ignore errors here, so that memcached can use the FS warnings API
+ * without crashing ra_local.
+ */
+static void
+ignore_warnings(void *baton,
+                svn_error_t *err)
+{
+  return;
+}
+
 static svn_error_t *
 svn_ra_local__open(svn_ra_session_t *session,
                    const char *repos_URL,
@@ -438,6 +457,9 @@ svn_ra_local__open(svn_ra_session_t *session,
   /* Cache the filesystem object from the repos here for
      convenience. */
   sess->fs = svn_repos_fs(sess->repos);
+
+  /* Ignore FS warnings. */
+  svn_fs_set_warning_func(sess->fs, ignore_warnings, NULL);
 
   /* Cache the repository UUID as well */
   SVN_ERR(svn_fs_get_uuid(sess->fs, &sess->uuid, session->pool));
@@ -533,10 +555,9 @@ svn_ra_local__change_rev_prop(svn_ra_session_t *session,
 {
   svn_ra_local__session_baton_t *sess = session->priv;
   SVN_ERR(get_username(session, pool));
-  SVN_ERR(svn_repos_fs_change_rev_prop3(sess->repos, rev, sess->username,
-                                        name, value, TRUE, TRUE, NULL, NULL,
-                                        pool));
-  return SVN_NO_ERROR;
+  return svn_repos_fs_change_rev_prop3(sess->repos, rev, sess->username,
+                                       name, value, TRUE, TRUE, NULL, NULL,
+                                       pool);
 }
 
 static svn_error_t *
@@ -624,11 +645,14 @@ svn_ra_local__get_commit_editor(svn_ra_session_t *session,
                hi = apr_hash_next(hi))
             {
               void *val;
-              const char *token;
+              const char *path, *token;
+              const void *key;
 
-              apr_hash_this(hi, NULL, NULL, &val);
+              apr_hash_this(hi, &key, NULL, &val);
+              path = svn_path_join(sess->fs_path->data, (const char *)key,
+                                   pool);
               token = val;
-              SVN_ERR(svn_fs_access_add_lock_token(fs_access, token));
+              SVN_ERR(svn_fs_access_add_lock_token2(fs_access, path, token));
             }
         }
     }
@@ -639,12 +663,10 @@ svn_ra_local__get_commit_editor(svn_ra_session_t *session,
                svn_string_create(sess->username, pool));
 
   /* Get the repos commit-editor */
-  SVN_ERR(svn_repos_get_commit_editor5
-          (editor, edit_baton, sess->repos, NULL, 
-           svn_path_uri_decode(sess->repos_url, pool), sess->fs_path->data, 
-           revprop_table, deltify_etc, db, NULL, NULL, pool));
-
-  return SVN_NO_ERROR;
+  return svn_repos_get_commit_editor5
+         (editor, edit_baton, sess->repos, NULL,
+          svn_path_uri_decode(sess->repos_url, pool), sess->fs_path->data,
+          revprop_table, deltify_etc, db, NULL, NULL, pool);
 }
 
 
@@ -660,13 +682,13 @@ svn_ra_local__get_mergeinfo(svn_ra_session_t *session,
   svn_ra_local__session_baton_t *sess = session->priv;
   svn_mergeinfo_catalog_t tmp_catalog;
   int i;
-  apr_array_header_t *abs_paths = 
+  apr_array_header_t *abs_paths =
     apr_array_make(pool, 0, sizeof(const char *));
 
   for (i = 0; i < paths->nelts; i++)
     {
       const char *relative_path = APR_ARRAY_IDX(paths, i, const char *);
-      APR_ARRAY_PUSH(abs_paths, const char *) = 
+      APR_ARRAY_PUSH(abs_paths, const char *) =
         svn_path_join(sess->fs_path->data, relative_path, pool);
     }
 
@@ -836,7 +858,7 @@ svn_ra_local__get_log(svn_ra_session_t *session,
   svn_ra_local__session_baton_t *sess = session->priv;
   int i;
   struct log_baton lb;
-  apr_array_header_t *abs_paths = 
+  apr_array_header_t *abs_paths =
     apr_array_make(pool, 0, sizeof(const char *));
 
   if (paths)
@@ -844,7 +866,7 @@ svn_ra_local__get_log(svn_ra_session_t *session,
       for (i = 0; i < paths->nelts; i++)
         {
           const char *relative_path = APR_ARRAY_IDX(paths, i, const char *);
-          APR_ARRAY_PUSH(abs_paths, const char *) = 
+          APR_ARRAY_PUSH(abs_paths, const char *) =
             svn_path_join(sess->fs_path->data, relative_path, pool);
         }
     }
@@ -890,8 +912,7 @@ svn_ra_local__do_check_path(svn_ra_session_t *session,
   if (! SVN_IS_VALID_REVNUM(revision))
     SVN_ERR(svn_fs_youngest_rev(&revision, sess->fs, pool));
   SVN_ERR(svn_fs_revision_root(&root, sess->fs, revision, pool));
-  SVN_ERR(svn_fs_check_path(kind, root, abs_path, pool));
-  return SVN_NO_ERROR;
+  return svn_fs_check_path(kind, root, abs_path, pool);
 }
 
 
@@ -910,9 +931,7 @@ svn_ra_local__stat(svn_ra_session_t *session,
     SVN_ERR(svn_fs_youngest_rev(&revision, sess->fs, pool));
   SVN_ERR(svn_fs_revision_root(&root, sess->fs, revision, pool));
 
-  SVN_ERR(svn_repos_stat(dirent, root, abs_path, pool));
-
-  return SVN_NO_ERROR;
+  return svn_repos_stat(dirent, root, abs_path, pool);
 }
 
 
@@ -999,10 +1018,14 @@ svn_ra_local__get_file(svn_ra_session_t *session,
          svn_fs_file_contents() directly, which already checks the
          stored checksum, and all we're doing here is writing bytes in
          a loop.  Truly, Nothing Can Go Wrong :-).  But RA layers that
-         go over a network should confirm the checksum. */
-      SVN_ERR(svn_stream_copy2(contents, stream,
+         go over a network should confirm the checksum.
+
+         Note: we are not supposed to close the passed-in stream, so
+         disown the thing.
+      */
+      SVN_ERR(svn_stream_copy3(contents, svn_stream_disown(stream, pool),
                                sess->callbacks
-                               ? sess->callbacks->cancel_func : NULL,
+                                 ? sess->callbacks->cancel_func : NULL,
                                sess->callback_baton,
                                pool));
     }
@@ -1093,7 +1116,7 @@ svn_ra_local__get_dir(svn_ra_session_t *session,
               /* has_props? */
               SVN_ERR(svn_fs_node_proplist(&prophash, root, fullpath,
                                            subpool));
-              entry->has_props = (apr_hash_count(prophash)) ? TRUE : FALSE;
+              entry->has_props = (apr_hash_count(prophash) != 0);
             }
 
           if ((dirent_fields & SVN_DIRENT_TIME)
@@ -1320,11 +1343,9 @@ svn_ra_local__replay(svn_ra_session_t *session,
 
   SVN_ERR(svn_fs_revision_root(&root, svn_repos_fs(sess->repos),
                                revision, pool));
-  SVN_ERR(svn_repos_replay2(root, sess->fs_path->data, low_water_mark,
-                            send_deltas, editor, edit_baton, NULL, NULL,
-                            pool));
-
-  return SVN_NO_ERROR;
+  return svn_repos_replay2(root, sess->fs_path->data, low_water_mark,
+                           send_deltas, editor, edit_baton, NULL, NULL,
+                           pool);
 }
 
 
@@ -1376,6 +1397,27 @@ svn_ra_local__has_capability(svn_ra_session_t *session,
   return SVN_NO_ERROR;
 }
 
+static svn_error_t *
+svn_ra_local__get_deleted_rev(svn_ra_session_t *session,
+                              const char *path,
+                              svn_revnum_t peg_revision,
+                              svn_revnum_t end_revision,
+                              svn_revnum_t *revision_deleted,
+                              apr_pool_t *pool)
+{
+  svn_ra_local__session_baton_t *sess = session->priv;
+  const char *abs_path = svn_path_join(sess->fs_path->data, path, pool);
+
+  SVN_ERR(svn_repos_deleted_rev(sess->fs,
+                                abs_path,
+                                peg_revision,
+                                end_revision,
+                                revision_deleted,
+                                pool));
+
+  return SVN_NO_ERROR;
+}
+
 /*----------------------------------------------------------------*/
 
 static const svn_version_t *
@@ -1421,7 +1463,8 @@ static const svn_ra__vtable_t ra_local_vtable =
   svn_ra_local__get_locks,
   svn_ra_local__replay,
   svn_ra_local__has_capability,
-  svn_ra_local__replay_range
+  svn_ra_local__replay_range,
+  svn_ra_local__get_deleted_rev
 };
 
 

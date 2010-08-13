@@ -2,7 +2,7 @@
  * status.c: construct a status structure from an entry structure
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -38,6 +38,7 @@
 #include "lock.h"
 #include "props.h"
 #include "translate.h"
+#include "tree_conflicts.h"
 
 #include "private/svn_wc_private.h"
 
@@ -73,7 +74,7 @@ struct edit_baton
   svn_revnum_t *target_revision;
 
   /* Status function/baton. */
-  svn_wc_status_func2_t status_func;
+  svn_wc_status_func3_t status_func;
   void *status_baton;
 
   /* Cancellation function/baton. */
@@ -81,7 +82,7 @@ struct edit_baton
   void *cancel_baton;
 
   /* The configured set of default ignores. */
-  apr_array_header_t *ignores;
+  const apr_array_header_t *ignores;
 
   /* Externals info harvested during the status run. */
   svn_wc_traversal_info_t *traversal_info;
@@ -208,6 +209,8 @@ struct file_baton
 /* Fill in *STATUS for PATH, whose entry data is in ENTRY.  Allocate
    *STATUS in POOL.
 
+   ADM_ACCESS is an access baton for PATH.
+
    ENTRY may be null, for non-versioned entities.  In this case, we
    will assemble a special status structure item which implies a
    non-versioned thing.
@@ -254,6 +257,8 @@ assemble_status(svn_wc_status2_t **status,
   svn_boolean_t prop_modified_p = FALSE;
   svn_boolean_t locked_p = FALSE;
   svn_boolean_t switched_p = FALSE;
+  svn_wc_conflict_description_t *tree_conflict;
+  svn_boolean_t file_external_p = FALSE;
 #ifdef HAVE_SYMLINK
   svn_boolean_t wc_special;
 #endif /* HAVE_SYMLINK */
@@ -261,6 +266,9 @@ assemble_status(svn_wc_status2_t **status,
   /* Defaults for two main variables. */
   enum svn_wc_status_kind final_text_status = svn_wc_status_normal;
   enum svn_wc_status_kind final_prop_status = svn_wc_status_none;
+  /* And some intermediate results */
+  enum svn_wc_status_kind pristine_text_status = svn_wc_status_none;
+  enum svn_wc_status_kind pristine_prop_status = svn_wc_status_none;
 
   svn_lock_t *repos_lock = NULL;
 
@@ -288,9 +296,14 @@ assemble_status(svn_wc_status2_t **status,
     SVN_ERR(svn_io_check_special_path(path, &path_kind, &path_special,
                                       pool));
 
+  /* Find out whether the path is a tree conflict victim.
+   * This function will set tree_conflict to NULL if the path
+   * is not a victim. */
+  SVN_ERR(svn_wc__get_tree_conflict(&tree_conflict, path, adm_access, pool));
+
   if (! entry)
     {
-      /* return a blank structure. */
+      /* return a fairly blank structure. */
       stat = apr_pcalloc(pool, sizeof(*stat));
       stat->entry = NULL;
       stat->text_status = svn_wc_status_none;
@@ -300,6 +313,8 @@ assemble_status(svn_wc_status2_t **status,
       stat->locked = FALSE;
       stat->copied = FALSE;
       stat->switched = FALSE;
+      stat->tree_conflict = tree_conflict;
+      stat->file_external = FALSE;
 
       /* If this path has no entry, but IS present on disk, it's
          unversioned.  If this file is being explicitly ignored (due
@@ -313,6 +328,11 @@ assemble_status(svn_wc_status2_t **status,
           else
             stat->text_status = svn_wc_status_unversioned;
         }
+
+      /* If this path has no entry, is NOT present on disk, and IS a
+         tree conflict victim, count it as missing. */
+      if ((path_kind == svn_node_none) && tree_conflict)
+        stat->text_status = svn_wc_status_missing;
 
       stat->repos_lock = repos_lock;
       stat->url = NULL;
@@ -340,12 +360,16 @@ assemble_status(svn_wc_status2_t **status,
         final_text_status = svn_wc_status_obstructed;
     }
 
-  /* Is this item switched?  Well, to be switched it must have both an URL
-     and a parent with an URL, at the very least.
-     If this is the root folder on the (virtual) disk, entry and parent_entry
-     will be equal. */
-  if (entry->url && parent_entry && parent_entry->url &&
-      entry != parent_entry)
+  /** File externals are switched files, but they are not shown as
+      such.  To be switched it must have both an URL and a parent with
+      an URL, at the very least.  If this is the root folder on the
+      (virtual) disk, entry and parent_entry will be equal. */
+  if (entry->file_external_path)
+    {
+      file_external_p = TRUE;
+    }
+  else if (entry->url && parent_entry && parent_entry->url &&
+           entry != parent_entry)
     {
       /* An item is switched if its working copy basename differs from the
          basename of its URL. */
@@ -378,6 +402,10 @@ assemble_status(svn_wc_status2_t **status,
       SVN_ERR(svn_wc_props_modified_p(&prop_modified_p, path, adm_access,
                                       pool));
 
+      /* Record actual property status */
+      pristine_prop_status = prop_modified_p ? svn_wc_status_modified
+                                             : svn_wc_status_normal;
+
 #ifdef HAVE_SYMLINK
       if (has_props)
         SVN_ERR(svn_wc__get_special(&wc_special, path, adm_access, pool));
@@ -391,8 +419,14 @@ assemble_status(svn_wc_status2_t **status,
           && (wc_special == path_special)
 #endif /* HAVE_SYMLINK */
           )
-        SVN_ERR(svn_wc_text_modified_p(&text_modified_p, path, FALSE,
-                                       adm_access, pool));
+        {
+          SVN_ERR(svn_wc_text_modified_p(&text_modified_p, path, FALSE,
+                                         adm_access, pool));
+
+          /* Record actual text status */
+          pristine_text_status = text_modified_p ? svn_wc_status_modified
+                                                 : svn_wc_status_normal;
+        }
 
       if (text_modified_p)
         final_text_status = svn_wc_status_modified;
@@ -404,15 +438,12 @@ assemble_status(svn_wc_status2_t **status,
           entry->conflict_new || entry->conflict_wrk)
         {
           svn_boolean_t text_conflict_p, prop_conflict_p;
-          const char *parent_dir;
 
-          if (entry->kind == svn_node_dir)
-            parent_dir = path;
-          else  /* non-directory, that's all we need to know */
-            parent_dir = svn_path_dirname(path, pool);
-
-          SVN_ERR(svn_wc_conflicted_p(&text_conflict_p, &prop_conflict_p,
-                                      parent_dir, entry, pool));
+          /* The entry says there was a conflict, but the user might have
+             marked it as resolved by deleting the artifact files, so check
+             for that. */
+            SVN_ERR(svn_wc_conflicted_p2(&text_conflict_p, &prop_conflict_p,
+                                         NULL, path, adm_access, pool));
 
           if (text_conflict_p)
             final_text_status = svn_wc_status_conflicted;
@@ -493,8 +524,9 @@ assemble_status(svn_wc_status2_t **status,
          || (final_text_status == svn_wc_status_normal))
         && ((final_prop_status == svn_wc_status_none)
             || (final_prop_status == svn_wc_status_normal))
-        && (! locked_p) && (! switched_p) && (! entry->lock_token)
-        && (! repos_lock) && (! entry->changelist))
+        && (! locked_p) && (! switched_p) && (! file_external_p)
+        && (! entry->lock_token) && (! repos_lock) && (! entry->changelist)
+        && (! tree_conflict))
       {
         *status = NULL;
         return SVN_NO_ERROR;
@@ -511,6 +543,7 @@ assemble_status(svn_wc_status2_t **status,
   stat->repos_prop_status = svn_wc_status_none;   /* default */
   stat->locked = locked_p;
   stat->switched = switched_p;
+  stat->file_external = file_external_p;
   stat->copied = entry->copied;
   stat->repos_lock = repos_lock;
   stat->url = (entry->url ? entry->url : NULL);
@@ -518,6 +551,9 @@ assemble_status(svn_wc_status2_t **status,
   stat->ood_last_cmt_date = 0;
   stat->ood_kind = svn_node_none;
   stat->ood_last_cmt_author = NULL;
+  stat->tree_conflict = tree_conflict;
+  stat->pristine_text_status = pristine_text_status;
+  stat->pristine_prop_status = pristine_prop_status;
 
   *status = stat;
 
@@ -541,7 +577,7 @@ send_status_structure(const char *path,
                       svn_boolean_t is_ignored,
                       apr_hash_t *repos_locks,
                       const char *repos_root,
-                      svn_wc_status_func2_t status_func,
+                      svn_wc_status_func3_t status_func,
                       void *status_baton,
                       apr_pool_t *pool)
 {
@@ -551,7 +587,7 @@ send_status_structure(const char *path,
                           path_kind, path_special, get_all, is_ignored,
                           repos_locks, repos_root, pool));
   if (statstruct && (status_func))
-    (*status_func)(status_baton, path, statstruct);
+    return (*status_func)(status_baton, path, statstruct, pool);
 
   return SVN_NO_ERROR;
 }
@@ -576,7 +612,7 @@ send_status_structure(const char *path,
 */
 static svn_error_t *
 collect_ignore_patterns(apr_array_header_t **patterns,
-                        apr_array_header_t *ignores,
+                        const apr_array_header_t *ignores,
                         svn_wc_adm_access_t *adm_access,
                         apr_pool_t *pool)
 {
@@ -659,14 +695,14 @@ send_unversioned_item(const char *name,
                       svn_boolean_t no_ignore,
                       apr_hash_t *repos_locks,
                       const char *repos_root,
-                      svn_wc_status_func2_t status_func,
+                      svn_wc_status_func3_t status_func,
                       void *status_baton,
                       apr_pool_t *pool)
 {
-  int ignore_me = svn_wc_match_ignore_list(name, patterns, pool);
+  svn_boolean_t ignore_me = svn_wc_match_ignore_list(name, patterns, pool);
   const char *path = svn_path_join(svn_wc_adm_access_path(adm_access),
                                    name, pool);
-  int is_external = is_external_path(externals, path, pool);
+  svn_boolean_t is_external = is_external_path(externals, path, pool);
   svn_wc_status2_t *status;
 
   SVN_ERR(assemble_status(&status, path, adm_access, NULL, NULL,
@@ -676,30 +712,35 @@ send_unversioned_item(const char *name,
   if (is_external)
     status->text_status = svn_wc_status_external;
 
+  /* Don't ever ignore tree conflict victims. */
+  if (status->tree_conflict)
+    ignore_me = FALSE;
+
   /* If we aren't ignoring it, or if it's an externals path, or it has a lock
      in the repository, pass this entry to the status func. */
   if (no_ignore || (! ignore_me) || is_external || status->repos_lock)
-    (status_func)(status_baton, path, status);
+    return (status_func)(status_baton, path, status, pool);
 
   return SVN_NO_ERROR;
 }
 
 
 /* Prototype for untangling a tango-ing two-some. */
-static svn_error_t *get_dir_status(struct edit_baton *eb,
-                                   const svn_wc_entry_t *parent_entry,
-                                   svn_wc_adm_access_t *adm_access,
-                                   const char *entry,
-                                   apr_array_header_t *ignores,
-                                   svn_depth_t depth,
-                                   svn_boolean_t get_all,
-                                   svn_boolean_t no_ignore,
-                                   svn_boolean_t skip_this_dir,
-                                   svn_wc_status_func2_t status_func,
-                                   void *status_baton,
-                                   svn_cancel_func_t cancel_func,
-                                   void *cancel_baton,
-                                   apr_pool_t *pool);
+static svn_error_t *
+get_dir_status(struct edit_baton *eb,
+               const svn_wc_entry_t *parent_entry,
+               svn_wc_adm_access_t *adm_access,
+               const char *entry,
+               const apr_array_header_t *ignores,
+               svn_depth_t depth,
+               svn_boolean_t get_all,
+               svn_boolean_t no_ignore,
+               svn_boolean_t skip_this_dir,
+               svn_wc_status_func3_t status_func,
+               void *status_baton,
+               svn_cancel_func_t cancel_func,
+               void *cancel_baton,
+               apr_pool_t *pool);
 
 /* Handle NAME (whose entry is ENTRY) as a directory entry of the
    directory represented by ADM_ACCESS (and whose entry is
@@ -713,11 +754,11 @@ handle_dir_entry(struct edit_baton *eb,
                  const svn_wc_entry_t *entry,
                  svn_node_kind_t kind,
                  svn_boolean_t special,
-                 apr_array_header_t *ignores,
+                 const apr_array_header_t *ignores,
                  svn_depth_t depth,
                  svn_boolean_t get_all,
                  svn_boolean_t no_ignore,
-                 svn_wc_status_func2_t status_func,
+                 svn_wc_status_func3_t status_func,
                  void *status_baton,
                  svn_cancel_func_t cancel_func,
                  void *cancel_baton,
@@ -789,18 +830,18 @@ handle_dir_entry(struct edit_baton *eb,
    *will* be reported, regardless of this parameter's value.
 
    Other arguments are the same as those passed to
-   svn_wc_get_status_editor3().  */
+   svn_wc_get_status_editor4().  */
 static svn_error_t *
 get_dir_status(struct edit_baton *eb,
                const svn_wc_entry_t *parent_entry,
                svn_wc_adm_access_t *adm_access,
                const char *entry,
-               apr_array_header_t *ignore_patterns,
+               const apr_array_header_t *ignore_patterns,
                svn_depth_t depth,
                svn_boolean_t get_all,
                svn_boolean_t no_ignore,
                svn_boolean_t skip_this_dir,
-               svn_wc_status_func2_t status_func,
+               svn_wc_status_func3_t status_func,
                void *status_baton,
                svn_cancel_func_t cancel_func,
                void *cancel_baton,
@@ -813,6 +854,8 @@ get_dir_status(struct edit_baton *eb,
   apr_hash_t *dirents;
   apr_array_header_t *patterns = NULL;
   apr_pool_t *iterpool, *subpool = svn_pool_create(pool);
+  apr_array_header_t *tree_conflicts;
+  int j;
 
   /* See if someone wants to cancel this operation. */
   if (cancel_func)
@@ -841,6 +884,7 @@ get_dir_status(struct edit_baton *eb,
       if (prop_val)
         {
           apr_array_header_t *ext_items;
+          apr_pool_t *hash_pool = apr_hash_pool_get(eb->externals);
           int i;
 
           if (eb->traversal_info)
@@ -873,8 +917,8 @@ get_dir_status(struct edit_baton *eb,
               item = APR_ARRAY_IDX(ext_items, i, svn_wc_external_item2_t *);
               apr_hash_set(eb->externals, svn_path_join(path,
                                                         item->target_dir,
-                                                        pool),
-                           APR_HASH_KEY_STRING, item);
+                                                        hash_pool),
+                           APR_HASH_KEY_STRING, "");
             }
         }
     }
@@ -910,6 +954,29 @@ get_dir_status(struct edit_baton *eb,
                                         patterns, eb->externals, no_ignore,
                                         eb->repos_locks, eb->repos_root,
                                         status_func, status_baton, subpool));
+        }
+      /* Otherwise, if it doesn't exist, but is a tree conflict victim,
+         send its unversioned status. */
+      else
+        {
+          svn_wc_conflict_description_t *tree_conflict;
+          SVN_ERR(svn_wc__get_tree_conflict(&tree_conflict,
+                                           svn_path_join(path, entry, subpool),
+                                           adm_access, subpool));
+          if (tree_conflict)
+            {
+              /* A tree conflict will block commit, so we'll pass TRUE
+                 instead of the user's no_ignore arg. */
+              if (ignore_patterns && ! patterns)
+                SVN_ERR(collect_ignore_patterns(&patterns, ignore_patterns,
+                                                adm_access, subpool));
+              SVN_ERR(send_unversioned_item(entry, svn_node_none, FALSE,
+                                            adm_access, patterns,
+                                            eb->externals, TRUE,
+                                            eb->repos_locks, eb->repos_root,
+                                            status_func, status_baton,
+                                            subpool));
+            }
         }
 
       /* Regardless, we're done here.  Let's go home. */
@@ -970,6 +1037,39 @@ get_dir_status(struct edit_baton *eb,
                                     status_func, status_baton, iterpool));
     }
 
+  /* Add empty status structures for nonexistent tree conflict victims. */
+  SVN_ERR(svn_wc__read_tree_conflicts(&tree_conflicts,
+                                      dir_entry->tree_conflict_data,
+                                      path, subpool));
+
+  for (j = 0; j < tree_conflicts->nelts; j++)
+    {
+      svn_wc_conflict_description_t *conflict;
+      char *tree_basename;
+
+      svn_pool_clear(iterpool);
+
+      conflict = APR_ARRAY_IDX(tree_conflicts, j,
+                               svn_wc_conflict_description_t *);
+
+      /* Skip versioned and non-versioned things. */
+      tree_basename = svn_path_basename(conflict->path, iterpool);
+      if (apr_hash_get(entries, tree_basename, APR_HASH_KEY_STRING)
+          || apr_hash_get(dirents, tree_basename, APR_HASH_KEY_STRING))
+        continue;
+
+      if (ignore_patterns && ! patterns)
+        SVN_ERR(collect_ignore_patterns(&patterns, ignore_patterns,
+                                        adm_access, subpool));
+
+      SVN_ERR(send_unversioned_item(tree_basename, svn_node_none, FALSE,
+                                    adm_access, patterns, eb->externals,
+                                    no_ignore, eb->repos_locks, eb->repos_root,
+                                    status_func, status_baton, iterpool));
+    }
+
+
+
   /* Loop over entries hash */
   for (hi = apr_hash_first(pool, entries); hi; hi = apr_hash_next(hi))
     {
@@ -1020,17 +1120,20 @@ get_dir_status(struct edit_baton *eb,
 
 /* A faux status callback function for stashing STATUS item in an hash
    (which is the BATON), keyed on PATH.  This implements the
-   svn_wc_status_func2_t interface. */
-static void
+   svn_wc_status_func3_t interface. */
+static svn_error_t *
 hash_stash(void *baton,
            const char *path,
-           svn_wc_status2_t *status)
+           svn_wc_status2_t *status,
+           apr_pool_t *pool)
 {
   apr_hash_t *stat_hash = baton;
   apr_pool_t *hash_pool = apr_hash_pool_get(stat_hash);
   assert(! apr_hash_get(stat_hash, path, APR_HASH_KEY_STRING));
   apr_hash_set(stat_hash, apr_pstrdup(hash_pool, path),
                APR_HASH_KEY_STRING, svn_wc_dup_status2(status, hash_pool));
+
+  return SVN_NO_ERROR;
 }
 
 
@@ -1135,9 +1238,9 @@ tweak_statushash(void *baton,
               /* When deleting PATH, BATON is for PATH's parent,
                  so we must construct PATH's real statstruct->url. */
               statstruct->url =
-                svn_path_url_add_component(b->url,
-                                           svn_path_basename(path, pool),
-                                           pool);
+                svn_path_url_add_component2(b->url,
+                                            svn_path_basename(path, pool),
+                                            pool);
             }
           else
             statstruct->url = apr_pstrdup(pool, b->url);
@@ -1207,7 +1310,7 @@ find_dir_url(const struct dir_baton *db, apr_pool_t *pool)
 
       url = find_dir_url(pb, pool);
       if (url)
-        return svn_path_url_add_component(url, db->name, pool);
+        return svn_path_url_add_component2(url, db->name, pool);
       else
         return NULL;
     }
@@ -1229,9 +1332,7 @@ make_dir_baton(void **dir_baton,
   const char *full_path;
   svn_wc_status2_t *status_in_parent;
 
-  /* Don't do this.  Just do NOT do this to me. */
-  if (pb && (! path))
-    abort();
+  SVN_ERR_ASSERT(path || (! pb));
 
   /* Construct the full path of this directory. */
   if (pb)
@@ -1299,7 +1400,7 @@ make_dir_baton(void **dir_baton,
     {
       svn_wc_adm_access_t *dir_access;
       svn_wc_status2_t *this_dir_status;
-      apr_array_header_t *ignores = eb->ignores;
+      const apr_array_header_t *ignores = eb->ignores;
       SVN_ERR(svn_wc_adm_retrieve(&dir_access, eb->adm_access,
                                   d->path, pool));
       SVN_ERR(get_dir_status(eb, status_in_parent->entry, dir_access, NULL,
@@ -1344,9 +1445,9 @@ make_file_baton(struct dir_baton *parent_dir_baton,
   f->pool = pool;
   f->dir_baton = pb;
   f->edit_baton = eb;
-  f->url = svn_path_url_add_component(find_dir_url(pb, pool),
-                                      svn_path_basename(full_path, pool),
-                                      pool);
+  f->url = svn_path_url_add_component2(find_dir_url(pb, pool),
+                                       svn_path_basename(full_path, pool),
+                                       pool);
   f->ood_last_cmt_rev = SVN_INVALID_REVNUM;
   f->ood_last_cmt_date = 0;
   f->ood_kind = svn_node_file;
@@ -1354,11 +1455,11 @@ make_file_baton(struct dir_baton *parent_dir_baton,
   return f;
 }
 
-/* Return a boolean answer to the question "Is STATUS something that
-   should be reported?".  EB is the edit baton. */
-static svn_boolean_t
-is_sendable_status(svn_wc_status2_t *status,
-                   struct edit_baton *eb)
+
+svn_boolean_t
+svn_wc__is_sendable_status(const svn_wc_status2_t *status,
+                           svn_boolean_t no_ignore,
+                           svn_boolean_t get_all)
 {
   /* If the repository status was touched at all, it's interesting. */
   if (status->repos_text_status != svn_wc_status_none)
@@ -1371,30 +1472,34 @@ is_sendable_status(svn_wc_status2_t *status,
     return TRUE;
 
   /* If the item is ignored, and we don't want ignores, skip it. */
-  if ((status->text_status == svn_wc_status_ignored) && (! eb->no_ignore))
+  if ((status->text_status == svn_wc_status_ignored) && (! no_ignore))
     return FALSE;
 
   /* If we want everything, we obviously want this single-item subset
      of everything. */
-  if (eb->get_all)
+  if (get_all)
     return TRUE;
 
   /* If the item is unversioned, display it. */
   if (status->text_status == svn_wc_status_unversioned)
     return TRUE;
 
-  /* If the text or property states are interesting, send it. */
+  /* If the text, property or tree state is interesting, send it. */
   if ((status->text_status != svn_wc_status_none)
       && (status->text_status != svn_wc_status_normal))
     return TRUE;
   if ((status->prop_status != svn_wc_status_none)
       && (status->prop_status != svn_wc_status_normal))
     return TRUE;
+  if (status->tree_conflict)
+    return TRUE;
 
   /* If it's locked or switched, send it. */
   if (status->locked)
     return TRUE;
   if (status->switched)
+    return TRUE;
+  if (status->file_external)
     return TRUE;
 
   /* If there is a lock token, send it. */
@@ -1413,7 +1518,7 @@ is_sendable_status(svn_wc_status2_t *status,
 /* Baton for mark_status. */
 struct status_baton
 {
-  svn_wc_status_func2_t real_status_func;   /* real status function */
+  svn_wc_status_func3_t real_status_func;  /* real status function */
   void *real_status_baton;                 /* real status baton */
 };
 
@@ -1421,14 +1526,15 @@ struct status_baton
    function/baton.   It simply sets the "repos_text_status" field of the
    STATUS to svn_wc_status_deleted and passes it off to the real
    status func/baton. */
-static void
+static svn_error_t *
 mark_deleted(void *baton,
              const char *path,
-             svn_wc_status2_t *status)
+             svn_wc_status2_t *status,
+             apr_pool_t *pool)
 {
   struct status_baton *sb = baton;
   status->repos_text_status = svn_wc_status_deleted;
-  sb->real_status_func(sb->real_status_baton, path, status);
+  return sb->real_status_func(sb->real_status_baton, path, status, pool);
 }
 
 
@@ -1447,10 +1553,10 @@ handle_statii(struct edit_baton *eb,
               svn_depth_t depth,
               apr_pool_t *pool)
 {
-  apr_array_header_t *ignores = eb->ignores;
+  const apr_array_header_t *ignores = eb->ignores;
   apr_hash_index_t *hi;
   apr_pool_t *subpool = svn_pool_create(pool);
-  svn_wc_status_func2_t status_func = eb->status_func;
+  svn_wc_status_func3_t status_func = eb->status_func;
   void *status_baton = eb->status_baton;
   struct status_baton sb;
 
@@ -1496,8 +1602,8 @@ handle_statii(struct edit_baton *eb,
         }
       if (dir_was_deleted)
         status->repos_text_status = svn_wc_status_deleted;
-      if (is_sendable_status(status, eb))
-        (eb->status_func)(eb->status_baton, key, status);
+      if (svn_wc__is_sendable_status(status, eb->no_ignore, eb->get_all))
+        SVN_ERR((eb->status_func)(eb->status_baton, key, status, subpool));
     }
 
   /* Destroy the subpool. */
@@ -1770,8 +1876,10 @@ close_directory(void *dir_baton,
       SVN_ERR(handle_statii(eb, dir_status ? dir_status->entry : NULL,
                             db->path, db->statii, was_deleted, db->depth,
                             pool));
-      if (dir_status && is_sendable_status(dir_status, eb))
-        (eb->status_func)(eb->status_baton, db->path, dir_status);
+      if (dir_status && svn_wc__is_sendable_status(dir_status, eb->no_ignore,
+                                                  eb->get_all))
+        SVN_ERR((eb->status_func)(eb->status_baton, db->path, dir_status,
+                                  pool));
       apr_hash_set(pb->statii, db->path, APR_HASH_KEY_STRING, NULL);
     }
   else if (! pb)
@@ -1799,8 +1907,10 @@ close_directory(void *dir_baton,
                            eb->status_func, eb->status_baton,
                            eb->cancel_func, eb->cancel_baton, pool));
                 }
-              if (is_sendable_status(tgt_status, eb))
-                (eb->status_func)(eb->status_baton, path, tgt_status);
+              if (svn_wc__is_sendable_status(tgt_status, eb->no_ignore,
+                                             eb->get_all))
+                SVN_ERR((eb->status_func)(eb->status_baton, path, tgt_status,
+                                          pool));
             }
         }
       else
@@ -1810,8 +1920,10 @@ close_directory(void *dir_baton,
              because it is the root of the edit drive. */
           SVN_ERR(handle_statii(eb, eb->anchor_status->entry, db->path,
                                 db->statii, FALSE, eb->default_depth, pool));
-          if (is_sendable_status(eb->anchor_status, eb))
-            (eb->status_func)(eb->status_baton, db->path, eb->anchor_status);
+          if (svn_wc__is_sendable_status(eb->anchor_status, eb->no_ignore,
+                                         eb->get_all))
+            SVN_ERR((eb->status_func)(eb->status_baton, db->path,
+                                      eb->anchor_status, pool));
           eb->anchor_status = NULL;
         }
     }
@@ -1934,7 +2046,7 @@ close_file(void *file_baton,
           url = find_dir_url(fb->dir_baton, pool);
           if (url)
             {
-              url = svn_path_url_add_component(url, fb->name, pool);
+              url = svn_path_url_add_component2(url, fb->name, pool);
               repos_lock = apr_hash_get
                 (fb->edit_baton->repos_locks,
                  svn_path_uri_decode(url +
@@ -1949,14 +2061,12 @@ close_file(void *file_baton,
       repos_prop_status = fb->prop_changed ? svn_wc_status_modified : 0;
     }
 
-  SVN_ERR(tweak_statushash(fb, NULL, FALSE,
-                           fb->edit_baton->adm_access,
-                           fb->path, FALSE,
-                           repos_text_status,
-                           repos_prop_status, SVN_INVALID_REVNUM,
-                           repos_lock));
-
-  return SVN_NO_ERROR;
+  return tweak_statushash(fb, NULL, FALSE,
+                          fb->edit_baton->adm_access,
+                          fb->path, FALSE,
+                          repos_text_status,
+                          repos_prop_status, SVN_INVALID_REVNUM,
+                          repos_lock);
 }
 
 
@@ -1965,7 +2075,7 @@ close_edit(void *edit_baton,
            apr_pool_t *pool)
 {
   struct edit_baton *eb = edit_baton;
-  apr_array_header_t *ignores = eb->ignores;
+  const apr_array_header_t *ignores = eb->ignores;
   svn_error_t *err = NULL;
 
   /* If we get here and the root was not opened as part of the edit,
@@ -1987,7 +2097,6 @@ close_edit(void *edit_baton,
 
       if (kind == svn_node_dir)
         {
-          svn_wc_adm_access_t *tgt_access;
           const svn_wc_entry_t *tgt_entry;
 
           err = svn_wc_entry(&tgt_entry, full_path, eb->adm_access,
@@ -2006,6 +2115,8 @@ close_edit(void *edit_baton,
             }
           else
             {
+              svn_wc_adm_access_t *tgt_access;
+
               err = svn_wc_adm_retrieve(&tgt_access, eb->adm_access,
                                         full_path, pool);
               if (err) goto cleanup;
@@ -2058,7 +2169,7 @@ close_edit(void *edit_baton,
 /*** Public API ***/
 
 svn_error_t *
-svn_wc_get_status_editor3(const svn_delta_editor_t **editor,
+svn_wc_get_status_editor4(const svn_delta_editor_t **editor,
                           void **edit_baton,
                           void **set_locks_baton,
                           svn_revnum_t *edit_revision,
@@ -2067,8 +2178,8 @@ svn_wc_get_status_editor3(const svn_delta_editor_t **editor,
                           svn_depth_t depth,
                           svn_boolean_t get_all,
                           svn_boolean_t no_ignore,
-                          apr_array_header_t *ignore_patterns,
-                          svn_wc_status_func2_t status_func,
+                          const apr_array_header_t *ignore_patterns,
+                          svn_wc_status_func3_t status_func,
                           void *status_baton,
                           svn_cancel_func_t cancel_func,
                           void *cancel_baton,
@@ -2105,9 +2216,11 @@ svn_wc_get_status_editor3(const svn_delta_editor_t **editor,
     }
   else
     {
-      eb->ignores = apr_array_make(pool, 16, sizeof(const char *));
-      svn_cstring_split_append(eb->ignores, SVN_CONFIG_DEFAULT_GLOBAL_IGNORES,
+      apr_array_header_t *ignores = apr_array_make(pool, 16,
+                                                   sizeof(const char *));
+      svn_cstring_split_append(ignores, SVN_CONFIG_DEFAULT_GLOBAL_IGNORES,
                                "\n\r\t\v ", FALSE, pool);
+      eb->ignores = ignores;
     }
 
   /* The edit baton's status structure maps to PATH, and the editor
@@ -2138,95 +2251,6 @@ svn_wc_get_status_editor3(const svn_delta_editor_t **editor,
     *set_locks_baton = eb;
 
   return SVN_NO_ERROR;
-}
-
-
-svn_error_t *
-svn_wc_get_status_editor2(const svn_delta_editor_t **editor,
-                          void **edit_baton,
-                          void **set_locks_baton,
-                          svn_revnum_t *edit_revision,
-                          svn_wc_adm_access_t *anchor,
-                          const char *target,
-                          apr_hash_t *config,
-                          svn_boolean_t recurse,
-                          svn_boolean_t get_all,
-                          svn_boolean_t no_ignore,
-                          svn_wc_status_func2_t status_func,
-                          void *status_baton,
-                          svn_cancel_func_t cancel_func,
-                          void *cancel_baton,
-                          svn_wc_traversal_info_t *traversal_info,
-                          apr_pool_t *pool)
-{
-  apr_array_header_t *ignores;
-  SVN_ERR(svn_wc_get_default_ignores(&ignores, config, pool));
-  return svn_wc_get_status_editor3(editor,
-                                   edit_baton,
-                                   set_locks_baton,
-                                   edit_revision,
-                                   anchor,
-                                   target,
-                                   SVN_DEPTH_INFINITY_OR_IMMEDIATES(recurse),
-                                   get_all,
-                                   no_ignore,
-                                   ignores,
-                                   status_func,
-                                   status_baton,
-                                   cancel_func,
-                                   cancel_baton,
-                                   traversal_info,
-                                   pool);
-}
-
-
-/* Helpers for deprecated svn_wc_status_editor(), of type
-   svn_wc_status_func2_t. */
-struct old_status_func_cb_baton
-{
-  svn_wc_status_func_t original_func;
-  void *original_baton;
-};
-
-static void old_status_func_cb(void *baton,
-                               const char *path,
-                               svn_wc_status2_t *status)
-{
-  struct old_status_func_cb_baton *b = baton;
-  svn_wc_status_t *stat = (svn_wc_status_t *) status;
-
-  b->original_func(b->original_baton, path, stat);
-}
-
-svn_error_t *
-svn_wc_get_status_editor(const svn_delta_editor_t **editor,
-                         void **edit_baton,
-                         svn_revnum_t *edit_revision,
-                         svn_wc_adm_access_t *anchor,
-                         const char *target,
-                         apr_hash_t *config,
-                         svn_boolean_t recurse,
-                         svn_boolean_t get_all,
-                         svn_boolean_t no_ignore,
-                         svn_wc_status_func_t status_func,
-                         void *status_baton,
-                         svn_cancel_func_t cancel_func,
-                         void *cancel_baton,
-                         svn_wc_traversal_info_t *traversal_info,
-                         apr_pool_t *pool)
-{
-  struct old_status_func_cb_baton *b = apr_pcalloc(pool, sizeof(*b));
-  apr_array_header_t *ignores;
-  b->original_func = status_func;
-  b->original_baton = status_baton;
-  SVN_ERR(svn_wc_get_default_ignores(&ignores, config, pool));
-  return svn_wc_get_status_editor3(editor, edit_baton, NULL, edit_revision,
-                                   anchor, target,
-                                   SVN_DEPTH_INFINITY_OR_IMMEDIATES(recurse),
-                                   get_all, no_ignore, ignores,
-                                   old_status_func_cb, b,
-                                   cancel_func, cancel_baton,
-                                   traversal_info, pool);
 }
 
 
@@ -2291,10 +2315,9 @@ svn_wc_status2(svn_wc_status2_t **status,
                              FALSE, pool));
     }
 
-  SVN_ERR(assemble_status(status, path, adm_access, entry, parent_entry,
-                          svn_node_unknown, FALSE, /* bogus */
-                          TRUE, FALSE, NULL, NULL, pool));
-  return SVN_NO_ERROR;
+  return assemble_status(status, path, adm_access, entry, parent_entry,
+                         svn_node_unknown, FALSE, /* bogus */
+                         TRUE, FALSE, NULL, NULL, pool);
 }
 
 
@@ -2314,7 +2337,7 @@ svn_wc_status(svn_wc_status_t **status,
 
 
 svn_wc_status2_t *
-svn_wc_dup_status2(svn_wc_status2_t *orig_stat,
+svn_wc_dup_status2(const svn_wc_status2_t *orig_stat,
                    apr_pool_t *pool)
 {
   svn_wc_status2_t *new_stat = apr_palloc(pool, sizeof(*new_stat));
@@ -2336,13 +2359,17 @@ svn_wc_dup_status2(svn_wc_status2_t *orig_stat,
     new_stat->ood_last_cmt_author
       = apr_pstrdup(pool, orig_stat->ood_last_cmt_author);
 
+  if (orig_stat->tree_conflict)
+    new_stat->tree_conflict
+      = svn_wc__conflict_description_dup(orig_stat->tree_conflict, pool);
+
   /* Return the new hotness. */
   return new_stat;
 }
 
 
 svn_wc_status_t *
-svn_wc_dup_status(svn_wc_status_t *orig_stat,
+svn_wc_dup_status(const svn_wc_status_t *orig_stat,
                   apr_pool_t *pool)
 {
   svn_wc_status_t *new_stat = apr_palloc(pool, sizeof(*new_stat));
@@ -2367,8 +2394,6 @@ svn_wc_get_ignores(apr_array_header_t **patterns,
   apr_array_header_t *default_ignores;
 
   SVN_ERR(svn_wc_get_default_ignores(&default_ignores, config, pool));
-  SVN_ERR(collect_ignore_patterns(patterns, default_ignores, adm_access,
-                                  pool));
-
-  return SVN_NO_ERROR;
+  return collect_ignore_patterns(patterns, default_ignores, adm_access,
+                                 pool);
 }

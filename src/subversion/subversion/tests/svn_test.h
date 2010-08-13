@@ -1,6 +1,6 @@
 /*
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -16,6 +16,11 @@
 
 #ifndef SVN_TEST_H
 #define SVN_TEST_H
+
+#ifndef SVN_ENABLE_DEPRECATION_WARNINGS_IN_TESTS
+#undef SVN_DEPRECATED
+#define SVN_DEPRECATED
+#endif /* ! SVN_ENABLE_DEPRECATION_WARNINGS_IN_TESTS */
 
 #include <apr_pools.h>
 #include "svn_delta.h"
@@ -37,6 +42,11 @@ typedef struct svn_test_opts_t
 {
   /* Description of the fs backend that should be used for testing. */
   const char *fs_type;
+  /* Config file. */
+  const char *config_file;
+  /* Minor version to use for servers and FS backends, or zero to use
+     the current latest version. */
+  int server_minor_version;
   /* Add future "arguments" here. */
 } svn_test_opts_t;
 

@@ -16,8 +16,6 @@
  * ====================================================================
  */
 
-
-
 #include <apr_uri.h>
 
 #include <expat.h>
@@ -28,15 +26,17 @@
 #include "svn_ra.h"
 #include "svn_dav.h"
 #include "svn_xml.h"
-#include "../libsvn_ra/ra_loader.h"
 #include "svn_config.h"
 #include "svn_delta.h"
 #include "svn_version.h"
 #include "svn_path.h"
 #include "svn_base64.h"
+#include "svn_props.h"
+
 #include "svn_private_config.h"
 
 #include "ra_serf.h"
+#include "../libsvn_ra/ra_loader.h"
 
 
 /*
@@ -390,8 +390,8 @@ svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  serf_bucket_t *buckets, *tmp;
-  const char *vcc_url, *relative_url, *baseline_url, *basecoll_url, *req_url;
+  serf_bucket_t *buckets;
+  const char *relative_url, *basecoll_url, *req_url;
   int status_code;
   svn_error_t *err;
 
@@ -405,21 +405,10 @@ svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
 
   buckets = serf_bucket_aggregate_create(session->bkt_alloc);
 
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("<S:file-revs-report xmlns:S=\"",
-                                  sizeof("<S:file-revs-report xmlns:S=\"")-1,
-                                  session->bkt_alloc);
-
-  serf_bucket_aggregate_append(buckets, tmp);
-
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN(SVN_XML_NAMESPACE,
-                                      sizeof(SVN_XML_NAMESPACE)-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
-
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("\">",
-                                      sizeof("\">")-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
+  svn_ra_serf__add_open_tag_buckets(buckets, session->bkt_alloc,
+                                    "S:file-revs-report",
+                                    "xmlns:S", SVN_XML_NAMESPACE,
+                                    NULL);
 
   svn_ra_serf__add_tag_buckets(buckets,
                                "S:start-revision", apr_ltoa(pool, start),
@@ -440,66 +429,12 @@ svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
                                "S:path", path,
                                session->bkt_alloc);
 
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("</S:file-revs-report>",
-                                      sizeof("</S:file-revs-report>")-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
+  svn_ra_serf__add_close_tag_buckets(buckets, session->bkt_alloc,
+                                     "S:file-revs-report");
 
-  /* Get the VCC from file url, or if the file doesn't exist in HEAD, from
-     its closest existing parent.  */
-  SVN_ERR(svn_ra_serf__discover_root(&vcc_url,
-                                     &relative_url,
-                                     session, session->conns[0],
-                                     session->repos_url.path, pool));
-
-  if (end == SVN_INVALID_REVNUM)
-    {
-      apr_hash_t *props = apr_hash_make(pool);
-
-     /* Use the "checked-in" property to determine the baseline url of the HEAD
-        revision. */
-     SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
-                                          vcc_url, SVN_INVALID_REVNUM, "0",
-                                          checked_in_props, pool));
-
-      baseline_url = svn_ra_serf__get_prop(props, vcc_url, "DAV:", "checked-in");
-
-      if (!baseline_url)
-        {
-          return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
-                                  _("The OPTIONS response did not include the "
-                                    "requested checked-in value"));
-        }
-
-      SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
-                                          baseline_url, SVN_INVALID_REVNUM,
-                                          "0", baseline_props, pool));
-
-      basecoll_url = svn_ra_serf__get_prop(props, baseline_url,
-                                           "DAV:", "baseline-collection");
-    }
-  else
-    {
-      apr_hash_t *props = apr_hash_make(pool);
-
-      /* We're asking for a specific revision. No need to use "checked-in"
-         here, request the baseline-collection property with the specified
-         revision in the 'Label' header (added in svn_ra_serf__retrieve_props).
-      */
-      SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
-                                          vcc_url, end,
-                                          "0", baseline_props, pool));
-
-      basecoll_url = svn_ra_serf__get_ver_prop(props, vcc_url, end,
-                                               "DAV:", "baseline-collection");
-    }
-  if (!basecoll_url)
-    {
-      return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
-                              _("The OPTIONS response did not include the "
-                                "requested baseline-collection value"));
-    }
-
+  SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url, session,
+                                         NULL, session->repos_url.path,
+                                         end, NULL, pool));
   req_url = svn_path_url_add_component(basecoll_url, relative_url, pool);
 
   handler = apr_pcalloc(pool, sizeof(*handler));

@@ -86,6 +86,13 @@ static const svn_ra_serf__auth_protocol_t serf_auth_protocols[] = {
     handle_sspi_auth,
     setup_request_sspi_auth,
   },
+  {
+    407,
+    "NTLM",
+    init_proxy_sspi_connection,
+    handle_proxy_sspi_auth,
+    setup_request_proxy_sspi_auth,
+  },
 #endif /* SVN_RA_SERF_SSPI_ENABLED */
 
   /* ADD NEW AUTHENTICATION IMPLEMENTATIONS HERE (as they're written) */
@@ -123,6 +130,9 @@ svn_ra_serf__encode_auth_header(const char * protocol, char **header,
 }
 
 
+/* Dispatch authentication handling based on server <-> proxy authentication
+   and the list of allowed authentication schemes as passed back from the
+   server or proxy in the Authentication headers. */
 svn_error_t *
 svn_ra_serf__handle_auth(int code,
                          svn_ra_serf__session_t *session,
@@ -132,9 +142,9 @@ svn_ra_serf__handle_auth(int code,
                          apr_pool_t *pool)
 {
   serf_bucket_t *hdrs;
-  const svn_ra_serf__auth_protocol_t *prot;
-  char *auth_name, *auth_attr, *auth_hdr, *header, *header_attr;
-  svn_error_t *cached_err;
+  const svn_ra_serf__auth_protocol_t *prot = NULL;
+  char *auth_name = NULL, *auth_attr, *auth_hdr=NULL, *header, *header_attr;
+  svn_error_t *cached_err = SVN_NO_ERROR;
 
   hdrs = serf_bucket_response_get_headers(response);
   if (code == 401)
@@ -168,7 +178,7 @@ svn_ra_serf__handle_auth(int code,
          as that may have changed. (ex. fallback from ntlm to basic.) */
       for (prot = serf_auth_protocols; prot->code != 0; ++prot)
         {
-          if (code == prot->code && strcmp(auth_name, prot->auth_name) == 0)
+          if (code == prot->code && strcasecmp(auth_name, prot->auth_name) == 0)
             {
               svn_serf__auth_handler_func_t handler = prot->handle_func;
               svn_error_t *err = NULL;
@@ -255,7 +265,7 @@ handle_basic_auth(svn_ra_serf__session_t *session,
       char *attr;
 
       attr = apr_strtok(auth_attr, "=", &last);
-      if (strcmp(attr, "realm") == 0)
+      if (strcasecmp(attr, "realm") == 0)
         {
           realm_name = apr_strtok(NULL, "=", &last);
           if (realm_name[0] == '\"')
@@ -274,13 +284,13 @@ handle_basic_auth(svn_ra_serf__session_t *session,
         {
           return svn_error_create
             (SVN_ERR_RA_DAV_MALFORMED_DATA, NULL,
-             _("Missing 'realm' attribute in Authorization header."));
+             _("Missing 'realm' attribute in Authorization header"));
         }
       if (!realm_name)
         {
           return svn_error_create
             (SVN_ERR_RA_DAV_MALFORMED_DATA, NULL,
-             _("Missing 'realm' attribute in Authorization header."));
+             _("Missing 'realm' attribute in Authorization header"));
         }
 
       if (session->repos_url.port_str)
@@ -299,6 +309,10 @@ handle_basic_auth(svn_ra_serf__session_t *session,
                                     realm_name);
     }
 
+  /* Use svn_auth_first_credentials if this is the first time we ask for
+     credentials during this session OR if the last time we asked
+     session->auth_state wasn't set (eg. if the credentials provider was
+     cancelled by the user). */
   if (!session->auth_state)
     {
       SVN_ERR(svn_auth_first_credentials(&creds,
@@ -383,7 +397,7 @@ handle_proxy_basic_auth(svn_ra_serf__session_t *session,
   int i;
 
   tmp = apr_pstrcat(session->pool,
-                    session->proxy_username, ":", 
+                    session->proxy_username, ":",
                     session->proxy_password, NULL);
   tmp_len = strlen(tmp);
 
@@ -396,7 +410,7 @@ handle_proxy_basic_auth(svn_ra_serf__session_t *session,
                 "Proxy authentication failed");
     }
 
-  svn_ra_serf__encode_auth_header(session->proxy_auth_protocol->auth_name, 
+  svn_ra_serf__encode_auth_header(session->proxy_auth_protocol->auth_name,
                                   &session->proxy_auth_value,
                                   tmp, tmp_len, pool);
   session->proxy_auth_header = "Proxy-Authorization";
@@ -429,7 +443,7 @@ setup_request_proxy_basic_auth(svn_ra_serf__connection_t *conn,
   /* Take the default authentication header for this connection, if any. */
   if (conn->proxy_auth_header && conn->proxy_auth_value)
     {
-      serf_bucket_headers_setn(hdrs_bkt, conn->proxy_auth_header, 
+      serf_bucket_headers_setn(hdrs_bkt, conn->proxy_auth_header,
                                conn->proxy_auth_value);
     }
 

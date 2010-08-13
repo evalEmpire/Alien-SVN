@@ -2,7 +2,7 @@
  * info-cmd.c -- Display information about a resource
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2002-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -34,6 +34,7 @@
 #include "cl.h"
 
 #include "svn_private_config.h"
+#include "tree-conflicts.h"
 
 
 /*** Code. ***/
@@ -46,8 +47,7 @@ svn_cl__info_print_time(apr_time_t atime,
   const char *time_utf8;
 
   time_utf8 = svn_time_to_human_cstring(atime, pool);
-  SVN_ERR(svn_cmdline_printf(pool, "%s: %s\n", desc, time_utf8));
-  return SVN_NO_ERROR;
+  return svn_cmdline_printf(pool, "%s: %s\n", desc, time_utf8);
 }
 
 
@@ -82,18 +82,15 @@ print_info_xml(void *baton,
   svn_stringbuf_t *sb = svn_stringbuf_create("", pool);
   const char *rev_str;
 
-  /* If revision is invalid, assume WC is corrupt. */
   if (SVN_IS_VALID_REVNUM(info->rev))
     rev_str = apr_psprintf(pool, "%ld", info->rev);
   else
-    return svn_error_createf(SVN_ERR_WC_CORRUPT, NULL,
-                             _("'%s' has invalid revision"),
-                             svn_path_local_style(target, pool));
+    rev_str = apr_pstrdup(pool, _("Resource is not under version control."));
 
   /* "<entry ...>" */
   svn_xml_make_open_tag(&sb, pool, svn_xml_normal, "entry",
                         "path", svn_path_local_style(target, pool),
-                        "kind", svn_cl__node_kind_str(info->kind),
+                        "kind", svn_cl__node_kind_str_xml(info->kind),
                         "revision", rev_str,
                         NULL);
 
@@ -141,11 +138,6 @@ print_info_xml(void *baton,
       if (info->text_time)
         svn_cl__xml_tagged_cdata(&sb, pool, "text-updated",
                                  svn_time_to_cstring(info->text_time, pool));
-
-      /* "<prop-updated> xx </prop-updated>" */
-      if (info->prop_time)
-        svn_cl__xml_tagged_cdata(&sb, pool, "prop-updated",
-                                 svn_time_to_cstring(info->prop_time, pool));
 
       /* "<checksum> xx </checksum>" */
       svn_cl__xml_tagged_cdata(&sb, pool, "checksum", info->checksum);
@@ -221,6 +213,10 @@ print_info_xml(void *baton,
       /* "</lock>" */
       svn_xml_make_close_tag(&sb, pool, "lock");
     }
+
+  if (info->tree_conflict)
+    SVN_ERR(svn_cl__append_tree_conflict_info_xml(sb, info->tree_conflict,
+                                                  pool));
 
   /* "</entry>" */
   svn_xml_make_close_tag(&sb, pool, "entry");
@@ -361,10 +357,6 @@ print_info(void *baton,
         SVN_ERR(svn_cl__info_print_time(info->text_time,
                                         _("Text Last Updated"), pool));
 
-      if (info->prop_time)
-        SVN_ERR(svn_cl__info_print_time(info->prop_time,
-                                        _("Properties Last Updated"), pool));
-
       if (info->checksum)
         SVN_ERR(svn_cmdline_printf(pool, _("Checksum: %s\n"),
                                    info->checksum));
@@ -416,9 +408,9 @@ print_info(void *baton,
           /* NOTE: The stdio will handle newline translation. */
           comment_lines = svn_cstring_count_newlines(info->lock->comment) + 1;
           SVN_ERR(svn_cmdline_printf(pool,
-                                     (comment_lines != 1)
-                                     ? _("Lock Comment (%i lines):\n%s\n")
-                                     : _("Lock Comment (%i line):\n%s\n"),
+                                     Q_("Lock Comment (%i line):\n%s\n",
+                                        "Lock Comment (%i lines):\n%s\n",
+                                        comment_lines),
                                      comment_lines,
                                      info->lock->comment));
         }
@@ -428,10 +420,40 @@ print_info(void *baton,
     SVN_ERR(svn_cmdline_printf(pool, _("Changelist: %s\n"),
                                info->changelist));
 
-  /* Print extra newline separator. */
-  SVN_ERR(svn_cmdline_printf(pool, "\n"));
+  if (info->tree_conflict)
+    {
+      const char *desc, *src_left_version, *src_right_version;
 
-  return SVN_NO_ERROR;
+      SVN_ERR(svn_cl__get_human_readable_tree_conflict_description(
+                &desc, info->tree_conflict, pool));
+      src_left_version =
+        svn_cl__node_description(info->tree_conflict->src_left_version, pool);
+      src_right_version =
+        svn_cl__node_description(info->tree_conflict->src_right_version, pool);
+
+      svn_cmdline_printf(pool,
+                         "%s: %s\n",
+                         _("Tree conflict"),
+                         desc);
+
+      if (src_left_version)
+        svn_cmdline_printf(pool,
+                           "  %s: %s\n",
+                           _("Source  left"), /* (1) */
+                           src_left_version);
+        /* (1): Sneaking in a space in "Source  left" so that it is the
+         * same length as "Source right" while it still starts in the same
+         * column. That's just a tiny tweak in the English `svn'. */
+
+      if (src_right_version)
+        svn_cmdline_printf(pool,
+                           "  %s: %s\n",
+                           _("Source right"),
+                           src_right_version);
+    }
+
+  /* Print extra newline separator. */
+  return svn_cmdline_printf(pool, "\n");
 }
 
 
@@ -447,12 +469,13 @@ svn_cl__info(apr_getopt_t *os,
   apr_pool_t *subpool = svn_pool_create(pool);
   int i;
   svn_error_t *err;
+  svn_boolean_t saw_a_problem = FALSE;
   svn_opt_revision_t peg_revision;
   svn_info_receiver_t receiver;
 
-  SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os, 
-                                                      opt_state->targets, 
-                                                      pool));
+  SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   /* Add "." if user passed 0 arguments. */
   svn_opt_push_implicit_dot_target(targets, pool);
@@ -496,39 +519,47 @@ svn_cl__info(apr_getopt_t *os,
           && (peg_revision.kind == svn_opt_revision_unspecified))
         peg_revision.kind = svn_opt_revision_head;
 
-      err = svn_client_info2(truepath, 
+      err = svn_client_info2(truepath,
                              &peg_revision, &(opt_state->start_revision),
                              receiver, NULL, opt_state->depth,
                              opt_state->changelists, ctx, subpool);
 
-      /* If one of the targets is a non-existent URL or wc-entry,
-         don't bail out.  Just warn and move on to the next target. */
-      if (err && err->apr_err == SVN_ERR_UNVERSIONED_RESOURCE)
+      if (err)
         {
-          svn_error_clear(err);
-          SVN_ERR(svn_cmdline_fprintf
-                  (stderr, subpool,
-                   _("%s:  (Not a versioned resource)\n\n"),
-                   svn_path_local_style(target, pool)));
-          continue;
-        }
-      else if (err && err->apr_err == SVN_ERR_RA_ILLEGAL_URL)
-        {
-          svn_error_clear(err);
-          SVN_ERR(svn_cmdline_fprintf
-                  (stderr, subpool,
-                   _("%s:  (Not a valid URL)\n\n"),
-                   svn_path_local_style(target, pool)));
-          continue;
-        }
-      else if (err)
-        return err;
+          /* If one of the targets is a non-existent URL or wc-entry,
+             don't bail out.  Just warn and move on to the next target. */
+          if (err->apr_err == SVN_ERR_UNVERSIONED_RESOURCE
+              || err->apr_err == SVN_ERR_ENTRY_NOT_FOUND)
+            {
+              SVN_ERR(svn_cmdline_fprintf
+                      (stderr, subpool,
+                       _("%s:  (Not a versioned resource)\n\n"),
+                       svn_path_local_style(target, pool)));
+            }
+          else if (err->apr_err == SVN_ERR_RA_ILLEGAL_URL)
+            {
+              SVN_ERR(svn_cmdline_fprintf
+                      (stderr, subpool,
+                       _("%s:  (Not a valid URL)\n\n"),
+                       svn_path_local_style(target, pool)));
+            }
+          else
+            {
+              return err;
+            }
 
+          svn_error_clear(err);
+          err = NULL;
+          saw_a_problem = TRUE;
+        }
     }
   svn_pool_destroy(subpool);
 
   if (opt_state->xml && (! opt_state->incremental))
     SVN_ERR(svn_cl__xml_print_footer("info", pool));
 
-  return SVN_NO_ERROR;
+  if (saw_a_problem)
+    return svn_error_create(SVN_ERR_BASE, NULL, NULL);
+  else
+    return SVN_NO_ERROR;
 }

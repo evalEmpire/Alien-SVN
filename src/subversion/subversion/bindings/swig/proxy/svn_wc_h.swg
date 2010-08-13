@@ -15,6 +15,7 @@
   svn_wc_notify_func_t,
   svn_wc_get_file_t,
   svn_wc_conflict_resolver_func_t,
+  svn_wc_status_func3_t,
   svn_wc_status_func2_t,
   svn_wc_status_func_t,
   svn_wc_canonicalize_svn_prop_get_file_t,
@@ -27,6 +28,7 @@
   svn_wc_notify_func_t *,
   svn_wc_get_file_t *,
   svn_wc_conflict_resolver_func_t *,
+  svn_wc_status_func3_t *,
   svn_wc_status_func2_t *,
   svn_wc_status_func_t *,
   svn_wc_canonicalize_svn_prop_get_file_t *,
@@ -69,8 +71,10 @@
 %proxy(svn_wc_external_item2_t);
 %proxy(svn_wc_external_item_t);
 %proxy(svn_wc_notify_t);
+%proxy(svn_wc_conflict_version_t);
 %proxy(svn_wc_conflict_description_t);
 %proxy(svn_wc_conflict_result_t);
+%proxy(svn_wc_diff_callbacks3_t);
 %proxy(svn_wc_diff_callbacks2_t);
 %proxy(svn_wc_diff_callbacks_t);
 %proxy(svn_wc_entry_t);
@@ -85,6 +89,46 @@
 /* Callbacks */
 
 %inline %{
+static svn_error_t * svn_wc_diff_callbacks3_invoke_file_changed(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *contentstate, svn_wc_notify_state_t *propstate, svn_boolean_t *tree_conflicted, const char *path, const char *tmpfile1, const char *tmpfile2, svn_revnum_t rev1, svn_revnum_t rev2, const char *mimetype1, const char *mimetype2, const apr_array_header_t *propchanges, apr_hash_t *originalprops, void *diff_baton) {
+  return (_obj->file_changed)(adm_access, contentstate, propstate, tree_conflicted, path, tmpfile1, tmpfile2, rev1, rev2, mimetype1, mimetype2, propchanges, originalprops, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_file_added(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *contentstate, svn_wc_notify_state_t *propstate, svn_boolean_t *tree_conflicted, const char *path, const char *tmpfile1, const char *tmpfile2, svn_revnum_t rev1, svn_revnum_t rev2, const char *mimetype1, const char *mimetype2, const apr_array_header_t *propchanges, apr_hash_t *originalprops, void *diff_baton) {
+  return (_obj->file_added)(adm_access, contentstate, propstate, tree_conflicted, path, tmpfile1, tmpfile2, rev1, rev2, mimetype1, mimetype2, propchanges, originalprops, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_file_deleted(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *state, svn_boolean_t *tree_conflicted, const char *path, const char *tmpfile1, const char *tmpfile2, const char *mimetype1, const char *mimetype2, apr_hash_t *originalprops, void *diff_baton) {
+  return (_obj->file_deleted)(adm_access, state, tree_conflicted, path, tmpfile1, tmpfile2, mimetype1, mimetype2, originalprops, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_dir_added(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *state, svn_boolean_t *tree_conflicted, const char *path, svn_revnum_t rev, void *diff_baton) {
+  return (_obj->dir_added)(adm_access, state, tree_conflicted, path, rev, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_dir_deleted(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *state, svn_boolean_t *tree_conflicted, const char *path, void *diff_baton) {
+  return (_obj->dir_deleted)(adm_access, state, tree_conflicted, path, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_dir_props_changed(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *propstate, svn_boolean_t *tree_conflicted, const char *path, const apr_array_header_t *propchanges, apr_hash_t *original_props, void *diff_baton) {
+  return (_obj->dir_props_changed)(adm_access, propstate, tree_conflicted, path, propchanges, original_props, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_dir_opened(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_boolean_t *tree_conflicted, const char *path, svn_revnum_t rev, void *diff_baton) {
+  return (_obj->dir_opened)(adm_access, tree_conflicted, path, rev, diff_baton);
+}
+
+static svn_error_t * svn_wc_diff_callbacks3_invoke_dir_closed(
+  svn_wc_diff_callbacks3_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *contentstate, svn_wc_notify_state_t *propstate, svn_boolean_t *tree_conflicted, const char *path, void *diff_baton) {
+  return (_obj->dir_closed)(adm_access, contentstate, propstate, tree_conflicted, path, diff_baton);
+}
+
 static svn_error_t * svn_wc_diff_callbacks2_invoke_file_changed(
   svn_wc_diff_callbacks2_t * _obj, svn_wc_adm_access_t *adm_access, svn_wc_notify_state_t *contentstate, svn_wc_notify_state_t *propstate, const char *path, const char *tmpfile1, const char *tmpfile2, svn_revnum_t rev1, svn_revnum_t rev2, const char *mimetype1, const char *mimetype2, const apr_array_header_t *propchanges, apr_hash_t *originalprops, void *diff_baton) {
   return (_obj->file_changed)(adm_access, contentstate, propstate, path, tmpfile1, tmpfile2, rev1, rev2, mimetype1, mimetype2, propchanges, originalprops, diff_baton);
@@ -180,6 +224,11 @@ static svn_error_t * svn_wc_invoke_conflict_resolver_func(
   return _obj(result, description, baton, pool);
 }
 
+static svn_error_t * svn_wc_invoke_status_func3(
+  svn_wc_status_func3_t _obj, void *baton, const char *path, svn_wc_status2_t *status, apr_pool_t *pool) {
+  return _obj(baton, path, status, pool);
+}
+
 static void svn_wc_invoke_status_func2(
   svn_wc_status_func2_t _obj, void *baton, const char *path, svn_wc_status2_t *status) {
   _obj(baton, path, status);
@@ -213,6 +262,14 @@ static svn_error_t * svn_wc_invoke_relocation_validator(
 %}
 
 #ifdef SWIGPYTHON
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, file_changed, svn_wc_diff_callbacks3_invoke_file_changed);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, file_added, svn_wc_diff_callbacks3_invoke_file_added);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, file_deleted, svn_wc_diff_callbacks3_invoke_file_deleted);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, dir_added, svn_wc_diff_callbacks3_invoke_dir_added);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, dir_deleted, svn_wc_diff_callbacks3_invoke_dir_deleted);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, dir_props_changed, svn_wc_diff_callbacks3_invoke_dir_props_changed);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, dir_opened, svn_wc_diff_callbacks3_invoke_dir_opened);
+%funcptr_member_proxy(svn_wc_diff_callbacks3_t, dir_closed, svn_wc_diff_callbacks3_invoke_dir_closed);
 %funcptr_member_proxy(svn_wc_diff_callbacks2_t, file_changed, svn_wc_diff_callbacks2_invoke_file_changed);
 %funcptr_member_proxy(svn_wc_diff_callbacks2_t, file_added, svn_wc_diff_callbacks2_invoke_file_added);
 %funcptr_member_proxy(svn_wc_diff_callbacks2_t, file_deleted, svn_wc_diff_callbacks2_invoke_file_deleted);
@@ -232,6 +289,7 @@ static svn_error_t * svn_wc_invoke_relocation_validator(
 %funcptr_proxy(svn_wc_notify_func_t, svn_wc_invoke_notify_func);
 %funcptr_proxy(svn_wc_get_file_t, svn_wc_invoke_get_file);
 %funcptr_proxy(svn_wc_conflict_resolver_func_t, svn_wc_invoke_conflict_resolver_func);
+%funcptr_proxy(svn_wc_status_func3_t, svn_wc_invoke_status_func3);
 %funcptr_proxy(svn_wc_status_func2_t, svn_wc_invoke_status_func2);
 %funcptr_proxy(svn_wc_status_func_t, svn_wc_invoke_status_func);
 %funcptr_proxy(svn_wc_canonicalize_svn_prop_get_file_t, svn_wc_invoke_canonicalize_svn_prop_get_file);

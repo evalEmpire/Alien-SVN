@@ -70,9 +70,7 @@ proplist_receiver_xml(void *baton,
   /* "</target>" */
   svn_xml_make_close_tag(&sb, pool, "target");
 
-  SVN_ERR(svn_cl__error_checked_fputs(sb->data, stdout));
-
-  return SVN_NO_ERROR;
+  return svn_cl__error_checked_fputs(sb->data, stdout);
 }
 
 
@@ -94,10 +92,7 @@ proplist_receiver(void *baton,
 
   if (!opt_state->quiet)
     SVN_ERR(svn_cmdline_printf(pool, _("Properties on '%s':\n"), name_local));
-  SVN_ERR(svn_cl__print_prop_hash(prop_hash, (! opt_state->verbose),
-                                  pool));
-
-  return SVN_NO_ERROR;
+  return svn_cl__print_prop_hash(prop_hash, (! opt_state->verbose), pool);
 }
 
 
@@ -113,8 +108,8 @@ svn_cl__proplist(apr_getopt_t *os,
   int i;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   /* Add "." if user passed 0 file arguments */
   svn_opt_push_implicit_dot_target(targets, pool);
@@ -200,7 +195,7 @@ svn_cl__proplist(apr_getopt_t *os,
           SVN_ERR(svn_cl__try
                   (svn_client_proplist3(truepath, &peg_revision,
                                         &(opt_state->start_revision),
-                                        opt_state->depth, 
+                                        opt_state->depth,
                                         opt_state->changelists,
                                         pl_receiver, &pl_baton,
                                         ctx, subpool),

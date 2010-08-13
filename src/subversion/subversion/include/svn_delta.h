@@ -1,7 +1,7 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -28,12 +28,15 @@
 
 #include <apr.h>
 #include <apr_pools.h>
+#include <apr_hash.h>
+#include <apr_tables.h>
+#include <apr_file_io.h>  /* for apr_file_t */
 
 #include "svn_types.h"
 #include "svn_string.h"
-#include "svn_error.h"
 #include "svn_io.h"
 #include "svn_version.h"
+#include "svn_checksum.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,13 +49,14 @@ extern "C" {
  *
  * @since New in 1.1.
  */
-const svn_version_t *svn_delta_version(void);
+const svn_version_t *
+svn_delta_version(void);
 
 /**
  * @defgroup delta_support Delta generation and handling
  *
  * @{
- */ 
+ */
 
 /**  Text deltas.
  *
@@ -88,7 +92,7 @@ enum svn_delta_action {
     /** Append the @a length bytes at @a offset in the source view to the
      * target.
      *
-     * It must be the case that @a 0 <= @a offset < @a offset +
+     * It must be the case that 0 <= @a offset < @a offset +
      * @a length <= size of source view.
      */
     svn_txdelta_source,
@@ -96,7 +100,7 @@ enum svn_delta_action {
     /** Append the @a length bytes at @a offset in the target view, to the
      * target.
      *
-     * It must be the case that @a 0 <= @a offset < current position in the
+     * It must be the case that 0 <= @a offset < current position in the
      * target view.
      *
      * However!  @a offset + @a length may be *beyond* the end of the existing
@@ -105,7 +109,7 @@ enum svn_delta_action {
      * it'll work out --- you're adding new bytes to the end at the
      * same rate you're reading them from the middle.  Thus, if your
      * current target text is "abcdefgh", and you get an @c svn_txdelta_target
-     * instruction whose @a offset is @a 6 and whose @a length is @a 7,
+     * instruction whose @a offset is 6 and whose @a length is 7,
      * the resulting string is "abcdefghghghghg".  This trick is actually
      * useful in encoding long runs of consecutive characters, long runs
      * of CR/LF pairs, etc.
@@ -115,7 +119,7 @@ enum svn_delta_action {
     /** Append the @a length bytes at @a offset in the window's @a new string
      * to the target.
      *
-     * It must be the case that @a 0 <= @a offset < @a offset +
+     * It must be the case that 0 <= @a offset < @a offset +
      * @a length <= length of @a new.  Windows MUST use new data in ascending
      * order with no overlap at the moment; svn_txdelta_to_svndiff()
      * depends on this.
@@ -233,6 +237,37 @@ typedef svn_error_t *(*svn_txdelta_window_handler_t)
   (svn_txdelta_window_t *window, void *baton);
 
 
+/** This function will generate delta windows that turn @a source into
+ * @a target, and pushing these windows into the @a handler window handler
+ * callback (passing @a handler_baton to each invocation).
+ *
+ * If @a checksum is not NULL, then a checksum (of kind @a checksum_kind)
+ * will be computed for the target stream, and placed into *checksum.
+ *
+ * If @a cancel_func is not NULL, then it should refer to a cancellation
+ * function (along with @a cancel_baton).
+ *
+ * Results (the checksum) will be allocated from @a result_pool, and all
+ * temporary allocations will be performed in @a scratch_pool.
+ *
+ * Note: this function replaces the combination of svn_txdelta() and
+ *   svn_txdelta_send_txstream().
+ *
+ * @since New in 1.6.
+ */
+svn_error_t *
+svn_txdelta_run(svn_stream_t *source,
+                svn_stream_t *target,
+                svn_txdelta_window_handler_t handler,
+                void *handler_baton,
+                svn_checksum_kind_t checksum_kind,
+                svn_checksum_t **checksum,
+                svn_cancel_func_t cancel_func,
+                void *cancel_baton,
+                apr_pool_t *result_pool,
+                apr_pool_t *scratch_pool);
+
+
 /** A delta stream --- this is the hat from which we pull a series of
  * svn_txdelta_window_t objects, which, taken in order, describe the
  * entire target string.  This type is defined within libsvn_delta, and
@@ -284,9 +319,10 @@ svn_txdelta_stream_create(void *baton,
  *
  * The window will be allocated in @a pool.
  */
-svn_error_t *svn_txdelta_next_window(svn_txdelta_window_t **window,
-                                     svn_txdelta_stream_t *stream,
-                                     apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_next_window(svn_txdelta_window_t **window,
+                        svn_txdelta_stream_t *stream,
+                        apr_pool_t *pool);
 
 
 /** Return the md5 digest for the complete fulltext deltified by
@@ -294,7 +330,8 @@ svn_error_t *svn_txdelta_next_window(svn_txdelta_window_t **window,
  * @c NULL window.  The digest is allocated in the same memory as @a
  * STREAM.
  */
-const unsigned char *svn_txdelta_md5_digest(svn_txdelta_stream_t *stream);
+const unsigned char *
+svn_txdelta_md5_digest(svn_txdelta_stream_t *stream);
 
 /** Set @a *stream to a pointer to a delta stream that will turn the byte
  * string from @a source into the byte stream from @a target.
@@ -305,10 +342,11 @@ const unsigned char *svn_txdelta_md5_digest(svn_txdelta_stream_t *stream);
  *
  * Do any necessary allocation in a sub-pool of @a pool.
  */
-void svn_txdelta(svn_txdelta_stream_t **stream,
-                 svn_stream_t *source,
-                 svn_stream_t *target,
-                 apr_pool_t *pool);
+void
+svn_txdelta(svn_txdelta_stream_t **stream,
+            svn_stream_t *source,
+            svn_stream_t *target,
+            apr_pool_t *pool);
 
 
 /**
@@ -321,10 +359,11 @@ void svn_txdelta(svn_txdelta_stream_t **stream,
  *
  * @since New in 1.1.
  */
-svn_stream_t *svn_txdelta_target_push(svn_txdelta_window_handler_t handler,
-                                      void *handler_baton,
-                                      svn_stream_t *source,
-                                      apr_pool_t *pool);
+svn_stream_t *
+svn_txdelta_target_push(svn_txdelta_window_handler_t handler,
+                        void *handler_baton,
+                        svn_stream_t *source,
+                        apr_pool_t *pool);
 
 
 /** Send the contents of @a string to window-handler @a handler/@a baton.
@@ -333,10 +372,11 @@ svn_stream_t *svn_txdelta_target_push(svn_txdelta_window_handler_t handler,
  *
  * All temporary allocation is performed in @a pool.
  */
-svn_error_t *svn_txdelta_send_string(const svn_string_t *string,
-                                     svn_txdelta_window_handler_t handler,
-                                     void *handler_baton,
-                                     apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_send_string(const svn_string_t *string,
+                        svn_txdelta_window_handler_t handler,
+                        void *handler_baton,
+                        apr_pool_t *pool);
 
 /** Send the contents of @a stream to window-handler @a handler/@a baton.
  * This is effectively a 'copy' operation, resulting in delta windows that
@@ -348,21 +388,23 @@ svn_error_t *svn_txdelta_send_string(const svn_string_t *string,
  *
  * All temporary allocation is performed in @a pool.
  */
-svn_error_t *svn_txdelta_send_stream(svn_stream_t *stream,
-                                     svn_txdelta_window_handler_t handler,
-                                     void *handler_baton,
-                                     unsigned char *digest,
-                                     apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_send_stream(svn_stream_t *stream,
+                        svn_txdelta_window_handler_t handler,
+                        void *handler_baton,
+                        unsigned char *digest,
+                        apr_pool_t *pool);
 
 /** Send the contents of @a txstream to window-handler @a handler/@a baton.
  * Windows will be extracted from the stream and delivered to the handler.
  *
  * All temporary allocation is performed in @a pool.
  */
-svn_error_t *svn_txdelta_send_txstream(svn_txdelta_stream_t *txstream,
-                                       svn_txdelta_window_handler_t handler,
-                                       void *handler_baton,
-                                       apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_send_txstream(svn_txdelta_stream_t *txstream,
+                          svn_txdelta_window_handler_t handler,
+                          void *handler_baton,
+                          apr_pool_t *pool);
 
 
 /** Prepare to apply a text delta.  @a source is a readable generic stream
@@ -385,13 +427,14 @@ svn_error_t *svn_txdelta_send_txstream(svn_txdelta_stream_t *txstream,
  * @note To avoid lifetime issues, @a error_info is copied into
  * @a pool or a subpool thereof.
  */
-void svn_txdelta_apply(svn_stream_t *source,
-                       svn_stream_t *target,
-                       unsigned char *result_digest,
-                       const char *error_info,
-                       apr_pool_t *pool,
-                       svn_txdelta_window_handler_t *handler,
-                       void **handler_baton);
+void
+svn_txdelta_apply(svn_stream_t *source,
+                  svn_stream_t *target,
+                  unsigned char *result_digest,
+                  const char *error_info,
+                  apr_pool_t *pool,
+                  svn_txdelta_window_handler_t *handler,
+                  void **handler_baton);
 
 
 
@@ -406,21 +449,24 @@ void svn_txdelta_apply(svn_stream_t *source,
  *
  * @since New in 1.4.
  */
-void svn_txdelta_to_svndiff2(svn_txdelta_window_handler_t *handler,
-                             void **handler_baton,
-                             svn_stream_t *output,
-                             int svndiff_version,
-                             apr_pool_t *pool);
+void
+svn_txdelta_to_svndiff2(svn_txdelta_window_handler_t *handler,
+                        void **handler_baton,
+                        svn_stream_t *output,
+                        int svndiff_version,
+                        apr_pool_t *pool);
 
 /** Similar to svn_txdelta_to_svndiff2, but always using svndiff
  * version 0.
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
-void svn_txdelta_to_svndiff(svn_stream_t *output,
-                            apr_pool_t *pool,
-                            svn_txdelta_window_handler_t *handler,
-                            void **handler_baton);
+SVN_DEPRECATED
+void
+svn_txdelta_to_svndiff(svn_stream_t *output,
+                       apr_pool_t *pool,
+                       svn_txdelta_window_handler_t *handler,
+                       void **handler_baton);
 
 /** Return a writable generic stream which will parse svndiff-format
  * data into a text delta, invoking @a handler with @a handler_baton
@@ -429,10 +475,11 @@ void svn_txdelta_to_svndiff(svn_stream_t *output,
  * svndiff data set will result in @c SVN_ERR_SVNDIFF_UNEXPECTED_END,
  * else this error condition will be ignored.
  */
-svn_stream_t *svn_txdelta_parse_svndiff(svn_txdelta_window_handler_t handler,
-                                        void *handler_baton,
-                                        svn_boolean_t error_on_early_close,
-                                        apr_pool_t *pool);
+svn_stream_t *
+svn_txdelta_parse_svndiff(svn_txdelta_window_handler_t handler,
+                          void *handler_baton,
+                          svn_boolean_t error_on_early_close,
+                          apr_pool_t *pool);
 
 /**
  * Read and parse one delta window in svndiff format from the
@@ -445,10 +492,11 @@ svn_stream_t *svn_txdelta_parse_svndiff(svn_txdelta_window_handler_t handler,
  *
  * @since New in 1.1.
  */
-svn_error_t *svn_txdelta_read_svndiff_window(svn_txdelta_window_t **window,
-                                             svn_stream_t *stream,
-                                             int svndiff_version,
-                                             apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_read_svndiff_window(svn_txdelta_window_t **window,
+                                svn_stream_t *stream,
+                                int svndiff_version,
+                                apr_pool_t *pool);
 
 /**
  * Read and skip one delta window in svndiff format from the
@@ -461,9 +509,10 @@ svn_error_t *svn_txdelta_read_svndiff_window(svn_txdelta_window_t **window,
  *
  * @since New in 1.1.
  */
-svn_error_t *svn_txdelta_skip_svndiff_window(apr_file_t *file,
-                                             int svndiff_version,
-                                             apr_pool_t *pool);
+svn_error_t *
+svn_txdelta_skip_svndiff_window(apr_file_t *file,
+                                int svndiff_version,
+                                apr_pool_t *pool);
 
 /** @} */
 
@@ -523,6 +572,10 @@ svn_error_t *svn_txdelta_skip_svndiff_window(apr_file_t *file,
 
 /** A structure full of callback functions the delta source will invoke
  * as it produces the delta.
+ *
+ * Note: Don't try to allocate one of these yourself.  Instead, always
+ * use svn_delta_default_editor() or some other constructor, to ensure
+ * that unused slots are filled in with no-op functions.
  *
  * <h3>Function Usage</h3>
  *
@@ -699,6 +752,11 @@ typedef struct svn_delta_editor_t
 {
   /** Set the target revision for this edit to @a target_revision.  This
    * call, if used, should precede all other editor calls.
+   *
+   * @note This is typically used only for server->client update-type
+   * operations.  It doesn't really make much sense for commit-type
+   * operations, because the revision of a commit isn't known until
+   * the commit is finalized.
    */
   svn_error_t *(*set_target_revision)(void *edit_baton,
                                       svn_revnum_t target_revision,
@@ -728,6 +786,14 @@ typedef struct svn_delta_editor_t
    * are really removing the revision of @a path that you think you are.
    *
    * All allocations should be performed in @a pool.
+   *
+   * @note The @a revision parameter is typically used only for
+   * client->server commit-type operations, allowing the server to
+   * verify that it is deleting what the client thinks it should be
+   * deleting.  It only really makes sense in the opposite direction
+   * (during server->client update-type operations) when the trees
+   * whose delta is being described are ancestrally related (that is,
+   * one tree is an ancestor of the other).
    */
   svn_error_t *(*delete_entry)(const char *path,
                                svn_revnum_t revision,
@@ -940,15 +1006,17 @@ typedef struct svn_delta_editor_t
  * implement -- you can rely on the template's implementation to
  * safely do nothing of consequence.
  */
-svn_delta_editor_t *svn_delta_default_editor(apr_pool_t *pool);
+svn_delta_editor_t *
+svn_delta_default_editor(apr_pool_t *pool);
 
 /** A text-delta window handler which does nothing.
  *
  * Editors can return this handler from @c apply_textdelta if they don't
  * care about text delta windows.
  */
-svn_error_t *svn_delta_noop_window_handler(svn_txdelta_window_t *window,
-                                           void *baton);
+svn_error_t *
+svn_delta_noop_window_handler(svn_txdelta_window_t *window,
+                              void *baton);
 
 /** Set @a *editor and @a *edit_baton to a cancellation editor that
  * wraps @a wrapped_editor and @a wrapped_baton.

@@ -163,7 +163,7 @@ apr_status_t svn_ra_svn__sasl_common_init(apr_pool_t *pool)
   return apr_err;
 }
 
-static svn_error_t *sasl_init_cb(apr_pool_t *pool)
+static svn_error_t *sasl_init_cb(void *baton, apr_pool_t *pool)
 {
   if (svn_ra_svn__sasl_common_init(pool) != APR_SUCCESS
       || sasl_client_init(NULL) != SASL_OK)
@@ -174,7 +174,8 @@ static svn_error_t *sasl_init_cb(apr_pool_t *pool)
 
 svn_error_t *svn_ra_svn__sasl_init(void)
 {
-  SVN_ERR(svn_atomic__init_once(&svn_ra_svn__sasl_status, sasl_init_cb, NULL));
+  SVN_ERR(svn_atomic__init_once(&svn_ra_svn__sasl_status,
+                                sasl_init_cb, NULL, NULL));
   return SVN_NO_ERROR;
 }
 
@@ -351,10 +352,8 @@ static svn_error_t *new_sasl_ctx(sasl_conn_t **sasl_ctx,
                                 sasl_errdetail(*sasl_ctx));
     }
 
-  /* Set security properties. Don't allow PLAIN or LOGIN, since we
-     don't support TLS yet. */
+  /* Set security properties. */
   svn_ra_svn__default_secprops(&secprops);
-  secprops.security_flags = SASL_SEC_NOPLAINTEXT;
   sasl_setprop(*sasl_ctx, SASL_SEC_PROPS, &secprops);
 
   return SVN_NO_ERROR;
@@ -415,8 +414,8 @@ static svn_error_t *try_auth(svn_ra_svn__session_baton_t *sess,
 
   /* Prepare the initial authentication token. */
   if (outlen > 0 || strcmp(mech, "EXTERNAL") == 0)
-    arg = svn_base64_encode_string(svn_string_ncreate(out, outlen, pool),
-                                   pool);
+    arg = svn_base64_encode_string2(svn_string_ncreate(out, outlen, pool),
+                                    TRUE, pool);
 
   /* Send the initial client response */
   SVN_ERR(svn_ra_svn__auth_response(sess->conn, pool, mech,
@@ -469,7 +468,7 @@ static svn_error_t *try_auth(svn_ra_svn__session_baton_t *sess,
           /* Write our response. */
           /* For CRAM-MD5, we don't use base64-encoding. */
           if (strcmp(mech, "CRAM-MD5") != 0)
-            arg = svn_base64_encode_string(arg, pool);
+            arg = svn_base64_encode_string2(arg, TRUE, pool);
           SVN_ERR(svn_ra_svn_write_cstring(sess->conn, pool, arg->data));
         }
       else
@@ -627,10 +626,8 @@ svn_error_t *svn_ra_svn__enable_sasl_encryption(svn_ra_svn_conn_t *conn,
                                                 sasl_conn_t *sasl_ctx,
                                                 apr_pool_t *pool)
 {
-  sasl_baton_t *sasl_baton;
   const sasl_ssf_t *ssfp;
   int result;
-  const void *maxsize;
 
   if (! conn->encrypted)
     {
@@ -642,6 +639,9 @@ svn_error_t *svn_ra_svn__enable_sasl_encryption(svn_ra_svn_conn_t *conn,
 
       if (*ssfp > 0)
         {
+          sasl_baton_t *sasl_baton;
+          const void *maxsize;
+
           /* Flush the connection, as we're about to replace its stream. */
           SVN_ERR(svn_ra_svn_flush(conn, pool));
 
@@ -654,7 +654,7 @@ svn_error_t *svn_ra_svn__enable_sasl_encryption(svn_ra_svn_conn_t *conn,
           if (result != SASL_OK)
             return svn_error_create(SVN_ERR_RA_NOT_AUTHORIZED, NULL,
                                     sasl_errdetail(sasl_ctx));
-          sasl_baton->maxsize = *((unsigned int *) maxsize);
+          sasl_baton->maxsize = *((const unsigned int *) maxsize);
 
           /* If there is any data left in the read buffer at this point,
              we need to decrypt it. */

@@ -1,8 +1,14 @@
 import unittest, os
 
-try:
+from sys import version_info # For Python version check
+if version_info[0] >= 3:
+  # Python >=3.0
+  from io import StringIO
+else:
+  # Python <3.0
+  try:
     from cStringIO import StringIO
-except ImportError:
+  except ImportError:
     from StringIO import StringIO
 
 from svn import core, repos, fs
@@ -39,7 +45,7 @@ class SubversionMergeinfoTestCase(unittest.TestCase):
     self.tearDown()
     self.repos = repos.svn_repos_create(REPOS_PATH, '', '', None, None)
     repos.svn_repos_load_fs2(self.repos, dumpfile, StringIO(),
-                             repos.svn_repos_load_uuid_default, '',
+                             repos.svn_repos_load_uuid_ignore, '',
                              0, 0, None)
     self.fs = repos.fs(self.repos)
     self.rev = fs.youngest_rev(self.fs)
@@ -69,7 +75,7 @@ class SubversionMergeinfoTestCase(unittest.TestCase):
     mergeinfo3 = core.svn_mergeinfo_merge(mergeinfo1, mergeinfo2)
     self.inspect_mergeinfo_dict(mergeinfo3, self.MERGEINFO_SRC,
                                 self.MERGEINFO_NBR_REV_RANGES)
-    
+
   def test_rangelist_reverse(self):
     mergeinfo = core.svn_mergeinfo_parse(self.TEXT_MERGEINFO1)
     rangelist = mergeinfo.get(self.MERGEINFO_SRC)
@@ -101,10 +107,10 @@ class SubversionMergeinfoTestCase(unittest.TestCase):
                                        False, None, None)
     expected_mergeinfo = \
       { '/trunk' :
-          { 'branches/a' : [RevRange(2, 11)],
-            'branches/b' : [RevRange(9, 13)],
-            'branches/c' : [RevRange(2, 16)],
-            'trunk'      : [RevRange(1, 9)],  },
+          { '/branches/a' : [RevRange(2, 11)],
+            '/branches/b' : [RevRange(9, 13)],
+            '/branches/c' : [RevRange(2, 16)],
+            '/trunk'      : [RevRange(1, 9)],  },
       }
     self.compare_mergeinfo_catalogs(mergeinfo, expected_mergeinfo)
 
@@ -126,20 +132,16 @@ class SubversionMergeinfoTestCase(unittest.TestCase):
                       "Missing revision range 'non-inheritable' flag")
 
   def compare_mergeinfo_catalogs(self, catalog1, catalog2):
-    keys1 = catalog1.keys()
-    keys1.sort()
-    keys2 = catalog2.keys()
-    keys2.sort()
+    keys1 = sorted(catalog1.keys())
+    keys2 = sorted(catalog2.keys())
     self.assertEqual(keys1, keys2)
 
     for k in catalog1.keys():
         self.compare_mergeinfos(catalog1[k], catalog2[k])
 
   def compare_mergeinfos(self, mergeinfo1, mergeinfo2):
-    keys1 = mergeinfo1.keys()
-    keys1.sort()
-    keys2 = mergeinfo2.keys()
-    keys2.sort()
+    keys1 = sorted(mergeinfo1.keys())
+    keys2 = sorted(mergeinfo2.keys())
     self.assertEqual(keys1, keys2)
 
     for k in mergeinfo1.keys():

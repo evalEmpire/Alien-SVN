@@ -33,8 +33,6 @@
 #include "svn_mergeinfo.h"
 #include "repos.h"
 
-#include <assert.h>
-
 
 /* Note:  this binary search assumes that the datestamp properties on
    each revision are in chronological order.  That is if revision A >
@@ -66,9 +64,7 @@ get_time(apr_time_t *tm,
       (SVN_ERR_FS_GENERAL, NULL,
        _("Failed to find time on revision %ld"), rev);
 
-  SVN_ERR(svn_time_from_cstring(tm, date_str->data, pool));
-
-  return SVN_NO_ERROR;
+  return svn_time_from_cstring(tm, date_str->data, pool);
 }
 
 
@@ -176,25 +172,6 @@ svn_repos_get_committed_info(svn_revnum_t *committed_rev,
 
   return SVN_NO_ERROR;
 }
-
-
-/* Deprecated. */
-svn_error_t *
-svn_repos_history(svn_fs_t *fs,
-                  const char *path,
-                  svn_repos_history_func_t history_func,
-                  void *history_baton,
-                  svn_revnum_t start,
-                  svn_revnum_t end,
-                  svn_boolean_t cross_copies,
-                  apr_pool_t *pool)
-{
-  return svn_repos_history2(fs, path, history_func, history_baton,
-                            NULL, NULL,
-                            start, end, cross_copies, pool);
-}
-
-
 
 svn_error_t *
 svn_repos_history2(svn_fs_t *fs,
@@ -590,7 +567,7 @@ check_ancestry_of_peg_path(svn_boolean_t *is_ancestor,
   /* We must have had at least one iteration above where we
      reassigned fs_path. Else, the path wouldn't have existed at
      future_revision and svn_fs_history would have thrown. */
-  assert(fs_path != NULL);
+  SVN_ERR_ASSERT(fs_path != NULL);
 
   *is_ancestor = (history && strcmp(path, fs_path) == 0);
 
@@ -672,8 +649,7 @@ svn_repos_trace_node_locations(svn_fs_t *fs,
   apr_pool_t *lastpool, *currpool;
   const svn_fs_id_t *id;
 
-  /* Sanity check. */
-  assert(location_revisions_orig->elt_size == sizeof(svn_revnum_t));
+  SVN_ERR_ASSERT(location_revisions_orig->elt_size == sizeof(svn_revnum_t));
 
   /* Ensure that FS_PATH is absolute, because our path-math below will
      depend on that being the case.  */
@@ -886,8 +862,8 @@ svn_repos_node_location_segments(svn_repos_t *repos,
 
   /* Are the revision properly ordered?  They better be -- the API
      demands it. */
-  assert(end_rev <= start_rev);
-  assert(start_rev <= peg_revision);
+  SVN_ERR_ASSERT(end_rev <= start_rev);
+  SVN_ERR_ASSERT(start_rev <= peg_revision);
 
   /* Ensure that PATH is absolute, because our path-math will depend
      on that being the case.  */
@@ -1011,7 +987,7 @@ get_path_mergeinfo(apr_hash_t **mergeinfo,
 
   SVN_ERR(svn_fs_revision_root(&root, fs, revnum, subpool));
   /* We do not need to call svn_repos_fs_get_mergeinfo() (which performs authz)
-     because we will filter out unreadable revisions in 
+     because we will filter out unreadable revisions in
      find_interesting_revision(), above */
   SVN_ERR(svn_fs_get_mergeinfo(&tmp_catalog, root, paths,
                                svn_mergeinfo_inherited, FALSE, subpool));
@@ -1111,7 +1087,7 @@ find_interesting_revisions(apr_array_header_t *path_revisions,
   svn_fs_root_t *root;
   svn_node_kind_t kind;
 
-  /* We switch betwwen two pools while looping, since we need information from
+  /* We switch between two pools while looping, since we need information from
      the last iteration to be available. */
   iter_pool = svn_pool_create(pool);
   last_pool = svn_pool_create(pool);
@@ -1402,8 +1378,8 @@ send_path_revision(struct path_revision *path_rev,
  *     merged revisions, including them in the MERGED_PATH_REVISIONS, and using
  *     DUPLICATE_PATH_REVS to avoid tracing the same paths of history multiple
  *     times.
- *  3) Send both MAINLINE_PATH_REVISIONS and MERGED_PATH_REVISIONS from 
- *     youngest to oldest, interleaving as appropriate.  This is implemented
+ *  3) Send both MAINLINE_PATH_REVISIONS and MERGED_PATH_REVISIONS from
+ *     oldest to youngest, interleaving as appropriate.  This is implemented
  *     similar to an insertion sort, but instead of inserting into another
  *     array, we just call the appropriate handler.
  */
@@ -1444,7 +1420,7 @@ svn_repos_get_file_revs2(svn_repos_t *repos,
                                            sizeof(struct path_revision *));
 
   /* We must have at least one revision to get. */
-  assert(mainline_path_revisions->nelts > 0);
+  SVN_ERR_ASSERT(mainline_path_revisions->nelts > 0);
 
   /* We switch betwwen two pools while looping, since we need information from
      the last iteration to be available. */
@@ -1470,7 +1446,7 @@ svn_repos_get_file_revs2(svn_repos_t *repos,
       struct path_revision *merged_pr = APR_ARRAY_IDX(merged_path_revisions,
                                                       merged_pos,
                                                       struct path_revision *);
-    
+
       if (main_pr->revnum <= merged_pr->revnum)
         {
           SVN_ERR(send_path_revision(main_pr, repos, &sb, handler,
@@ -1508,26 +1484,4 @@ svn_repos_get_file_revs2(svn_repos_t *repos,
   svn_pool_destroy(sb.iter_pool);
 
   return SVN_NO_ERROR;
-}
-
-svn_error_t *
-svn_repos_get_file_revs(svn_repos_t *repos,
-                        const char *path,
-                        svn_revnum_t start,
-                        svn_revnum_t end,
-                        svn_repos_authz_func_t authz_read_func,
-                        void *authz_read_baton,
-                        svn_repos_file_rev_handler_t handler,
-                        void *handler_baton,
-                        apr_pool_t *pool)
-{
-  svn_file_rev_handler_t handler2;
-  void *handler2_baton;
-
-  svn_compat_wrap_file_rev_handler(&handler2, &handler2_baton, handler,
-                                   handler_baton, pool);
-
-  return svn_repos_get_file_revs2(repos, path, start, end, FALSE,
-                                  authz_read_func, authz_read_baton,
-                                  handler2, handler2_baton, pool);
 }

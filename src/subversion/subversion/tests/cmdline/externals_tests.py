@@ -6,7 +6,7 @@
 #  See http://subversion.tigris.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+# Copyright (c) 2000-2008 CollabNet.  All rights reserved.
 #
 # This software is licensed as described in the file COPYING, which
 # you should have received as part of this distribution.  The terms
@@ -17,6 +17,8 @@
 ######################################################################
 
 # General modules
+import sys
+import re
 import os
 import warnings
 
@@ -54,8 +56,9 @@ def externals_test_setup(sbox):
 
   The arrangement of the externals in the first repository is:
 
+    /A/B/ ==>  ^/A/D/gamma                      gamma
     /A/C/ ==>  exdir_G                          <scheme>:///<other_repos>/A/D/G
-               -r 1 ../../../<other_repos_basename>/A/D/H exdir_H
+               ../../../<other_repos_basename>/A/D/H@1 exdir_H
 
     /A/D/ ==>  ^/../<other_repos_basename>/A    exdir_A
                //<other_repos>/A/D/G/           exdir_A/G/
@@ -96,6 +99,7 @@ def externals_test_setup(sbox):
 
   # These are the directories on which `svn:externals' will be set, in
   # revision 6 on the first repo.
+  B_path = os.path.join(wc_init_dir, "A/B")
   C_path = os.path.join(wc_init_dir, "A/C")
   D_path = os.path.join(wc_init_dir, "A/D")
 
@@ -140,15 +144,27 @@ def externals_test_setup(sbox):
   # This is the returned dictionary.
   external_url_for = { }
 
+  external_url_for["A/B/gamma"] = "^/A/D/gamma"
   external_url_for["A/C/exdir_G"] = other_repo_url + "/A/D/G"
   external_url_for["A/C/exdir_H"] = "../../../" + \
                                     other_repo_basename + \
-                                    "/A/D/H"
+                                    "/A/D/H@1"
 
-  # Set up the externals properties on A/B/ and A/D/.
+  # Set up the externals properties on A/B/, A/C/ and A/D/.
+  externals_desc = \
+           external_url_for["A/B/gamma"] + " gamma\n"
+
+  tmp_f = os.tempnam(wc_init_dir, 'tmp')
+  svntest.main.file_append(tmp_f, externals_desc)
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'pset',
+                                     '-F', tmp_f, 'svn:externals', B_path)
+
+  os.remove(tmp_f)
+
   externals_desc = \
            "exdir_G       " + external_url_for["A/C/exdir_G"] + "\n" + \
-           "-r 1 " + external_url_for["A/C/exdir_H"] + " exdir_H\n"
+           external_url_for["A/C/exdir_H"] + " exdir_H\n"
 
   tmp_f = os.tempnam(wc_init_dir, 'tmp')
   svntest.main.file_append(tmp_f, externals_desc)
@@ -183,12 +199,13 @@ def externals_test_setup(sbox):
   # Commit the property changes.
 
   expected_output = svntest.wc.State(wc_init_dir, {
+    'A/B' : Item(verb='Sending'),
     'A/C' : Item(verb='Sending'),
     'A/D' : Item(verb='Sending'),
     })
 
   expected_status = svntest.actions.get_virginal_state(wc_init_dir, 5)
-  expected_status.tweak('A/C', 'A/D', wc_rev=6, status='  ')
+  expected_status.tweak('A/B', 'A/C', 'A/D', wc_rev=6, status='  ')
 
   svntest.actions.run_and_verify_commit(wc_init_dir,
                                         expected_output,
@@ -256,6 +273,7 @@ def checkout_with_externals(sbox):
 
   # Probe the working copy a bit, see if it's as expected.
   expected_existing_paths = [
+    os.path.join(wc_dir, "A", "B", "gamma"),
     os.path.join(wc_dir, "A", "C", "exdir_G"),
     os.path.join(wc_dir, "A", "C", "exdir_G", "pi"),
     os.path.join(wc_dir, "A", "C", "exdir_H"),
@@ -270,12 +288,14 @@ def checkout_with_externals(sbox):
   probe_paths_exist(expected_existing_paths)
 
   # Pick a file at random, make sure it has the expected contents.
-  exdir_H_omega_path = os.path.join(wc_dir, "A", "C", "exdir_H", "omega")
-  fp = open(exdir_H_omega_path, 'r')
-  lines = fp.readlines()
-  if not ((len(lines) == 1) and (lines[0] == "This is the file 'omega'.\n")):
-    raise svntest.Failure("Unexpected contents for rev 1 of " +
-                          exdir_H_omega_path)
+  for path, contents in ((os.path.join(wc_dir, "A", "C", "exdir_H", "omega"),
+                          "This is the file 'omega'.\n"),
+                         (os.path.join(wc_dir, "A", "B", "gamma"),
+                          "This is the file 'gamma'.\n")):
+    fp = open(path, 'r')
+    lines = fp.readlines()
+    if not ((len(lines) == 1) and (lines[0] == contents)):
+      raise svntest.Failure("Unexpected contents for rev 1 of " + path)
 
 #----------------------------------------------------------------------
 
@@ -635,24 +655,24 @@ def disallow_dot_or_dotdot_directory_reference(sbox):
   C_path = os.path.join(wc_dir, 'A', 'C')
   F_path = os.path.join(wc_dir, 'A', 'C', 'F')
 
-  external_urls = external_url_for.values()
+  external_urls = list(external_url_for.values())
 
   externals_value_1 = "../foo"         + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_2 = "foo/bar/../baz" + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_3 = "foo/.."         + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_4 = "."              + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_5 = "./"             + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_6 = ".."             + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_7 = "././/.///."     + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
   externals_value_8 = "/foo"           + " " + external_urls.pop() + "\n"
-  if not external_urls: external_urls = external_url_for.values()
+  if not external_urls: external_urls = list(external_url_for.values())
 
   set_externals_for_path_expect_error(B_path, externals_value_1)
   set_externals_for_path_expect_error(G_path, externals_value_2)
@@ -884,7 +904,7 @@ def disallow_propset_invalid_formatted_externals(sbox):
     svntest.main.file_append(tmp_f, ext)
     svntest.actions.run_and_verify_svn("No error for externals '%s'" % ext,
                                        None,
-                                       '.*Invalid revision number found.*',
+                                       '.*Error parsing svn:externals.*',
                                        'propset',
                                        '-F',
                                        tmp_f,
@@ -954,13 +974,374 @@ def old_style_externals_ignore_peg_reg(sbox):
   # Set and commit the property.
   change_external(os.path.join(wc_dir, "A"), ext)
 
-  # Update the working copy.  This should fail because the URL with
-  # '@HEAD' does not exist.
-  svntest.actions.run_and_verify_svn("External '%s' used pegs" % ext.strip(),
+  # Update the working copy.  This should succeed (exitcode 0) but
+  # should print warnings on the external because the URL with '@HEAD'
+  # does not exist.
+  expected_error = "|".join([".*Error handling externals definition.*",
+                             ".*URL .*/A/D/G@HEAD' .* doesn't exist.*",
+                             ])
+  svntest.actions.run_and_verify_svn2("External '%s' used pegs" % ext.strip(),
+                                      None,
+                                      expected_error,
+                                      0,
+                                      'up',
+                                      wc_dir)
+
+
+#----------------------------------------------------------------------
+
+def cannot_move_or_remove_file_externals(sbox):
+  "should not be able to mv or rm a file external"
+
+  external_url_for = externals_test_setup(sbox)
+  wc_dir         = sbox.wc_dir
+  repo_url       = sbox.repo_url
+
+  # Checkout a working copy.
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'checkout',
+                                     repo_url, wc_dir)
+
+  # Should not be able to delete the file external.
+  svntest.actions.run_and_verify_svn("Able to delete file external",
                                      None,
-                                     ".*URL '.*/A/D/G@HEAD' doesn't exist",
+                                     ".*Cannot remove the file external at "
+                                     ".*gamma.*; please propedit or propdel "
+                                     "the svn:externals description",
+                                     'rm',
+                                     os.path.join(wc_dir, 'A', 'B', 'gamma'))
+
+  # Should not be able to move the file external.
+  svntest.actions.run_and_verify_svn("Able to move file external",
+                                     None,
+                                     ".*Cannot move the file external at "
+                                     ".*gamma.*; please propedit the "
+                                     "svn:externals description",
+                                     'mv',
+                                     os.path.join(wc_dir, 'A', 'B', 'gamma'),
+                                     os.path.join(wc_dir, 'A', 'B', 'gamma1'))
+
+  # But the directory that contains it can be deleted.
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 6)
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'rm',
+                                     os.path.join(wc_dir, "A", "B"))
+
+  expected_status.tweak('A/B', status='D ')
+  expected_output = svntest.wc.State(wc_dir, {
+      'A/B' : Item(verb='Deleting'),
+      })
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 6)
+  expected_status.remove('A/B', 'A/B/E', 'A/B/E/alpha', 'A/B/E/beta',
+                         'A/B/F', 'A/B/lambda')
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output, expected_status,
+                                        None, wc_dir)
+
+  # Bring the working copy up to date and check that the file the file
+  # external is switched to still exists.
+  svntest.actions.run_and_verify_svn(None, None, [],
                                      'up',
-                                     wc_dir)
+                                     repo_url, wc_dir)
+
+  file(os.path.join(wc_dir, 'A', 'D', 'gamma')).close()
+
+#----------------------------------------------------------------------
+
+def can_place_file_external_into_dir_external(sbox):
+  "place a file external into a directory external"
+
+  external_url_for = externals_test_setup(sbox)
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+  other_repo_url = repo_url + ".other"
+
+  # Checkout a working copy.
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'checkout',
+                                     repo_url, wc_dir)
+
+  # Put a directory external into the same repository and then a file
+  # external into that.
+  ext = "^/A/D        A/D-copy\n" + \
+        "^/A/B/E/beta A/D-copy/G/beta\n"
+  change_external(wc_dir, ext)
+
+  # Bring the working copy up to date and check that the file the file
+  # external is switched to still exists.
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'up',
+                                     repo_url, wc_dir)
+
+  beta1_path = os.path.join(wc_dir, 'A', 'B', 'E', 'beta')
+  f = file(beta1_path)
+  beta1_contents = f.read()
+  f.close()
+
+  beta2_path = os.path.join(wc_dir, 'A', 'D-copy', 'G', 'beta')
+  f = file(beta2_path)
+  beta2_contents = f.read()
+  f.close()
+
+  if beta1_contents != beta2_contents:
+      raise svntest.Failure("Contents of '%s' and '%s' do not match" %
+                            (beta1_path, beta2_path))
+
+  # Now have a directory external from one repository and a file
+  # external from another repository.  This should fail.
+  ext = other_repo_url + "/A/B C/exdir_B\n" + \
+        "^/A/B/E/beta C/exdir_B/beta\n"
+  change_external(os.path.join(wc_dir, 'A'), ext)
+
+  expected_error = "|".join([".*Error handling externals definition.*",
+                             ".*Cannot insert a file external from " \
+                             + ".*/beta' into a working copy " \
+                             + ".*" + other_repo_url,
+                             ])
+  svntest.actions.run_and_verify_svn2("Able to put file external in foreign wc",
+                                      None,
+                                      expected_error,
+                                      0,
+                                      'up',
+                                      repo_url, wc_dir)
+
+#----------------------------------------------------------------------
+
+# Issue #2461.
+def external_into_path_with_spaces(sbox):
+  "allow spaces in external local paths"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  ext = '^/A/D        "A/copy of D"\n' +\
+        '^/A/D        A/another\ copy\ of\ D'
+  change_external(wc_dir, ext)
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'up',
+                                     repo_url, wc_dir)
+  probe_paths_exist([
+      os.path.join(wc_dir, 'A', 'copy of D'),
+      os.path.join(wc_dir, 'A', 'another copy of D'),
+  ])
+
+# Issue #3368
+def binary_file_externals(sbox):
+  "binary file externals"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # Add a binary file A/theta, write PNG file data into it.
+  theta_contents = svntest.main.file_read(
+    os.path.join(sys.path[0], "theta.bin"), 'rb')
+  theta_path = os.path.join(wc_dir, 'A', 'theta')
+  svntest.main.file_write(theta_path, theta_contents, 'wb')
+
+  svntest.main.run_svn(None, 'add', theta_path)
+
+  # Created expected output tree for 'svn ci'
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/theta' : Item(verb='Adding  (bin)'),
+    })
+
+  # Create expected status tree
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.add({
+    'A/theta' : Item(status='  ', wc_rev=2),
+    })
+
+  # Commit the new binary file, creating revision 2.
+  svntest.actions.run_and_verify_commit(wc_dir, expected_output,
+                                        expected_status, None, wc_dir)
+
+
+  # Create a file external on the binary file A/theta
+  C = os.path.join(wc_dir, 'A', 'C')
+  external = os.path.join(C, 'external')
+  externals_prop = "^/A/theta external\n"
+
+  # Set and commit the property.
+  change_external(C, externals_prop)
+
+
+  # Now, /A/C/external is designated as a file external pointing to
+  # the binary file /A/theta, but the external file is not there yet.
+  # Try to actually insert the external file via a verified update:
+  expected_output = svntest.wc.State(wc_dir, {
+      'A/C/external'      : Item(status='E '),
+    })
+
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.add({
+    'A/theta'      : Item(
+                       theta_contents,
+                       props={'svn:mime-type' : 'application/octet-stream'}),
+    'A/C'          : Item(props={'svn:externals':externals_prop}),
+    'A/C/external' : Item(
+                       theta_contents,
+                       props={'svn:mime-type' : 'application/octet-stream'}),
+    })
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 3)
+  expected_status.add({
+    'A/theta' : Item(status='  ', wc_rev=3),
+    })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        expected_disk,
+                                        expected_status,
+                                        None, None, None, None, None,
+                                        True)
+
+########################################################################
+
+# Issue #3351.
+def switch_relative_external(sbox):
+  "switch a relative external"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  # Create a relative external in A/D on ../B
+  A_path = os.path.join(wc_dir, 'A')
+  A_copy_path = os.path.join(wc_dir, 'A_copy')
+  A_copy_url = repo_url + '/A_copy'
+  D_path = os.path.join(A_path, 'D')
+  ext_path = os.path.join(D_path, 'ext')
+  externals_prop = "../B ext\n"
+  change_external(D_path, externals_prop)
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'ci', '-m', 'log msg',
+                                     '--quiet', wc_dir)
+
+  # Update our working copy, and create a "branch" (A => A_copy)
+  svntest.actions.run_and_verify_svn(None, None, [], 'up',
+                                     '--quiet', wc_dir)
+  svntest.actions.run_and_verify_svn(None, None, [], 'cp',
+                                     '--quiet', A_path, A_copy_path)
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'ci', '-m', 'log msg',
+                                     '--quiet', wc_dir)
+
+  # Okay.  We now want to switch A to A_copy, which *should* cause
+  # A/D/ext to point to the URL for A_copy/D/ext.
+  svntest.actions.run_and_verify_svn(None, None, [], 'sw',
+                                     '--quiet', A_copy_url, A_path)
+
+  expected_infos = [
+    { 'Path' : re.escape(D_path),
+      'URL' : sbox.repo_url + '/A_copy/D',
+      },
+    { 'Path' : re.escape(ext_path),
+      'URL' : sbox.repo_url + '/A_copy/B',
+      },
+    ]
+  svntest.actions.run_and_verify_info(expected_infos, D_path, ext_path)
+
+#----------------------------------------------------------------------
+
+# Issue #3552
+def wc_repos_file_externals(sbox):
+  "tag directory with file externals from wc to url"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  # Add a file A/theta.
+  theta_path = os.path.join(wc_dir, 'A', 'theta')
+  svntest.main.file_write(theta_path, 'theta', 'w')
+  svntest.main.run_svn(None, 'add', theta_path)
+
+  # Created expected output tree for 'svn ci'
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/theta' : Item(verb='Adding'),
+    })
+
+  # Create expected status tree
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.add({
+    'A/theta' : Item(status='  ', wc_rev=2),
+    })
+
+  # Commit the new file, creating revision 2.
+  svntest.actions.run_and_verify_commit(wc_dir, expected_output,
+                                        expected_status, None, wc_dir)
+
+
+  # Create a file external on the file A/theta
+  C = os.path.join(wc_dir, 'A', 'C')
+  external = os.path.join(C, 'theta')
+  externals_prop = "^/A/theta theta\n"
+
+  # Set and commit the property.
+  change_external(C, externals_prop)
+
+
+  # Now, /A/C/theta is designated as a file external pointing to
+  # the file /A/theta, but the external file is not there yet.
+  # Try to actually insert the external file via a verified update:
+  expected_output = svntest.wc.State(wc_dir, {
+      'A/C/theta'      : Item(status='E '),
+    })
+
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.add({
+    'A/theta'      : Item('theta'),
+    'A/C'          : Item(props={'svn:externals':externals_prop}),
+    'A/C/theta'    : Item('theta'),
+    })
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 3)
+  expected_status.add({
+    'A/theta'   : Item(status='  ', wc_rev=3),
+    })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        expected_disk,
+                                        expected_status,
+                                        None, None, None, None, None,
+                                        True)
+
+  # Copy A/C to a new tag in the repos
+  tag_url = repo_url + '/A/I'
+  svntest.main.run_svn(None, 'cp', C, tag_url, '-m', 'create tag')
+
+  # Try to actually insert the external file (A/I/theta) via a verified update:
+  expected_output = svntest.wc.State(wc_dir, {
+      'A/I'            : Item(status='A '),
+      'A/I/theta'      : Item(status='E '),
+    })
+
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.add({
+    'A/theta'      : Item('theta'),
+    'A/C'          : Item(props={'svn:externals':externals_prop}),
+    'A/C/theta'    : Item('theta'),
+    'A/I'          : Item(props={'svn:externals':externals_prop}),
+    'A/I/theta'    : Item('theta'),
+    })
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 4)
+  expected_status.add({
+    'A/theta'   : Item(status='  ', wc_rev=4),
+    'A/I'       : Item(status='  ', wc_rev=4),
+    })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        expected_disk,
+                                        expected_status,
+                                        None, None, None, None, None,
+                                        True)
 
 
 ########################################################################
@@ -982,7 +1363,13 @@ test_list = [ None,
               external_with_peg_and_op_revision,
               new_style_externals,
               disallow_propset_invalid_formatted_externals,
-              old_style_externals_ignore_peg_reg
+              old_style_externals_ignore_peg_reg,
+              cannot_move_or_remove_file_externals,
+              can_place_file_external_into_dir_external,
+              external_into_path_with_spaces,
+              binary_file_externals,
+              switch_relative_external,
+              wc_repos_file_externals,
              ]
 
 if __name__ == '__main__':

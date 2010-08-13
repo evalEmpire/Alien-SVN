@@ -100,6 +100,16 @@ module Svn
         _initialize
         self.auth_baton = Core::AuthBaton.new
         init_callbacks
+        return unless block_given?
+        begin
+          yield(self)
+        ensure
+          destroy
+        end
+      end
+
+      def destroy
+        Svn::Destroyer.destroy(self)
       end
 
       def auth_baton=(baton)
@@ -220,6 +230,21 @@ module Svn
         Client.resolved(path, recurse, self)
       end
 
+      RESOLVE_REQUIRED_ARGUMENTS_KEYS = [:path]
+      def resolve(arguments={})
+        arguments = arguments.reject {|k, v| v.nil?}
+        optional_arguments_defaults = {
+          :depth => nil,
+          :conflict_choice => Wc::CONFLICT_CHOOSE_POSTPONE
+        }
+        arguments = optional_arguments_defaults.merge(arguments)
+        Util.validate_options(arguments,
+                              optional_arguments_defaults.keys,
+                              RESOLVE_REQUIRED_ARGUMENTS_KEYS)
+
+        Client.resolve(arguments[:path], arguments[:depth], arguments[:conflict_choice], self)
+      end
+
       def propset(name, value, target, depth_or_recurse=nil, force=false,
                   base_revision_for_url=nil, changelists_names=nil,
                   revprop_table=nil)
@@ -227,7 +252,7 @@ module Svn
         depth = Core::Depth.infinity_or_empty_from_recurse(depth_or_recurse)
         changelists_names = [changelists_names] unless changelists_names.is_a?(Array) or changelists_names.nil?
         Client.propset3(name, value, target, depth, force,
-                        base_revision_for_url, changelists_names, 
+                        base_revision_for_url, changelists_names,
                         revprop_table, self)
       end
       alias prop_set propset
@@ -260,7 +285,7 @@ module Svn
       # Returns list of properties attached to +target+ as an Array of
       # Svn::Client::PropListItem.
       # Paths and URIs are available as +target+.
-      def proplist(target, rev=nil, peg_rev=nil, depth_or_recurse=nil,
+      def proplist(target, peg_rev=nil, rev=nil, depth_or_recurse=nil,
                    changelists_names=nil, &block)
         rev ||= "HEAD"
         peg_rev ||= rev
@@ -271,7 +296,7 @@ module Svn
           block.call(path, prop_hash) if block
         end
         changelists_names = [changelists_names] unless changelists_names.is_a?(Array) or changelists_names.nil?
-        Client.proplist3(target, rev, peg_rev, depth, changelists_names,
+        Client.proplist3(target, peg_rev, rev, depth, changelists_names,
                          receiver, self)
         items
       end
@@ -300,7 +325,7 @@ module Svn
           end
           src_paths = [src_paths]
         end
-        Client.copy4(src_paths, dst_path, copy_as_child, make_parents, 
+        Client.copy4(src_paths, dst_path, copy_as_child, make_parents,
                      revprop_table, self)
       end
       alias cp copy

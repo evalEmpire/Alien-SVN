@@ -109,11 +109,15 @@ If the client does not support a protocol version within the specified
 range, it closes the connection.  Otherwise, the client responds to
 the greeting with an item matching the prototype:
 
-  response: ( version:number ( cap:word ... ) url:string )
+  response: ( version:number ( cap:word ... ) url:string
+              ? ra-client:string ( ? client:string ) )
 
 version gives the protocol version selected by the client.  The cap
 values give a list of client capabilities (see section 2.1).  url
-gives the URL the client is accessing.
+gives the URL the client is accessing.  ra-client is a string
+identifying the RA implementation, e.g. "SVN/1.6.0" or "SVNKit 1.1.4".
+client is the string returned by svn_ra_callbacks2_t.get_client_string;
+that callback may not be implemented, so this is optional.
 
 Upon receiving the client's response to the greeting, the server sends
 an authentication request, which is a command response whose arguments
@@ -365,7 +369,7 @@ second place for auth-request point as noted below.
                  revprop-count:number rev-props:proplist )
              | done
     changed-path-entry: ( path:string A|D|R|M [ copy-path:string ]
-                          [ copy-rev:number ] )
+                          [ copy-rev:number ] [ node-kind:string ] )
     response: ( )
 
   get-locations
@@ -441,6 +445,10 @@ second place for auth-request point as noted below.
     revprops:  ( revprops:word props:proplist )
       (revprops here is the literal word "revprops".)
     response   ( )
+
+  get-deleted-rev
+    params:   ( path:string peg-rev:number end-rev:number )
+    response: ( deleted-rev:number )
 
 3.1.2. Editor Command Set
 

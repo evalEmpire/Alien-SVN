@@ -31,11 +31,11 @@
 %apply void *PY_AS_VOID {
   void *baton,
   void *handler_baton,
+  void *cancel_baton,
   void *edit_baton,
   void *parent_baton,
   void *dir_baton,
   void *file_baton,
-  void *cancel_baton,
   void *wrapped_baton,
   void *wrapped_edit_baton,
   void *callback_baton

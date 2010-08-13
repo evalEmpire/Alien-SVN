@@ -28,10 +28,10 @@
 #   Raman Gupta <rocketraman at fastmail dot fm> - bidirectional and transitive
 #     merging support
 #
-# $HeadURL: http://svn.collab.net/repos/svn/branches/1.5.x/contrib/client-side/svnmerge/svnmerge.py $
-# $LastChangedDate: 2008-06-19 17:08:17 +0000 (Thu, 19 Jun 2008) $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.6.x/contrib/client-side/svnmerge/svnmerge.py $
+# $LastChangedDate: 2009-03-30 17:07:07 +0000 (Mon, 30 Mar 2009) $
 # $LastChangedBy: hwright $
-# $LastChangedRevision: 31812 $
+# $LastChangedRevision: 876930 $
 #
 # Requisites:
 # svnmerge.py has been tested with all SVN major versions since 1.1 (both
@@ -155,8 +155,8 @@ def kwextract(s):
     except IndexError:
         return "<unknown>"
 
-__revision__ = kwextract('$Rev: 31812 $')
-__date__ = kwextract('$Date: 2008-06-19 17:08:17 +0000 (Thu, 19 Jun 2008) $')
+__revision__ = kwextract('$Rev: 876930 $')
+__date__ = kwextract('$Date: 2009-03-30 17:07:07 +0000 (Mon, 30 Mar 2009) $')
 
 # Additional options, not (yet?) mapped to command line flags
 default_opts = {
@@ -191,10 +191,11 @@ def console_width():
         pass
 
     # Parse the output of stty -a
-    out = os.popen("stty -a").read()
-    m = re.search(r"columns (\d+);", out)
-    if m:
-        return int(m.group(1))
+    if os.isatty(1):
+        out = os.popen("stty -a").read()
+        m = re.search(r"columns (\d+);", out)
+        if m:
+            return int(m.group(1))
 
     # sensible default
     return 80
@@ -743,7 +744,12 @@ def set_props(dir, name, props):
     if props:
         _run_propset(dir, name, props)
     else:
-        svn_command('propdel "%s" "%s"' % (name, dir))
+        # Check if NAME exists on DIR before trying to delete it.
+        # As of 1.6 propdel no longer supports deleting a
+        # non-existent property.
+        out = launchsvn('propget "%s" "%s"' % (name, dir))
+        if out:
+            svn_command('propdel "%s" "%s"' % (name, dir))
 
 def set_merge_props(dir, props):
     set_props(dir, opts["prop"], props)
@@ -2085,7 +2091,23 @@ def main(args):
 
     # Validate branch_dir
     if not is_wc(branch_dir):
-        error('"%s" is not a subversion working directory' % branch_dir)
+        if str(cmd) == "avail":
+            info = None
+            # it should be noted here that svn info does not error exit
+            # if an invalid target is specified to it (as is
+            # intuitive). so the try, except code is not absolutely
+            # necessary. but, I retain it to indicate the intuitive
+            # handling.
+            try:
+                info = get_svninfo(branch_dir)
+            except LaunchError:
+                pass
+            # test that we definitely targeted a subversion directory,
+            # mirroring the purpose of the earlier is_wc() call
+            if info is None or not info.has_key("Node Kind") or info["Node Kind"] != "directory":
+                error('"%s" is neither a valid URL, nor a working directory' % branch_dir)
+        else:
+            error('"%s" is not a subversion working directory' % branch_dir)
 
     # Extract the integration info for the branch_dir
     branch_props = get_merge_props(branch_dir)
@@ -2120,7 +2142,7 @@ def main(args):
             # within the branch properties.
             found = []
             for pathid in branch_props.keys():
-                if pathid.find(source) > 0:
+                if pathid.find(source) >= 0:
                     found.append(pathid)
             if len(found) == 1:
                 # (assumes pathid is a repository-relative-path)

@@ -20,7 +20,6 @@
 
 #include <stdlib.h>
 #include <limits.h>
-#include <assert.h>
 #include <apr_version.h>
 #include <apr_pools.h>
 #include <apr_hash.h>
@@ -86,16 +85,19 @@ hash_read(apr_hash_t *hash, svn_stream_t *stream, const char *terminator,
   svn_boolean_t eof;
   apr_size_t len, keylen, vallen;
   char c, *end, *keybuf, *valbuf;
+  apr_pool_t *iterpool = svn_pool_create(pool);
 
   while (1)
     {
+      svn_pool_clear(iterpool);
+
       /* Read a key length line.  Might be END, though. */
-      SVN_ERR(svn_stream_readline(stream, &buf, "\n", &eof, pool));
+      SVN_ERR(svn_stream_readline(stream, &buf, "\n", &eof, iterpool));
 
       /* Check for the end of the hash. */
       if ((!terminator && eof && buf->len == 0)
           || (terminator && (strcmp(buf->data, terminator) == 0)))
-        return SVN_NO_ERROR;
+        break;
 
       /* Check for unexpected end of stream */
       if (eof)
@@ -120,7 +122,7 @@ hash_read(apr_hash_t *hash, svn_stream_t *stream, const char *terminator,
             return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
 
           /* Read a val length line */
-          SVN_ERR(svn_stream_readline(stream, &buf, "\n", &eof, pool));
+          SVN_ERR(svn_stream_readline(stream, &buf, "\n", &eof, iterpool));
 
           if ((buf->data[0] == 'V') && (buf->data[1] == ' '))
             {
@@ -128,7 +130,7 @@ hash_read(apr_hash_t *hash, svn_stream_t *stream, const char *terminator,
               if (vallen == (size_t) ULONG_MAX || *end != '\0')
                 return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
 
-              valbuf = apr_palloc(pool, vallen + 1);
+              valbuf = apr_palloc(iterpool, vallen + 1);
               SVN_ERR(svn_stream_read(stream, valbuf, &vallen));
               valbuf[vallen] = '\0';
 
@@ -154,7 +156,7 @@ hash_read(apr_hash_t *hash, svn_stream_t *stream, const char *terminator,
             return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
 
           /* Now read that much into a buffer. */
-          keybuf = apr_palloc(pool, keylen + 1);
+          keybuf = apr_palloc(iterpool, keylen + 1);
           SVN_ERR(svn_stream_read(stream, keybuf, &keylen));
           keybuf[keylen] = '\0';
 
@@ -168,8 +170,13 @@ hash_read(apr_hash_t *hash, svn_stream_t *stream, const char *terminator,
           apr_hash_set(hash, keybuf, keylen, NULL);
         }
       else
-        return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
+        {
+          return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
+        }
     }
+
+  svn_pool_destroy(iterpool);
+  return SVN_NO_ERROR;
 }
 
 
@@ -269,7 +276,7 @@ svn_hash_write_incremental(apr_hash_t *hash, apr_hash_t *oldhash,
                            svn_stream_t *stream, const char *terminator,
                            apr_pool_t *pool)
 {
-  assert(oldhash != NULL);
+  SVN_ERR_ASSERT(oldhash != NULL);
   return hash_write(hash, oldhash, stream, terminator, pool);
 }
 
@@ -277,7 +284,7 @@ svn_hash_write_incremental(apr_hash_t *hash, apr_hash_t *oldhash,
 svn_error_t *
 svn_hash_write(apr_hash_t *hash, apr_file_t *destfile, apr_pool_t *pool)
 {
-  return hash_write(hash, NULL, svn_stream_from_aprfile(destfile, pool),
+  return hash_write(hash, NULL, svn_stream_from_aprfile2(destfile, TRUE, pool),
                     SVN_HASH_TERMINATOR, pool);
 }
 
@@ -441,7 +448,7 @@ svn_hash_keys(apr_array_header_t **array,
               apr_pool_t *pool)
 {
   apr_hash_index_t *hi;
-  
+
   *array = apr_array_make(pool, apr_hash_count(hash), sizeof(const char *));
 
   for (hi = apr_hash_first(pool, hash); hi; hi = apr_hash_next(hi))
@@ -451,7 +458,7 @@ svn_hash_keys(apr_array_header_t **array,
 
       apr_hash_this(hi, &key, NULL, NULL);
       path = key;
-      
+
       APR_ARRAY_PUSH(*array, const char *) = path;
     }
 
@@ -468,7 +475,7 @@ svn_hash_from_cstring_keys(apr_hash_t **hash_p,
   apr_hash_t *hash = apr_hash_make(pool);
   for (i = 0; i < keys->nelts; i++)
     {
-      const char *key = 
+      const char *key =
         apr_pstrdup(pool, APR_ARRAY_IDX(keys, i, const char *));
       apr_hash_set(hash, key, APR_HASH_KEY_STRING, key);
     }

@@ -17,10 +17,10 @@
 # history and logs, available at http://subversion.tigris.org/.
 # ====================================================================
 
-# $HeadURL: http://svn.collab.net/repos/svn/branches/1.5.x/contrib/client-side/svnmerge/svnmerge-migrate-history.py $
-# $LastChangedDate: 2008-05-14 14:44:27 +0000 (Wed, 14 May 2008) $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.6.x/contrib/client-side/svnmerge/svnmerge-migrate-history.py $
+# $LastChangedDate: 2009-02-16 20:35:25 +0000 (Mon, 16 Feb 2009) $
 # $LastChangedBy: hwright $
-# $LastChangedRevision: 31164 $
+# $LastChangedRevision: 875969 $
 
 import warnings
 warnings.filterwarnings('ignore', '.*', DeprecationWarning)
@@ -106,7 +106,7 @@ class Migrator:
     if only_when_verbose and not self.verbose:
       return
     print message
-    
+
   def run(self):
     self.repos = svn.repos.open(self.repos_path)
     self.fs = svn.repos.fs(self.repos)
@@ -157,14 +157,14 @@ class Migrator:
     if mergeinfo_prop_val is not None:
       self.log("Discovered pre-existing Subversion mergeinfo of '%s'" \
                % (self.flatten_prop(mergeinfo_prop_val)))
-      
+
     # Retrieve svnmerge.py's merge history meta data, and roll it into
     # Subversion 1.5 mergeinfo.
     integrated_prop_val = svn.fs.node_prop(root, path, "svnmerge-integrated")
     if integrated_prop_val is not None:
       self.log("Discovered svnmerge.py mergeinfo of '%s'" \
                % (self.flatten_prop(integrated_prop_val)))
-      
+
     ### LATER: We handle svnmerge-blocked by converting it into
     ### svn:mergeinfo, until revision blocking becomes available in
     ### Subversion's core.
@@ -187,7 +187,7 @@ class Migrator:
     if new_mergeinfo is not None:
       self.log("Combined mergeinfo is '%s'" \
                % (self.flatten_prop(mergeinfo2str(new_mergeinfo))))
-      
+
     # Unless we're doing a naive migration (or we've no, or only
     # empty, mergeinfo anyway), start trying to cleanup after
     # svnmerge.py's history-ignorant initialization.
@@ -241,13 +241,13 @@ class Migrator:
     new_mergeinfo_prop_val = None
     if new_mergeinfo is not None:
       new_mergeinfo_prop_val = mergeinfo2str(new_mergeinfo)
-      
+
     # If we need to change the value of the svn:mergeinfo property or
     # delete any svnmerge-* properties, let's do so.
     if (new_mergeinfo_prop_val != mergeinfo_prop_val) \
        or (integrated_prop_val is not None) \
        or (blocked_prop_val is not None):
-      
+
       # If this not a dry-run, begin a transaction in which we'll
       # manipulate merge-related properties.  Open the transaction root.
       if not self.dry_run:
@@ -256,6 +256,13 @@ class Migrator:
 
       # Manipulate the merge history.
       if new_mergeinfo_prop_val != mergeinfo_prop_val:
+        # Run the final version of the new svn:mergeinfo through the
+        # parser to ensure it is in canonical form, e.g. no overlapping
+        # or unordered rangelists, see
+        # http://subversion.tigris.org/issues/show_bug.cgi?id=3302.
+        mergeinfo = svn.core.svn_mergeinfo_parse(new_mergeinfo_prop_val)
+        new_mergeinfo_prop_val = mergeinfo2str(mergeinfo)
+
         self.log("Queuing change of %s to '%s'"
                  % (svn.core.SVN_PROP_MERGEINFO,
                     self.flatten_prop(new_mergeinfo_prop_val)))
@@ -296,14 +303,14 @@ class Migrator:
 
     if svnmerge_prop_val is None:
       return None
-    
+
     # First we convert the svnmerge prop value into an svn:mergeinfo
     # prop value, then we parse it into mergeinfo.
     sources = svnmerge_prop_val.split()
     svnmerge_prop_val = ''
     for source in sources:
       pieces = source.split(':')
-      if len(pieces) != 2:
+      if not (len(pieces) == 2 and pieces[1]):
         continue
       pieces[0] = urllib.unquote(pieces[0])
       svnmerge_prop_val = svnmerge_prop_val + '%s\n' % (':'.join(pieces))
@@ -325,7 +332,7 @@ class Migrator:
     and REV, as mergeinfo.  If OLDEST_REV is svn.core.SVN_INVALID_REVNUM,
     all of PATH's history prior to REV will be returned.
     (Adapted from Subversion's svn_client__get_history_as_mergeinfo().)"""
-    
+
     location_segments = []
     def _allow_all(root, path, pool):
       return 1
@@ -333,6 +340,9 @@ class Migrator:
       location_segments.append(segment)
     svn.repos.node_location_segments(self.repos, path, rev, rev, oldest_rev,
                                      _segment_receiver, _allow_all)
+
+    # Ensure oldest-to-youngest ordering of revision ranges.
+    location_segments.sort(lambda a, b: cmp(a.range_start, b.range_start))
 
     # Translate location segments into merge sources and ranges.
     mergeinfo = {}
@@ -348,7 +358,7 @@ class Migrator:
       path_ranges.append(range)
       mergeinfo[source_path] = path_ranges
     return mergeinfo
-    
+
   def set_path_prefixes(self, prefixes):
     "Decompose path prefixes into something meaningful for comparision."
     self.path_prefixes = []

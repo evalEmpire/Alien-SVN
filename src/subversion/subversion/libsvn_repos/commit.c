@@ -20,7 +20,6 @@
 
 #include <apr_pools.h>
 #include <apr_file_io.h>
-#include <apr_md5.h>
 
 #include "svn_compat.h"
 #include "svn_pools.h"
@@ -29,7 +28,7 @@
 #include "svn_delta.h"
 #include "svn_fs.h"
 #include "svn_repos.h"
-#include "svn_md5.h"
+#include "svn_checksum.h"
 #include "svn_props.h"
 #include "repos.h"
 #include "svn_private_config.h"
@@ -125,8 +124,10 @@ out_of_date(const char *path, svn_node_kind_t kind)
   return svn_error_createf(SVN_ERR_FS_TXN_OUT_OF_DATE, NULL,
                            (kind == svn_node_dir
                             ? _("Directory '%s' is out of date")
-                            : _("File '%s' is out of date")),
-                           path);
+                            : kind == svn_node_file
+			    ? _("File '%s' is out of date")
+			    : _("'%s' is out of date")),
+			   path);
 }
 
 
@@ -237,10 +238,9 @@ delete_entry(const char *path,
   SVN_ERR(check_authz(eb, parent->path, eb->txn_root,
                       svn_authz_write, pool));
 
-  /* If PATH doesn't exist in the txn, that's fine (merge
-     allows this). */
+  /* If PATH doesn't exist in the txn, the working copy is out of date. */
   if (kind == svn_node_none)
-    return SVN_NO_ERROR;
+    return out_of_date(full_path, kind);
 
   /* Now, make sure we're deleting the node we *think* we're
      deleting, else return an out-of-dateness error. */
@@ -576,21 +576,23 @@ change_file_prop(void *file_baton,
 
 static svn_error_t *
 close_file(void *file_baton,
-           const char *text_checksum,
+           const char *text_digest,
            apr_pool_t *pool)
 {
   struct file_baton *fb = file_baton;
 
-  if (text_checksum)
+  if (text_digest)
     {
-      unsigned char digest[APR_MD5_DIGESTSIZE];
-      const char *hex_digest;
+      svn_checksum_t *checksum;
+      svn_checksum_t *text_checksum;
 
-      SVN_ERR(svn_fs_file_md5_checksum
-              (digest, fb->edit_baton->txn_root, fb->path, pool));
-      hex_digest = svn_md5_digest_to_cstring(digest, pool);
+      SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_md5,
+                                   fb->edit_baton->txn_root, fb->path,
+                                   TRUE, pool));
+      SVN_ERR(svn_checksum_parse_hex(&text_checksum, svn_checksum_md5,
+                                     text_digest, pool));
 
-      if (hex_digest && strcmp(text_checksum, hex_digest) != 0)
+      if (!svn_checksum_match(text_checksum, checksum))
         {
           return svn_error_createf
             (SVN_ERR_CHECKSUM_MISMATCH, NULL,
@@ -598,7 +600,8 @@ close_file(void *file_baton,
                "(%s):\n"
                "   expected checksum:  %s\n"
                "   actual checksum:    %s\n"),
-             fb->path, text_checksum, hex_digest);
+             fb->path, svn_checksum_to_cstring_display(text_checksum, pool),
+             svn_checksum_to_cstring_display(checksum, pool));
         }
     }
 
@@ -658,62 +661,64 @@ close_edit(void *edit_baton,
   err = svn_repos_fs_commit_txn(&conflict, eb->repos,
                                 &new_revision, eb->txn, pool);
 
-  /* We want to abort the transaction *unless* the error code tells us
-     the commit succeeded and something just went wrong in post-commit. */
-  if (err && (err->apr_err != SVN_ERR_REPOS_POST_COMMIT_HOOK_FAILED))
+  if (err)
     {
-      /* ### todo: we should check whether it really was a conflict,
-         and return the conflict info if so? */
+      if (err->apr_err == SVN_ERR_REPOS_POST_COMMIT_HOOK_FAILED)
+        {
+          /* If the error was in post-commit, then the commit itself
+             succeeded.  In which case, save the post-commit warning
+             (to be reported back to the client, who will probably
+             display it as a warning) and clear the error. */
+          if (err->child && err->child->message)
+            post_commit_err = apr_pstrdup(pool, err->child->message);
 
-      /* If the commit failed, it's *probably* due to a conflict --
-         that is, the txn being out-of-date.  The filesystem gives us
-         the ability to continue diddling the transaction and try
-         again; but let's face it: that's not how the cvs or svn works
-         from a user interface standpoint.  Thus we don't make use of
-         this fs feature (for now, at least.)
+          svn_error_clear(err);
+          err = SVN_NO_ERROR;
+        }
+      else  /* Got a real error -- one that stopped the commit */
+        {
+          /* ### todo: we should check whether it really was a conflict,
+             and return the conflict info if so? */
 
-         So, in a nutshell: svn commits are an all-or-nothing deal.
-         Each commit creates a new fs txn which either succeeds or is
-         aborted completely.  No second chances;  the user simply
-         needs to update and commit again  :)
+          /* If the commit failed, it's *probably* due to a conflict --
+             that is, the txn being out-of-date.  The filesystem gives us
+             the ability to continue diddling the transaction and try
+             again; but let's face it: that's not how the cvs or svn works
+             from a user interface standpoint.  Thus we don't make use of
+             this fs feature (for now, at least.)
 
-         We ignore the possible error result from svn_fs_abort_txn();
-         it's more important to return the original error. */
-      svn_error_clear(svn_fs_abort_txn(eb->txn, pool));
-      return err;
-    }
-  else if (err)
-    {
-      /* Post-commit hook's failure output can be passed back to the
-         client. However, this cannot be a commit failure. Hence
-         passing back the post-commit error message as a string to
-         be displayed as a warning. */
-      if (err->child && err->child->message)
-        post_commit_err = apr_pstrdup(pool, err->child->message) ;
+             So, in a nutshell: svn commits are an all-or-nothing deal.
+             Each commit creates a new fs txn which either succeeds or is
+             aborted completely.  No second chances;  the user simply
+             needs to update and commit again  :)
 
-      svn_error_clear(err);
-      err = SVN_NO_ERROR;
+             We ignore the possible error result from svn_fs_abort_txn();
+             it's more important to return the original error. */
+          svn_error_clear(svn_fs_abort_txn(eb->txn, pool));
+          return err;
+        }
     }
 
   /* Pass new revision information to the caller's callback. */
   {
     svn_string_t *date, *author;
-    svn_error_t *err2;
     svn_commit_info_t *commit_info;
 
     /* Even if there was a post-commit hook failure, it's more serious
        if one of the calls here fails, so we explicitly check for errors
        here, while saving the possible post-commit error for later. */
 
-    err2 = svn_fs_revision_prop(&date, svn_repos_fs(eb->repos),
+    err = svn_fs_revision_prop(&date, svn_repos_fs(eb->repos),
                                 new_revision, SVN_PROP_REVISION_DATE,
                                 pool);
-    if (! err2)
-      err2 =  svn_fs_revision_prop(&author, svn_repos_fs(eb->repos),
+    if (! err)
+      {
+        err = svn_fs_revision_prop(&author, svn_repos_fs(eb->repos),
                                    new_revision, SVN_PROP_REVISION_AUTHOR,
                                    pool);
+      }
 
-    if (! err2)
+    if ((! err) && eb->commit_callback)
       {
         commit_info = svn_create_commit_info(pool);
 
@@ -722,14 +727,9 @@ close_edit(void *edit_baton,
         commit_info->date = date ? date->data : NULL;
         commit_info->author = author ? author->data : NULL;
         commit_info->post_commit_err = post_commit_err;
-        err2 = (*eb->commit_callback)(commit_info,
+        err = (*eb->commit_callback)(commit_info,
                                       eb->commit_callback_baton,
                                       pool);
-        if (err2)
-          {
-            svn_error_clear(err);
-            return err2;
-          }
       }
   }
 
@@ -841,110 +841,10 @@ svn_repos_get_commit_editor5(const svn_delta_editor_t **editor,
                                      subpool);
   eb->fs = svn_repos_fs(repos);
   eb->txn = txn;
-  eb->txn_owner = txn ? FALSE : TRUE;
+  eb->txn_owner = txn == NULL;
 
   *edit_baton = eb;
   *editor = e;
 
   return SVN_NO_ERROR;
-}
-
-
-svn_error_t *
-svn_repos_get_commit_editor4(const svn_delta_editor_t **editor,
-                             void **edit_baton,
-                             svn_repos_t *repos,
-                             svn_fs_txn_t *txn,
-                             const char *repos_url,
-                             const char *base_path,
-                             const char *user,
-                             const char *log_msg,
-                             svn_commit_callback2_t callback,
-                             void *callback_baton,
-                             svn_repos_authz_callback_t authz_callback,
-                             void *authz_baton,
-                             apr_pool_t *pool)
-{
-  apr_hash_t *revprop_table = apr_hash_make(pool);
-  if (user)
-    apr_hash_set(revprop_table, SVN_PROP_REVISION_AUTHOR,
-                 APR_HASH_KEY_STRING,
-                 svn_string_create(user, pool));
-  if (log_msg)
-    apr_hash_set(revprop_table, SVN_PROP_REVISION_LOG,
-                 APR_HASH_KEY_STRING,
-                 svn_string_create(log_msg, pool));
-  return svn_repos_get_commit_editor5(editor, edit_baton, repos, txn,
-                                      repos_url, base_path, revprop_table,
-                                      callback, callback_baton,
-                                      authz_callback, authz_baton, pool);
-}
-
-
-svn_error_t *
-svn_repos_get_commit_editor3(const svn_delta_editor_t **editor,
-                             void **edit_baton,
-                             svn_repos_t *repos,
-                             svn_fs_txn_t *txn,
-                             const char *repos_url,
-                             const char *base_path,
-                             const char *user,
-                             const char *log_msg,
-                             svn_commit_callback_t callback,
-                             void *callback_baton,
-                             svn_repos_authz_callback_t authz_callback,
-                             void *authz_baton,
-                             apr_pool_t *pool)
-{
-  svn_commit_callback2_t callback2;
-  void *callback2_baton;
-
-  svn_compat_wrap_commit_callback(&callback2, &callback2_baton,
-                                  callback, callback_baton,
-                                  pool);
-
-  return svn_repos_get_commit_editor4(editor, edit_baton, repos, txn,
-                                      repos_url, base_path, user,
-                                      log_msg, callback2,
-                                      callback2_baton, authz_callback,
-                                      authz_baton, pool);
-}
-
-
-svn_error_t *
-svn_repos_get_commit_editor2(const svn_delta_editor_t **editor,
-                             void **edit_baton,
-                             svn_repos_t *repos,
-                             svn_fs_txn_t *txn,
-                             const char *repos_url,
-                             const char *base_path,
-                             const char *user,
-                             const char *log_msg,
-                             svn_commit_callback_t callback,
-                             void *callback_baton,
-                             apr_pool_t *pool)
-{
-  return svn_repos_get_commit_editor3(editor, edit_baton, repos, txn,
-                                      repos_url, base_path, user,
-                                      log_msg, callback, callback_baton,
-                                      NULL, NULL, pool);
-}
-
-
-svn_error_t *
-svn_repos_get_commit_editor(const svn_delta_editor_t **editor,
-                            void **edit_baton,
-                            svn_repos_t *repos,
-                            const char *repos_url,
-                            const char *base_path,
-                            const char *user,
-                            const char *log_msg,
-                            svn_commit_callback_t callback,
-                            void *callback_baton,
-                            apr_pool_t *pool)
-{
-  return svn_repos_get_commit_editor2(editor, edit_baton, repos, NULL,
-                                      repos_url, base_path, user,
-                                      log_msg, callback,
-                                      callback_baton, pool);
 }

@@ -6,7 +6,7 @@
 #
 ######################################################################
 #
-# Copyright (c) 2003-2007 CollabNet.  All rights reserved.
+# Copyright (c) 2003-2009 CollabNet.  All rights reserved.
 #
 # This software is licensed as described in the file COPYING, which
 # you should have received as part of this distribution.  The terms
@@ -35,17 +35,12 @@ class SubversionException(Exception):
     file and line are for C, not Python; they are redundant to the
     traceback information for exceptions raised in Python.
     """
-    # Be compatible with pre-1.5 .args behavior:
+    # Be compatible with Subversion <1.5 .args behavior:
     args = []
-    if message is None:
-      # SubversionException().args => ()
-      pass
-    else:
-      # SubversionException('message').args => ('message',)
-      args.append(message)
-      if apr_err is not None:
-        # SubversionException('message', 123) => ('message', 123)
-        args.append(apr_err)
+    if message is not None or apr_err is not None:
+        args.append(message)
+        if apr_err is not None:
+            args.append(apr_err)
     Exception.__init__(self, *args)
 
     self.apr_err = apr_err
@@ -54,6 +49,7 @@ class SubversionException(Exception):
     self.file = file
     self.line = line
 
+  @classmethod
   def _new_from_err_list(cls, errors):
     """Return new Subversion exception object from list of svn_error_t data.
 
@@ -72,9 +68,6 @@ class SubversionException(Exception):
     for (apr_err, message, file, line) in errors:
       child = cls(message, apr_err, child, file, line)
     return child
-  # Don't use @classmethod, we support 2.2.
-  _new_from_err_list = classmethod(_new_from_err_list)
-
 
 def _cleanup_application_pool():
   """Cleanup the application pool before exiting"""
@@ -285,4 +278,4 @@ def run_app(func, *args, **kw):
   APR is initialized, and an application pool is created. Cleanup is
   performed as the function exits (normally or via an exception).
   '''
-  return apply(func, (application_pool,) + args, kw)
+  return func(application_pool, *args, **kw)

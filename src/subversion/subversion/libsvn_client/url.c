@@ -64,7 +64,7 @@ svn_client__derive_location(const char **url,
                             svn_revnum_t *peg_revnum,
                             const char *path_or_url,
                             const svn_opt_revision_t *peg_revision,
-                            const svn_ra_session_t *ra_session,
+                            svn_ra_session_t *ra_session,
                             svn_wc_adm_access_t *adm_access,
                             svn_client_ctx_t *ctx,
                             apr_pool_t *pool)
@@ -82,21 +82,21 @@ svn_client__derive_location(const char **url,
         }
       else
         {
-          svn_cancel_func_t cancel_func;
-          void *cancel_baton;
+          svn_cancel_func_t cancel_func = NULL;
+          void *cancel_baton = NULL;
 
           if (ctx)
             {
               cancel_func = ctx->cancel_func;
               cancel_baton = ctx->cancel_baton;
             }
- 
+
           SVN_ERR(svn_wc_adm_probe_open3(&adm_access, NULL, path_or_url,
                                          FALSE, 0, cancel_func, cancel_baton,
                                          pool));
           SVN_ERR(svn_wc__entry_versioned(&entry, path_or_url, adm_access,
                                           FALSE, pool));
-          SVN_ERR(svn_wc_adm_close(adm_access));
+          SVN_ERR(svn_wc_adm_close2(adm_access, pool));
         }
 
       SVN_ERR(svn_client__entry_location(url, peg_revnum, path_or_url,
@@ -114,15 +114,15 @@ svn_client__derive_location(const char **url,
       /* Use sesspool to assure that if we opened an RA session, we
          close it. */
       apr_pool_t *sesspool = NULL;
-      svn_ra_session_t *session = (svn_ra_session_t *) ra_session;
-      if (session == NULL)
+
+      if (ra_session == NULL)
         {
           sesspool = svn_pool_create(pool);
-          SVN_ERR(svn_client__open_ra_session_internal(&session, *url, NULL,
+          SVN_ERR(svn_client__open_ra_session_internal(&ra_session, *url, NULL,
                                                        NULL, NULL, FALSE,
                                                        TRUE, ctx, sesspool));
         }
-      SVN_ERR(svn_client__get_revision_number(peg_revnum, NULL, session,
+      SVN_ERR(svn_client__get_revision_number(peg_revnum, NULL, ra_session,
                                               peg_revision, NULL, pool));
       if (sesspool)
         svn_pool_destroy(sesspool);

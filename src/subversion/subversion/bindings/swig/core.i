@@ -1,6 +1,6 @@
 /*
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2007, 2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -32,8 +32,9 @@
 #include <apr.h>
 #include <apr_general.h>
 
-#include "svn_md5.h"
+#include <apr_md5.h>
 #include "svn_diff.h"
+#include "svn_private_config.h"
 %}
 
 #ifdef SWIGRUBY
@@ -218,6 +219,19 @@
 %ignore svn_path_cstring_to_utf8;
 
 /* Other files */
+
+/* Ignore platform-specific auth functions */
+%ignore svn_auth_get_keychain_simple_provider;
+%ignore svn_auth_get_keychain_ssl_client_cert_pw_provider;
+%ignore svn_auth_get_windows_simple_provider;
+%ignore svn_auth_get_windows_ssl_server_trust_provider;
+%ignore svn_auth_gnome_keyring_version;
+%ignore svn_auth_get_gnome_keyring_simple_provider;
+%ignore svn_auth_get_gnome_keyring_ssl_client_cert_pw_provider;
+%ignore svn_auth_kwallet_version;
+%ignore svn_auth_get_kwallet_simple_provider;
+%ignore svn_auth_get_kwallet_ssl_client_cert_pw_provider;
+
 /* bad pool convention */
 %ignore svn_opt_print_generic_help;
 
@@ -293,7 +307,6 @@
 }
 #endif
 
-/* -----------------------------------------------------------------------
 /* -----------------------------------------------------------------------
    output mergeinfo hash
 */
@@ -401,7 +414,7 @@
 %typemap(in) (const char *data, apr_size_t *len) ($*2_type temp)
 {
   $1 = StringValuePtr($input);
-  temp = RSTRING($input)->len;
+  temp = RSTRING_LEN($input);
   $2 = ($2_ltype)&temp;
 }
 #endif
@@ -430,15 +443,32 @@
 
 /* set */
 #ifdef SWIGPYTHON
-%typemap(in) const void *value {
+%typemap(in) const void *value 
+  (apr_pool_t *_global_pool = NULL, PyObject *_global_py_pool = NULL)
+{
+    if (_global_pool == NULL)
+    {
+       if (svn_swig_py_get_parent_pool(args, $descriptor(apr_pool_t *),
+                                     &_global_py_pool, &_global_pool))
+       SWIG_fail;
+    }
+
     if (PyString_Check($input)) {
-        $1 = (void *)PyString_AS_STRING($input);
+        char *value = PyString_AS_STRING($input);
+        $1 = apr_pstrdup(_global_pool, value);
     }
     else if (PyLong_Check($input)) {
-        $1 = (void *)PyLong_AsLong($input);
+        $1 = apr_palloc(_global_pool, sizeof(apr_uint32_t));
+        *((apr_uint32_t *)$1) = PyLong_AsLong($input);
     }
     else if (PyInt_Check($input)) {
-        $1 = (void *)PyInt_AsLong($input);
+        $1 = apr_palloc(_global_pool, sizeof(apr_uint32_t));
+        *((apr_uint32_t *)$1) = PyInt_AsLong($input);
+    }
+    else if ($input == Py_None) {
+        $1 = NULL;
+    }
+    else if (svn_swig_ConvertPtr($input, (void **)&$1, $descriptor(svn_auth_ssl_server_cert_info_t *)) == 0) {
     }
     else {
         PyErr_SetString(PyExc_TypeError, "not a known type");
@@ -722,8 +752,11 @@ svn_swig_pl_set_current_pool (apr_pool_t *pool)
 %include svn_mergeinfo_h.swg
 %include svn_io_h.swg
 
-#ifdef SWIGPERL
+#if defined(SWIGPERL) || defined(SWIGRUBY)
 %include svn_md5_h.swg
+#endif
+
+#ifdef SWIGPERL
 %include svn_diff_h.swg
 %include svn_error_h.swg
 
@@ -762,6 +795,9 @@ svn_swig_py_initialize();
   rb_define_const(mCore, "SVN_VER_NUM", rb_str_new2(SVN_VER_NUM));
   rb_define_const(mCore, "SVN_VER_NUMBER", rb_str_new2(SVN_VER_NUMBER));
   rb_define_const(mCore, "SVN_VERSION", rb_str_new2(SVN_VERSION));
+
+  rb_define_const(mCore, "SVN_ALLOCATOR_MAX_FREE_UNLIMITED",
+                  UINT2NUM(APR_ALLOCATOR_MAX_FREE_UNLIMITED));
 %}
 
 %header %{
@@ -782,6 +818,10 @@ struct apr_pool_wrapper_t
     svn_swig_rb_destroy_internal_pool(object);
   }
 
+  static void set_default_max_free_size(apr_size_t size) {
+    apr_allocator_max_free_set(svn_swig_rb_allocator(), size);
+  }
+
   apr_pool_wrapper_t(apr_pool_wrapper_t *parent) {
     apr_pool_wrapper_t *self;
     apr_pool_t *parent_pool;
@@ -791,7 +831,7 @@ struct apr_pool_wrapper_t
       parent_pool = parent->pool;
       APR_ARRAY_PUSH(parent->children, apr_pool_wrapper_t *) = self;
     } else {
-      parent_pool = NULL;
+      parent_pool = svn_swig_rb_pool();
     }
     self->pool = svn_pool_create_ex(parent_pool, NULL);
     self->destroyed = FALSE;
@@ -804,6 +844,13 @@ struct apr_pool_wrapper_t
   ~apr_pool_wrapper_t() {
     apr_pool_wrapper_destroy(self);
     xfree(self);
+  }
+
+  void set_max_free_size(apr_size_t size) {
+    apr_allocator_t *allocator;
+
+    allocator = apr_pool_allocator_get(self->pool);
+    apr_allocator_max_free_set(allocator, size);
   }
 
   void _destroy(void) {

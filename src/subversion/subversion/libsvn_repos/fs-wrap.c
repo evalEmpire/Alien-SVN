@@ -28,6 +28,7 @@
 #include "svn_time.h"
 #include "repos.h"
 #include "svn_private_config.h"
+#include "private/svn_utf_private.h"
 
 
 /*** Commit wrappers ***/
@@ -169,6 +170,29 @@ validate_prop(const char *name, const svn_string_t *value, apr_pool_t *pool)
   /* Validate "svn:" properties. */
   if (svn_prop_is_svn_prop(name) && value != NULL)
     {
+      /* Validate that translated props (e.g., svn:log) are UTF-8 with
+       * LF line endings. */
+      if (svn_prop_needs_translation(name))
+        {
+          if (svn_utf__is_valid(value->data, value->len) == FALSE)
+            {
+              return svn_error_createf
+                (SVN_ERR_BAD_PROPERTY_VALUE, NULL,
+                 _("Cannot accept '%s' property because it is not encoded in "
+                   "UTF-8"), name);
+            }
+
+          /* Disallow inconsistent line ending style, by simply looking for
+           * carriage return characters ('\r'). */
+          if (strchr(value->data, '\r') != NULL)
+            {
+              return svn_error_createf
+                (SVN_ERR_BAD_PROPERTY_VALUE, NULL,
+                 _("Cannot accept non-LF line endings in '%s' property"),
+                   name);
+            }
+        }
+
       /* "svn:date" should be a valid date. */
       if (strcmp(name, SVN_PROP_REVISION_DATE) == 0)
         {
@@ -287,37 +311,6 @@ svn_repos_fs_change_rev_prop3(svn_repos_t *repos,
 
 
 svn_error_t *
-svn_repos_fs_change_rev_prop2(svn_repos_t *repos,
-                              svn_revnum_t rev,
-                              const char *author,
-                              const char *name,
-                              const svn_string_t *new_value,
-                              svn_repos_authz_func_t authz_read_func,
-                              void *authz_read_baton,
-                              apr_pool_t *pool)
-{
-  return svn_repos_fs_change_rev_prop3(repos, rev, author, name, new_value,
-                                       TRUE, TRUE, authz_read_func,
-                                       authz_read_baton, pool);
-}
-
-
-
-svn_error_t *
-svn_repos_fs_change_rev_prop(svn_repos_t *repos,
-                             svn_revnum_t rev,
-                             const char *author,
-                             const char *name,
-                             const svn_string_t *new_value,
-                             apr_pool_t *pool)
-{
-  return svn_repos_fs_change_rev_prop2(repos, rev, author, name, new_value,
-                                       NULL, NULL, pool);
-}
-
-
-
-svn_error_t *
 svn_repos_fs_revision_prop(svn_string_t **value_p,
                            svn_repos_t *repos,
                            svn_revnum_t rev,
@@ -425,6 +418,7 @@ svn_repos_fs_lock(svn_lock_t **lock,
   svn_error_t *err;
   svn_fs_access_t *access_ctx = NULL;
   const char *username = NULL;
+  const char *new_token;
   apr_array_header_t *paths;
 
   /* Setup an array of paths in anticipation of the ra layers handling
@@ -444,7 +438,10 @@ svn_repos_fs_lock(svn_lock_t **lock,
 
   /* Run pre-lock hook.  This could throw error, preventing
      svn_fs_lock() from happening. */
-  SVN_ERR(svn_repos__hooks_pre_lock(repos, path, username, pool));
+  SVN_ERR(svn_repos__hooks_pre_lock(repos, &new_token, path, username, comment,
+                                    steal_lock, pool));
+  if (*new_token)
+    token = new_token;
 
   /* Lock. */
   SVN_ERR(svn_fs_lock(lock, repos->fs, path, token, comment, is_dav_comment,
@@ -488,7 +485,8 @@ svn_repos_fs_unlock(svn_repos_t *repos,
 
   /* Run pre-unlock hook.  This could throw error, preventing
      svn_fs_unlock() from happening. */
-  SVN_ERR(svn_repos__hooks_pre_unlock(repos, path, username, pool));
+  SVN_ERR(svn_repos__hooks_pre_unlock(repos, path, username, token,
+                                      break_lock, pool));
 
   /* Unlock. */
   SVN_ERR(svn_fs_unlock(repos->fs, path, token, break_lock, pool));
@@ -633,6 +631,18 @@ svn_repos_fs_get_mergeinfo(svn_mergeinfo_catalog_t *mergeinfo,
 
   svn_pool_destroy(iterpool);
   return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_repos_fs_pack(svn_repos_t *repos,
+                  svn_fs_pack_notify_t notify_func,
+                  void *notify_baton,
+                  svn_cancel_func_t cancel_func,
+                  void *cancel_baton,
+                  apr_pool_t *pool)
+{
+  return svn_fs_pack(repos->db_path, notify_func, notify_baton,
+                     cancel_func, cancel_baton, pool);
 }
 
 

@@ -22,7 +22,6 @@
 #include <apr_hash.h>
 #include <apr_tables.h>
 #include <string.h>       /* for strncmp() */
-#include <assert.h>
 #include "svn_string.h"
 #include "svn_props.h"
 #include "svn_error.h"
@@ -33,8 +32,7 @@ svn_boolean_t
 svn_prop_is_svn_prop(const char *prop_name)
 {
   return strncmp(prop_name, SVN_PROP_PREFIX, (sizeof(SVN_PROP_PREFIX) - 1))
-         ? FALSE
-         : TRUE;
+         == 0;
 }
 
 

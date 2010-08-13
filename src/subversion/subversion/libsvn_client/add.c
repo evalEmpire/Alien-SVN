@@ -2,7 +2,7 @@
  * add.c:  wrappers around wc add/mkdir functionality.
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -30,6 +30,7 @@
 #include "svn_string.h"
 #include "svn_pools.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_io.h"
 #include "svn_config.h"
@@ -81,6 +82,67 @@ trim_string(char **pstr)
   str[i] = '\0';
 }
 
+/* Remove leading and trailing single- or double quotes from a C string,
+ * in place. */
+static void
+unquote_string(char **pstr)
+{
+  char *str = *pstr;
+  size_t i = strlen(str);
+
+  if (i > 0 && ((*str == '"' && str[i - 1] == '"') ||
+                (*str == '\'' && str[i - 1] == '\'')))
+    {
+      str[i - 1] = '\0';
+      str++;
+    }
+  *pstr = str;
+}
+
+/* Split PROPERTY and store each individual value in PROPS.
+   Allocates from POOL. */
+static void
+split_props(apr_array_header_t **props,
+            const char *property,
+            apr_pool_t *pool)
+{
+  apr_array_header_t *temp_props;
+  char *new_prop;
+  int i = 0;
+  int j = 0;
+
+  temp_props = apr_array_make(pool, 4, sizeof(char *));
+  new_prop = apr_palloc(pool, strlen(property)+1);
+
+  for (i = 0; property[i] != '\0'; i++)
+    {
+      if (property[i] != ';')
+        {
+          new_prop[j] = property[i];
+          j++;
+        }
+      else if (property[i] == ';')
+        {
+          if (property[i+1] == ';')
+            {
+              new_prop[j] = ';';
+              j++;
+              i++;
+            }
+          else
+            {
+              new_prop[j] = '\0';
+              APR_ARRAY_PUSH(temp_props, char *) = new_prop;
+              new_prop += j + 1;
+              j = 0;
+            }
+        }
+    }
+  new_prop[j] = '\0';
+  APR_ARRAY_PUSH(temp_props, char *) = new_prop;
+  *props = temp_props;
+}
+
 /* For one auto-props config entry (NAME, VALUE), if the filename pattern
    NAME matches BATON->filename case insensitively then add the properties
    listed in VALUE into BATON->properties.
@@ -92,9 +154,9 @@ auto_props_enumerator(const char *name,
                       void *baton,
                       apr_pool_t *pool)
 {
+  int i;
   auto_props_baton_t *autoprops = baton;
-  char *property;
-  char *last_token;
+  apr_array_header_t *props;
 
   /* nothing to do here without a value */
   if (strlen(value) == 0)
@@ -104,14 +166,13 @@ auto_props_enumerator(const char *name,
   if (apr_fnmatch(name, autoprops->filename, APR_FNM_CASE_BLIND) == APR_FNM_NOMATCH)
     return TRUE;
 
-  /* parse the value (we dup it first to effectively lose the
-     'const', and to avoid messing up the original value) */
-  property = apr_pstrdup(autoprops->pool, value);
-  property = apr_strtok(property, ";", &last_token);
-  while (property)
+  split_props(&props, value, autoprops->pool);
+
+  for (i = 0; i < props->nelts; i++)
     {
       int len;
       const char *this_value;
+      char *property = APR_ARRAY_IDX(props, i, char *);
       char *equal_sign = strchr(property, '=');
 
       if (equal_sign)
@@ -119,6 +180,7 @@ auto_props_enumerator(const char *name,
           *equal_sign = '\0';
           equal_sign++;
           trim_string(&equal_sign);
+          unquote_string(&equal_sign);
           this_value = equal_sign;
         }
       else
@@ -127,10 +189,13 @@ auto_props_enumerator(const char *name,
         }
       trim_string(&property);
       len = strlen(property);
+
       if (len > 0)
         {
-          svn_string_t *propval = svn_string_create(this_value,
-                                                    autoprops->pool);
+          svn_string_t *propval = apr_palloc(autoprops->pool,
+                                             sizeof(*propval));
+          propval->data = this_value;
+          propval->len = strlen(this_value);
 
           apr_hash_set(autoprops->properties, property, len, propval);
           if (strcmp(property, SVN_PROP_MIME_TYPE) == 0)
@@ -138,7 +203,6 @@ auto_props_enumerator(const char *name,
           else if (strcmp(property, SVN_PROP_EXECUTABLE) == 0)
             autoprops->have_executable = TRUE;
         }
-      property = apr_strtok(NULL, ";", &last_token);
     }
   return TRUE;
 }
@@ -186,10 +250,6 @@ svn_client__get_auto_props(apr_hash_t **properties,
                      svn_string_create(autoprops.mimetype, pool));
     }
 
-  /* Don't automatically set the svn:executable property on added items
-   * on OS400.  While OS400 supports the executable permission its use is
-   * inconsistent at best. */
-#ifndef AS400
   /* if executable has not been set check the file */
   if (! autoprops.have_executable)
     {
@@ -200,7 +260,6 @@ svn_client__get_auto_props(apr_hash_t **properties,
                      strlen(SVN_PROP_EXECUTABLE),
                      svn_string_create("", pool));
     }
-#endif
 
   *mimetype = autoprops.mimetype;
   return SVN_NO_ERROR;
@@ -232,16 +291,16 @@ add_file(const char *path,
                                        pool));
 
   /* Add the file */
-  SVN_ERR(svn_wc_add2(path, adm_access, NULL, SVN_INVALID_REVNUM,
-                      ctx->cancel_func, ctx->cancel_baton,
+  SVN_ERR(svn_wc_add3(path, adm_access, svn_depth_infinity, NULL,
+                      SVN_INVALID_REVNUM, ctx->cancel_func, ctx->cancel_baton,
                       NULL, NULL, pool));
 
   if (is_special)
     /* This must be a special file. */
-    SVN_ERR(svn_wc_prop_set2
+    SVN_ERR(svn_wc_prop_set3
             (SVN_PROP_SPECIAL,
              svn_string_create(SVN_PROP_BOOLEAN_TRUE, pool),
-             path, adm_access, FALSE, pool));
+             path, adm_access, FALSE, NULL, NULL, pool));
   else if (properties)
     {
       /* loop through the hashtable and add the properties */
@@ -250,13 +309,26 @@ add_file(const char *path,
         {
           const void *pname;
           void *pval;
+          svn_error_t *err;
 
           apr_hash_this(hi, &pname, NULL, &pval);
           /* It's probably best to pass 0 for force, so that if
              the autoprops say to set some weird combination,
              we just error and let the user sort it out. */
-          SVN_ERR(svn_wc_prop_set2(pname, pval, path,
-                                   adm_access, FALSE, pool));
+          err = svn_wc_prop_set3(pname, pval, path, adm_access, FALSE,
+                                 NULL, NULL, pool);
+          if (err)
+            {
+              /* Don't leave the job half-done. If we fail to set a property,
+               * (try to) un-add the file. */
+              svn_error_clear(svn_wc_revert3(path, adm_access,
+                                             svn_depth_empty,
+                                             FALSE /* use_commit_times */,
+                                             NULL /* changelists */,
+                                             NULL, NULL, NULL, NULL,
+                                             pool));
+              return err;
+            }
         }
     }
 
@@ -308,9 +380,8 @@ add_dir_recursive(const char *dirname,
     SVN_ERR(ctx->cancel_func(ctx->cancel_baton));
 
   /* Add this directory to revision control. */
-  err = svn_wc_add2(dirname, adm_access,
-                    NULL, SVN_INVALID_REVNUM,
-                    ctx->cancel_func, ctx->cancel_baton,
+  err = svn_wc_add3(dirname, adm_access, svn_depth_infinity, NULL,
+                    SVN_INVALID_REVNUM, ctx->cancel_func, ctx->cancel_baton,
                     ctx->notify_func2, ctx->notify_baton2, pool);
   if (err && err->apr_err == SVN_ERR_ENTRY_EXISTS && force)
     svn_error_clear(err);
@@ -405,7 +476,7 @@ add_dir_recursive(const char *dirname,
     }
 
   /* Opened by svn_wc_add */
-  SVN_ERR(svn_wc_adm_close(dir_access));
+  SVN_ERR(svn_wc_adm_close2(dir_access, subpool));
 
   /* Destroy the per-iteration pool. */
   svn_pool_destroy(subpool);
@@ -430,13 +501,18 @@ add(const char *path,
   svn_error_t *err;
 
   SVN_ERR(svn_io_check_path(path, &kind, pool));
-  if (kind == svn_node_dir && depth >= svn_depth_files)
-    err = add_dir_recursive(path, adm_access, depth,
-                            force, no_ignore, ctx, pool);
+  if (kind == svn_node_dir)
+    {
+      /* We use add_dir_recursive for all directory targets
+         and pass depth along no matter what it is, so that the
+         target's depth will be set correctly. */
+      err = add_dir_recursive(path, adm_access, depth,
+                              force, no_ignore, ctx, pool);
+    }
   else if (kind == svn_node_file)
     err = add_file(path, ctx, adm_access, pool);
   else
-    err = svn_wc_add2(path, adm_access, NULL, SVN_INVALID_REVNUM,
+    err = svn_wc_add3(path, adm_access, depth, NULL, SVN_INVALID_REVNUM,
                       ctx->cancel_func, ctx->cancel_baton,
                       ctx->notify_func2, ctx->notify_baton2, pool);
 
@@ -467,22 +543,28 @@ add_parent_dirs(const char *path,
 
   if (err && err->apr_err == SVN_ERR_WC_NOT_DIRECTORY)
     {
+      svn_error_clear(err);
       if (svn_dirent_is_root(path, strlen(path)))
         {
-          svn_error_clear(err);
-
           return svn_error_create
             (SVN_ERR_CLIENT_NO_VERSIONED_PARENT, NULL, NULL);
+        }
+      else if (svn_wc_is_adm_dir(svn_path_basename(path, pool), pool))
+        {
+          return svn_error_createf
+            (SVN_ERR_RESERVED_FILENAME_SPECIFIED, NULL,
+             _("'%s' ends in a reserved name"),
+             svn_path_local_style(path, pool));
         }
       else
         {
           const char *parent_path = svn_path_dirname(path, pool);
 
-          svn_error_clear(err);
           SVN_ERR(add_parent_dirs(parent_path, &adm_access, ctx, pool));
           SVN_ERR(svn_wc_adm_retrieve(&adm_access, adm_access, parent_path,
                                       pool));
-          SVN_ERR(svn_wc_add2(path, adm_access, NULL, SVN_INVALID_REVNUM,
+          SVN_ERR(svn_wc_add3(path, adm_access, svn_depth_infinity,
+                              NULL, SVN_INVALID_REVNUM,
                               ctx->cancel_func, ctx->cancel_baton,
                               ctx->notify_func2, ctx->notify_baton2, pool));
         }
@@ -522,24 +604,21 @@ svn_client_add4(const char *path,
 
       subpool = svn_pool_create(pool);
       SVN_ERR(add_parent_dirs(parent_dir, &adm_access, ctx, subpool));
-      SVN_ERR(svn_wc_adm_close(adm_access));
+      SVN_ERR(svn_wc_adm_close2(adm_access, subpool));
       svn_pool_destroy(subpool);
-
-      SVN_ERR(svn_wc_adm_open3(&adm_access, NULL, parent_dir,
-                               TRUE, 0, ctx->cancel_func, ctx->cancel_baton,
-                               pool));
     }
   else
     {
       parent_dir = svn_path_dirname(path, pool);
-      SVN_ERR(svn_wc_adm_open3(&adm_access, NULL, parent_dir,
-                               TRUE, 0, ctx->cancel_func, ctx->cancel_baton,
-                               pool));
     }
+
+  SVN_ERR(svn_wc_adm_open3(&adm_access, NULL, parent_dir,
+                           TRUE, 0, ctx->cancel_func, ctx->cancel_baton,
+                           pool));
 
   err = add(path, depth, force, no_ignore, adm_access, ctx, pool);
 
-  err2 = svn_wc_adm_close(adm_access);
+  err2 = svn_wc_adm_close2(adm_access, pool);
   if (err2)
     {
       if (err)
@@ -549,38 +628,6 @@ svn_client_add4(const char *path,
     }
 
   return err;
-}
-
-svn_error_t *
-svn_client_add3(const char *path,
-                svn_boolean_t recursive,
-                svn_boolean_t force,
-                svn_boolean_t no_ignore,
-                svn_client_ctx_t *ctx,
-                apr_pool_t *pool)
-{
-  return svn_client_add4(path, SVN_DEPTH_INFINITY_OR_EMPTY(recursive),
-                         force, no_ignore, FALSE, ctx,
-                         pool);
-}
-
-svn_error_t *
-svn_client_add2(const char *path,
-                svn_boolean_t recursive,
-                svn_boolean_t force,
-                svn_client_ctx_t *ctx,
-                apr_pool_t *pool)
-{
-  return svn_client_add3(path, recursive, force, FALSE, ctx, pool);
-}
-
-svn_error_t *
-svn_client_add(const char *path,
-               svn_boolean_t recursive,
-               svn_client_ctx_t *ctx,
-               apr_pool_t *pool)
-{
-  return svn_client_add3(path, recursive, FALSE, FALSE, ctx, pool);
 }
 
 
@@ -708,8 +755,13 @@ mkdir_urls(svn_commit_info_t **commit_info_p,
             }
         }
     }
-  qsort(targets->elts, targets->nelts, targets->elt_size, 
+  qsort(targets->elts, targets->nelts, targets->elt_size,
         svn_sort_compare_paths);
+
+  /* ### This reparent may be problematic in limited-authz-to-common-parent
+     ### scenarios (compare issue #3242).  See also issue #3496. */
+  if (ra_session)
+    SVN_ERR(svn_ra_reparent(ra_session, common, pool));
 
   /* Create new commit items and add them to the array. */
   if (SVN_CLIENT__HAS_LOG_MSG_FUNC(ctx))
@@ -722,8 +774,8 @@ mkdir_urls(svn_commit_info_t **commit_info_p,
       for (i = 0; i < targets->nelts; i++)
         {
           const char *path = APR_ARRAY_IDX(targets, i, const char *);
-          SVN_ERR(svn_client_commit_item_create
-                  ((const svn_client_commit_item3_t **) &item, pool));
+
+          item = svn_client_commit_item3_create(pool);
           item->url = svn_path_join(common, path, pool);
           item->state_flags = SVN_CLIENT_COMMIT_ITEM_ADD;
           APR_ARRAY_PUSH(commit_items, svn_client_commit_item3_t *) = item;
@@ -777,9 +829,7 @@ mkdir_urls(svn_commit_info_t **commit_info_p,
     }
 
   /* Close the edit. */
-  SVN_ERR(editor->close_edit(edit_baton, pool));
-
-  return SVN_NO_ERROR;
+  return editor->close_edit(edit_baton, pool);
 }
 
 
@@ -798,18 +848,22 @@ svn_client__make_local_parents(const char *path,
   else
     SVN_ERR(svn_io_dir_make(path, APR_OS_DEFAULT, pool));
 
-  err = svn_client_add4(path, svn_depth_empty, FALSE, FALSE,
+  /* Should no longer use svn_depth_empty to indicate that only the directory
+     itself is added, since it not only constraints the operation depth, but
+     also defines the depth of the target directory now. Moreover, the new
+     directory will have no children at all.*/
+  err = svn_client_add4(path, svn_depth_infinity, FALSE, FALSE,
                         make_parents, ctx, pool);
 
-  /* We just created a new directory, but couldn't add it to
-     version control. Don't leave unversioned directories behind. */
+  /* If we created a new directory, but couldn't add it to version
+     control, then delete it. */
   if (err && (orig_kind == svn_node_none))
     {
       /* ### If this returns an error, should we link it onto
          err instead, so that the user is warned that we just
          created an unversioned directory? */
 
-      svn_error_clear(svn_io_remove_dir(path, pool));
+      svn_error_clear(svn_io_remove_dir2(path, FALSE, NULL, NULL, pool));
     }
 
   return err;
@@ -829,7 +883,7 @@ svn_client_mkdir3(svn_commit_info_t **commit_info_p,
 
   if (svn_path_is_url(APR_ARRAY_IDX(paths, 0, const char *)))
     {
-      SVN_ERR(mkdir_urls(commit_info_p, paths, make_parents, 
+      SVN_ERR(mkdir_urls(commit_info_p, paths, make_parents,
                          revprop_table, ctx, pool));
     }
   else
@@ -855,30 +909,4 @@ svn_client_mkdir3(svn_commit_info_t **commit_info_p,
     }
 
   return SVN_NO_ERROR;
-}
-
-
-svn_error_t *
-svn_client_mkdir2(svn_commit_info_t **commit_info_p,
-                  const apr_array_header_t *paths,
-                  svn_client_ctx_t *ctx,
-                  apr_pool_t *pool)
-{
-  return svn_client_mkdir3(commit_info_p, paths, FALSE, NULL, ctx, pool);
-}
-
-
-svn_error_t *
-svn_client_mkdir(svn_client_commit_info_t **commit_info_p,
-                 const apr_array_header_t *paths,
-                 svn_client_ctx_t *ctx,
-                 apr_pool_t *pool)
-{
-  svn_commit_info_t *commit_info = NULL;
-  svn_error_t *err;
-
-  err = svn_client_mkdir2(&commit_info, paths, ctx, pool);
-  /* These structs have the same layout for the common fields. */
-  *commit_info_p = (svn_client_commit_info_t *) commit_info;
-  return err;
 }

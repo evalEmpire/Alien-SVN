@@ -2,7 +2,7 @@
  * swigutil_py.c: utility functions for the SWIG Python bindings
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2004, 2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -35,6 +35,7 @@
 #include "svn_opt.h"
 #include "svn_delta.h"
 #include "svn_auth.h"
+#include "svn_props.h"
 #include "svn_pools.h"
 #include "svn_mergeinfo.h"
 #include "svn_types.h"
@@ -44,13 +45,16 @@
 #include "swig_python_external_runtime.swg"
 #include "swigutil_py.h"
 
-/* Define handy Python 2.4 macro if this is older Python. */
-#ifndef Py_RETURN_NONE
-#define Py_RETURN_NONE return Py_INCREF(Py_None), Py_None
+/* Py_ssize_t for old Pythons */
+/* This code is as recommended by: */
+/* http://www.python.org/dev/peps/pep-0353/#conversion-guidelines */
+#if PY_VERSION_HEX < 0x02050000 && !defined(PY_SSIZE_T_MIN)
+typedef int Py_ssize_t;
+# define PY_SSIZE_T_MAX INT_MAX
+# define PY_SSIZE_T_MIN INT_MIN
 #endif
 
 
-
 /*** Manage the Global Interpreter Lock ***/
 
 /* If both Python and APR have threads available, we can optimize ourselves
@@ -1239,6 +1243,51 @@ const apr_array_header_t *svn_swig_py_revnums_to_array(PyObject *source,
     return temp;
 }
 
+const apr_array_header_t *
+svn_swig_py_struct_ptr_list_to_array(PyObject *source,
+                                     swig_type_info *type_descriptor,
+                                     apr_pool_t *pool)
+{
+    int targlen;
+    apr_array_header_t *temp;
+
+    if (source == Py_None)
+        return NULL;
+
+    if (!PySequence_Check(source))
+      {
+        PyErr_SetString(PyExc_TypeError, "not a sequence");
+        return NULL;
+      }
+    targlen = PySequence_Length(source);
+    temp = apr_array_make(pool, targlen, sizeof(void *));
+
+    temp->nelts = targlen;
+    while (targlen--)
+      {
+        void *struct_ptr;
+        int status;
+        PyObject *o = PySequence_GetItem(source, targlen);
+        if (o == NULL)
+          return NULL;
+
+        status = svn_swig_ConvertPtr(o, &struct_ptr, type_descriptor);
+
+        if (status == 0)
+          {
+            APR_ARRAY_IDX(temp, targlen, void *) = struct_ptr;
+            Py_DECREF(o);
+          }
+        else
+          {
+            Py_DECREF(o);
+            PyErr_SetString(PyExc_TypeError,
+                            "not a SWIG proxy of correct type");
+            return NULL;
+          }
+      }
+    return temp;
+}
 
 
 /*** apr_array_header_t conversions.  To create a new type of
@@ -2618,9 +2667,9 @@ svn_error_t *svn_swig_py_changelist_receiver_func(void *baton,
 
   svn_swig_py_acquire_py_lock();
 
-  if ((result = PyObject_CallFunction(receiver, 
+  if ((result = PyObject_CallFunction(receiver,
                                       (char *)"ssO&",
-                                      path, changelist, 
+                                      path, changelist,
                                       make_ob_pool, pool)) == NULL)
     {
       err = callback_exception_error();
@@ -2976,7 +3025,7 @@ ra_callbacks_get_wc_prop(void *baton,
   else if (result != Py_None)
     {
       char *buf;
-      int len;
+      Py_ssize_t len;
       if (PyString_AsStringAndSize(result, &buf, &len) == -1)
         {
       	  err = callback_exception_error();

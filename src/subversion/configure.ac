@@ -6,8 +6,8 @@ AC_PREREQ(2.58)
 dnl Get the version of Subversion, using m4's esyscmd() command to do this
 dnl at m4-time, since AC_INIT() requires it then.
 AC_INIT([subversion],
-        [esyscmd(python build/getversion.py subversion/include/svn_version.h)],
-        [http://subversion.tigris.org/])
+     [esyscmd(python build/getversion.py SVN subversion/include/svn_version.h)],
+     [http://subversion.tigris.org/])
 
 AC_CONFIG_SRCDIR(subversion/include/svn_types.h)
 AC_CONFIG_AUX_DIR([build])
@@ -16,6 +16,12 @@ AC_MSG_NOTICE([Configuring Subversion ]AC_PACKAGE_VERSION)
 
 AC_SUBST([abs_srcdir], ["`cd $srcdir && pwd`"])
 AC_SUBST([abs_builddir], ["`pwd`"])
+if test "$abs_srcdir" = "$abs_builddir"; then
+  canonicalized_srcdir=""
+else
+  canonicalized_srcdir="$srcdir/"
+fi
+AC_SUBST([canonicalized_srcdir])
 
 SWIG_LDFLAGS="$LDFLAGS"
 AC_SUBST([SWIG_LDFLAGS])
@@ -28,15 +34,21 @@ SVN_CONFIG_NICE(config.nice)
 # Look for a C compiler (before anything can set CFLAGS)
 AC_PROG_CC
 
+# Look for a C++ compiler
+AC_PROG_CXX
+
 # Look for a C pre-processor
 AC_PROG_CPP
+
+# Look for a good sed
+# AC_PROG_SED was introduced in Autoconf 2.59b
+m4_ifdef([AC_PROG_SED], [AC_PROG_SED], [SED="${SED:-sed}"])
 
 # Grab target_cpu, so we can use it in the Solaris pkginfo file
 AC_CANONICAL_TARGET
 
-# Look for an extended grep, this macro appeared in autoconf-2.53b,
-# before that, the search for an EGREP was always performed.
-ifdef([AC_PROG_EGREP],[AC_PROG_EGREP],[])
+# Look for an extended grep
+AC_PROG_EGREP
 
 AC_PROG_LN_S
 
@@ -49,10 +61,6 @@ if test "$INSTALL" = "build/install-sh -c"; then
 fi
 
 AC_SUBST([MKDIR], ["$INSTALL -d"])
-
-
-dnl find Apache with a recent-enough magic module number.
-SVN_FIND_APACHE(20020903)
 
 # ==== Libraries, for which we may have source to build ======================
 
@@ -70,15 +78,18 @@ APU_VER_REGEXES=["0\.9\.[7-9] 0\.9\.1[0-9] 1\."]
 SVN_LIB_APR($APR_VER_REGEXES)
 SVN_LIB_APRUTIL($APU_VER_REGEXES)
 
+dnl Search for pkg-config
+AC_PATH_PROG(PKG_CONFIG, pkg-config)
+
 # Either a space-separated list of allowable Neon versions, or "any" to
 # mean allow anything.
-NEON_ALLOWED_LIST="0.25.0 0.25.1 0.25.2 0.25.3 0.25.4 0.25.5 0.26.0 0.26.1 0.26.2 0.26.3 0.26.4 0.27.2 0.28.0 0.28.1 0.28.2 0.28.3"
-NEON_RECOMMENDED_VER=0.28.3
+NEON_ALLOWED_LIST="0\.25 0\.26 0\.27\.2 0\.28 0\.29"
+NEON_RECOMMENDED_VER="0.29.0"
 NEON_URL="http://www.webdav.org/neon/neon-${NEON_RECOMMENDED_VER}.tar.gz"
 dnl You can skip the neon version check only if you know what you are doing 
 AC_ARG_ENABLE(neon-version-check,
   AS_HELP_STRING([--disable-neon-version-check],
-		 [do not check the Neon version]),
+                 [do not check the Neon version]),
   [
     if test "$enableval" = "no" ; then
       NEON_ALLOWED_LIST="any"
@@ -99,6 +110,25 @@ if test "$svn_lib_serf" = "yes"; then
   AC_DEFINE([SVN_HAVE_SERF], 1,
             [Defined if support for Serf is enabled])
 fi
+
+dnl Search for apr_memcache (only affects fs_fs)
+SVN_LIB_APR_MEMCACHE
+
+if test "$svn_lib_apr_memcache" = "yes"; then
+  AC_DEFINE(SVN_HAVE_MEMCACHE, 1,
+            [Defined if apr_memcache (standalone or in apr-util) is present])
+fi
+
+
+dnl Find Apache with a recent-enough magic module number
+SVN_FIND_APACHE(20020903)
+
+dnl Search for SQLite
+SQLITE_MINIMUM_VER="3.4.0"
+SQLITE_RECOMMENDED_VER="3.6.13"
+SQLITE_URL="http://www.sqlite.org/sqlite-amalgamation-${SQLITE_RECOMMENDED_VER}.tar.gz"
+SVN_LIB_SQLITE(${SQLITE_MINIMUM_VER}, ${SQLITE_RECOMMENDED_VER},
+               ${SQLITE_URL})
 
 dnl Set up a number of directories ---------------------
 
@@ -204,7 +234,7 @@ dnl Check for trang.
 trang=yes
 AC_ARG_WITH(trang,
 AS_HELP_STRING([--with-trang=PATH],
-	       [Specify the command to run the trang schema converter]),
+               [Specify the command to run the trang schema converter]),
 [
     trang="$withval"
 ])
@@ -246,6 +276,9 @@ AC_DEFINE_UNQUOTED(SVN_FS_WANT_DB_MINOR, $SVN_FS_WANT_DB_MINOR,
                    [The desired minor version for the Berkeley DB])
 AC_DEFINE_UNQUOTED(SVN_FS_WANT_DB_PATCH, $SVN_FS_WANT_DB_PATCH,
                    [The desired patch version for the Berkeley DB])
+
+AC_SUBST(SVN_DB_INCLUDES)
+AC_SUBST(SVN_DB_LIBS)
 
 SVN_LIB_SASL
 
@@ -292,6 +325,115 @@ else
 fi
 
 
+dnl APR_HAS_DSO -------------------
+
+AC_MSG_CHECKING([whether APR has support for DSOs])
+old_CPPFLAGS="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS $SVN_APR_INCLUDES"
+AC_PREPROC_IFELSE([
+#include <apr.h>
+#if !APR_HAS_DSO
+#error
+#endif],
+  APR_HAS_DSO="yes"
+  AC_MSG_RESULT([yes]),
+  APR_HAS_DSO="no"
+  AC_MSG_RESULT([no]))
+CPPFLAGS="$old_CPPFLAGS"
+
+
+dnl D-Bus (required for support for KWallet and GNOME Keyring) -------------------
+
+if test -n "$PKG_CONFIG"; then
+  AC_MSG_CHECKING([for D-Bus .pc file])
+  if $PKG_CONFIG --exists dbus-1; then
+    AC_MSG_RESULT([yes])
+    old_CPPFLAGS="$CPPFLAGS"
+    old_LIBS="$LIBS"
+    DBUS_CPPFLAGS="`$PKG_CONFIG --cflags dbus-1`"
+    AC_MSG_CHECKING([D-Bus version])
+    DBUS_VERSION="`$PKG_CONFIG --modversion dbus-1`"
+    AC_MSG_RESULT([$DBUS_VERSION])
+    # D-Bus 0.* requires DBUS_API_SUBJECT_TO_CHANGE
+    if test -n ["`echo "$DBUS_VERSION" | $GREP '^0\.[[:digit:]]\+'`"]; then
+      DBUS_CPPFLAGS="$DBUS_CPPFLAGS -DDBUS_API_SUBJECT_TO_CHANGE"
+    fi
+    DBUS_LIBS="`$PKG_CONFIG --libs dbus-1`"
+    CPPFLAGS="$CPPFLAGS $DBUS_CPPFLAGS"
+    LIBS="$LIBS $DBUS_LIBS"
+    AC_MSG_CHECKING([for D-Bus])
+    AC_LINK_IFELSE([
+#include <dbus/dbus.h>
+int main()
+{dbus_bus_get(DBUS_BUS_SESSION, NULL);}], HAVE_DBUS="yes", HAVE_DBUS="no")
+    if test "$HAVE_DBUS" = "yes"; then
+      AC_MSG_RESULT([yes])
+    else
+      AC_MSG_RESULT([no])
+    fi
+    CPPFLAGS="$old_CPPFLAGS"
+    LIBS="$old_LIBS"
+  else
+    AC_MSG_RESULT([no])
+  fi
+fi
+
+dnl GNOME Keyring -------------------
+
+AC_ARG_WITH(gnome_keyring,
+  AS_HELP_STRING([--with-gnome-keyring], 
+                 [Enable use of GNOME Keyring for auth credentials]),
+                 [with_gnome_keyring="$withval"],
+                 [with_gnome_keyring=no])
+
+AC_MSG_CHECKING([whether to look for GNOME Keyring])
+if test "$with_gnome_keyring" != "no"; then
+  AC_MSG_RESULT([yes])
+  if test "$enable_shared" = "yes"; then
+    if test "$APR_HAS_DSO" = "yes"; then
+      if test -n "$PKG_CONFIG"; then
+        if test "$HAVE_DBUS" = "yes"; then
+          AC_MSG_CHECKING([for GLib and GNOME Keyring .pc files])
+          if $PKG_CONFIG --exists glib-2.0 gnome-keyring-1; then
+            AC_MSG_RESULT([yes])
+            old_CPPFLAGS="$CPPFLAGS"
+            SVN_GNOME_KEYRING_INCLUDES="$DBUS_CPPFLAGS `$PKG_CONFIG --cflags glib-2.0 gnome-keyring-1`"
+            CPPFLAGS="$CPPFLAGS $SVN_GNOME_KEYRING_INCLUDES"
+            AC_CHECK_HEADER(gnome-keyring.h, with_gnome_keyring=yes, with_gnome_keyring=no)
+            AC_MSG_CHECKING([for GNOME Keyring])
+            if test "$with_gnome_keyring" = "yes"; then
+              AC_MSG_RESULT([yes])
+              AC_DEFINE([SVN_HAVE_GNOME_KEYRING], [1], 
+                        [Is GNOME Keyring support enabled?])
+              CPPFLAGS="$old_CPPFLAGS"
+              SVN_GNOME_KEYRING_LIBS="$DBUS_LIBS `$PKG_CONFIG --libs glib-2.0 gnome-keyring-1`"
+            else
+              AC_MSG_RESULT([no])
+              AC_MSG_ERROR([cannot find GNOME Keyring])
+            fi
+          else
+            AC_MSG_RESULT([no])
+            AC_MSG_ERROR([cannot find GLib and GNOME Keyring .pc files])
+          fi
+        else
+          AC_MSG_ERROR([cannot find D-Bus])
+        fi
+      else
+        AC_MSG_ERROR([cannot find pkg-config])
+      fi
+    else
+      AC_MSG_ERROR([APR does not have support for DSOs])
+    fi
+  else
+    AC_MSG_ERROR([--with-gnome-keyring conflicts with --disable-shared])
+  fi
+else
+  AC_MSG_RESULT([no])
+fi
+AC_SUBST(SVN_GNOME_KEYRING_INCLUDES)
+AC_SUBST(SVN_GNOME_KEYRING_LIBS)
+
+
 dnl I18n -------------------
 
 AC_ARG_ENABLE(nls,
@@ -307,9 +449,25 @@ if test "$enable_nls" = "yes"; then
   if test "$MSGFMT" != "none"; then
     AC_SEARCH_LIBS(bindtextdomain, [intl], [],
                    [
-                    AC_MSG_WARN([bindtextdomain() not found.  Disabling NLS.])
                     enable_nls="no"
                    ])
+    if test "$enable_nls" = "no"; then
+      # Destroy the cached result so we can test again
+      unset ac_cv_search_bindtextdomain
+      # On some systems, libintl needs libiconv to link properly,
+      # so try again with -liconv.
+      AC_SEARCH_LIBS(bindtextdomain, [intl],
+                     [
+                      enable_nls="yes"
+                      # This is here so that -liconv ends up in LIBS
+                      # if it worked with -liconv.
+                      AC_CHECK_LIB(iconv, libiconv_open)
+                     ], 
+                     [
+                      AC_MSG_WARN([bindtextdomain() not found.  Disabling NLS.])
+                      enable_nls="no"
+                     ], -liconv)
+    fi
     if test "$enable_nls" = "yes"; then
       AC_DEFINE(ENABLE_NLS, 1,
                 [Define to 1 if translation of program messages to the user's
@@ -321,14 +479,17 @@ fi
 
 AH_BOTTOM(
 #define N_(x) x
+#define U_(x) x
 #ifdef ENABLE_NLS
 #include <locale.h>
 #include <libintl.h>
 #define _(x) dgettext(PACKAGE_NAME, x)
+#define Q_(x1, x2, n) dngettext(PACKAGE_NAME, x1, x2, n)
 #else
 #define _(x) (x)
+#define Q_(x1, x2, n) (((n) == 1) ? x1 : x2)
 #define gettext(x) (x)
-#define dgettext(domain,x) (x)
+#define dgettext(domain, x) (x)
 #endif
 )
 
@@ -356,6 +517,18 @@ if test $USE_NLS = "yes"; then
 fi
 AC_SUBST(MSGFMTFLAGS)
 
+
+dnl KWallet -------------------
+SVN_LIB_KWALLET
+
+if test "$svn_lib_kwallet" = "yes"; then
+  AC_DEFINE([SVN_HAVE_KWALLET], 1,
+            [Defined if KWallet support is enabled])
+fi
+
+
+dnl Build and install rules -------------------
+
 INSTALL_STATIC_RULES="install-bin install-docs"
 INSTALL_RULES="install-fsmod-lib install-ramod-lib install-lib install-include install-static"
 INSTALL_RULES="$INSTALL_RULES $INSTALL_APACHE_RULE"
@@ -363,7 +536,7 @@ BUILD_RULES="fsmod-lib ramod-lib lib bin test $BUILD_APACHE_RULE"
 
 if test "$svn_lib_berkeley_db" = "yes"; then
   BUILD_RULES="$BUILD_RULES bdb-lib bdb-test"
-  INSTALL_RULES="`echo $INSTALL_RULES | sed 's/install-fsmod-lib/install-fsmod-lib install-bdb-lib/'`"
+  INSTALL_RULES="`echo $INSTALL_RULES | $SED 's/install-fsmod-lib/install-fsmod-lib install-bdb-lib/'`"
   INSTALL_STATIC_RULES="$INSTALL_STATIC_RULES install-bdb-lib"
   BDB_TEST_DEPS="\$(BDB_TEST_DEPS)"
   BDB_TEST_PROGRAMS="\$(BDB_TEST_PROGRAMS)"
@@ -371,14 +544,26 @@ fi
   
 if test "$svn_lib_neon" = "yes"; then
   BUILD_RULES="$BUILD_RULES neon-lib"
-  INSTALL_RULES="`echo $INSTALL_RULES | sed 's/install-ramod-lib/install-ramod-lib install-neon-lib/'`"
+  INSTALL_RULES="`echo $INSTALL_RULES | $SED 's/install-ramod-lib/install-ramod-lib install-neon-lib/'`"
   INSTALL_STATIC_RULES="$INSTALL_STATIC_RULES install-neon-lib"
 fi
 
 if test "$svn_lib_serf" = "yes"; then
   BUILD_RULES="$BUILD_RULES serf-lib"
-  INSTALL_RULES="`echo $INSTALL_RULES | sed 's/install-ramod-lib/install-ramod-lib install-serf-lib/'`"
+  INSTALL_RULES="`echo $INSTALL_RULES | $SED 's/install-ramod-lib/install-ramod-lib install-serf-lib/'`"
   INSTALL_STATIC_RULES="$INSTALL_STATIC_RULES install-serf-lib"
+fi
+
+if test "$svn_lib_kwallet" = "yes"; then
+  BUILD_RULES="$BUILD_RULES kwallet-lib"
+  INSTALL_RULES="`echo $INSTALL_RULES | $SED 's/install-lib/install-lib install-kwallet-lib/'`"
+  INSTALL_STATIC_RULES="$INSTALL_STATIC_RULES install-kwallet-lib"
+fi
+
+if test "$with_gnome_keyring" = "yes"; then
+  BUILD_RULES="$BUILD_RULES gnome-keyring-lib"
+  INSTALL_RULES="`echo $INSTALL_RULES | $SED 's/install-lib/install-lib install-gnome-keyring-lib/'`"
+  INSTALL_STATIC_RULES="$INSTALL_STATIC_RULES install-gnome-keyring-lib"
 fi
 
 if test "$USE_NLS" = "yes"; then
@@ -417,7 +602,7 @@ AC_FUNC_VPRINTF
 dnl check for functions needed in special file handling
 AC_CHECK_FUNCS(symlink readlink)
 
-	
+
 dnl Process some configuration options ----------
 
 AC_ARG_WITH(ssl,
@@ -433,18 +618,30 @@ AS_HELP_STRING([--with-ssl],
 
 AC_ARG_ENABLE(debug,
 AS_HELP_STRING([--enable-debug],
-	       [Turn on debugging]),
+               [Turn on debugging]),
 [
     if test "$enableval" = "yes" ; then
       enable_debugging="yes"
     else
       enable_debugging="no"
     fi
+],
+[
+    # Neither --enable-debug nor --disable-debug was passed.
+    enable_debugging="maybe"
+
+        # We leave this as 'maybe' because setting it to 'no' would modify the
+        # CFLAGS/CXXFLAGS later (just after the --enable-maintainer-mode block),
+        # and we don't want to force that.
+    #
+    # TODO: set enable_debugging='no' here, and provide another way to disable
+    #       the CFLAGS/CXXFLAGS munging.
 ])
+
 
 AC_ARG_ENABLE(maintainer-mode,
 AS_HELP_STRING([--enable-maintainer-mode],
-	       [Turn on debugging and very strict compile-time warnings]),
+               [Turn on debugging and very strict compile-time warnings]),
 [
     if test "$enableval" = "yes" ; then
       if test "$enable_debugging" = "no" ; then
@@ -452,8 +649,37 @@ AS_HELP_STRING([--enable-maintainer-mode],
       fi
       enable_debugging=yes
       if test "$GCC" = "yes"; then
-        CFLAGS="$CFLAGS -Wpointer-arith -Wwrite-strings -Wshadow"
-        CXXFLAGS="$CXXFLAGS -Wpointer-arith -Wwrite-strings -Wshadow"
+        AC_MSG_NOTICE([maintainer-mode: adding GCC warning flags])
+        dnl Enable some extra warnings. Put these before the user's flags
+        dnl so the user can specify flags that override these.
+        CFLAGS="-Wpointer-arith -Wwrite-strings -Wshadow -ansi -Wall -Wformat=2 -Wunused -Waggregate-return -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wno-multichar -Wredundant-decls -Wnested-externs -Wunreachable-code -Winline -Wno-long-long $CFLAGS"
+        CXXFLAGS="-Wpointer-arith -Wwrite-strings -Wshadow $CXXFLAGS"
+
+        dnl some additional flags that can be handy for an occasional review,
+        dnl but throw too many warnings in svn code, of too little importance,
+        dnl to keep these enabled. Remove the "dnl" to do a run with these
+        dnl switches enabled.
+        dnl CFLAGS="-Wswitch-enum -Wswitch-default $CFLAGS"
+
+        dnl Add each of the following flags only if the compiler accepts it.
+
+        CFLAGS_KEEP="$CFLAGS"
+        AC_LANG_PUSH([C])
+
+        CFLAGS="-Wextra-tokens $CFLAGS_KEEP"
+        AC_COMPILE_IFELSE([AC_LANG_SOURCE([[]])], [CFLAGS_KEEP="$CFLAGS"])
+
+        CFLAGS="-Wnewline-eof $CFLAGS_KEEP"
+        AC_COMPILE_IFELSE([AC_LANG_SOURCE([[]])], [CFLAGS_KEEP="$CFLAGS"])
+
+        CFLAGS="-Wshorten-64-to-32 $CFLAGS_KEEP"
+        AC_COMPILE_IFELSE([AC_LANG_SOURCE([[]])], [CFLAGS_KEEP="$CFLAGS"])
+
+        CFLAGS="-Wold-style-definition $CFLAGS_KEEP"
+        AC_COMPILE_IFELSE([AC_LANG_SOURCE([[]])], [CFLAGS_KEEP="$CFLAGS"])
+
+        AC_LANG_POP([C])
+        CFLAGS="$CFLAGS_KEEP"
       fi
     fi
 ])
@@ -461,17 +687,20 @@ AS_HELP_STRING([--enable-maintainer-mode],
 if test "$enable_debugging" = "yes" ; then
   dnl At the moment, we don't want optimization, because we're
   dnl debugging.
-  CFLAGS=["`echo $CFLAGS' ' | sed -e 's/-O[^ ]* //g'`"]
-  CXXFLAGS=["`echo $CXXFLAGS' ' | sed -e 's/-O[^ ]* //g'`"]
+  CFLAGS=["`echo $CFLAGS' ' | $SED -e 's/-O[^ ]* //g'`"]
+  CXXFLAGS=["`echo $CXXFLAGS' ' | $SED -e 's/-O[^ ]* //g'`"]
   dnl SVN_DEBUG enables specific features for developer builds
   dnl AP_DEBUG enables specific (Apache) features for developer builds
   CFLAGS="$CFLAGS -DSVN_DEBUG -DAP_DEBUG"
   CXXFLAGS="$CXXFLAGS -DSVN_DEBUG -DAP_DEBUG"
-else
-  if test "$enable_debugging" = "no" ; then
-    CFLAGS=["`echo $CFLAGS' ' | sed -e 's/-g[0-9] //g' | sed -e 's/-g//g'`"]
-    CXXFLAGS=["`echo $CXXFLAGS' ' | sed -e 's/-g[0-9] //g' | sed -e 's/-g//g'`"]
-  fi
+elif test "$enable_debugging" = "no" ; then
+    CFLAGS=["`echo $CFLAGS' ' | $SED -e 's/-g[0-9] //g' | $SED -e 's/-g//g'`"]
+    CXXFLAGS=["`echo $CXXFLAGS' ' | $SED -e 's/-g[0-9] //g' | $SED -e 's/-g//g'`"]
+    dnl Compile with NDEBUG to get rid of assertions
+    CFLAGS="$CFLAGS -DNDEBUG"
+    CXXFLAGS="$CXXFLAGS -DNDEBUG"
+# elif test "$enable_debugging" = "maybe" ; then
+#   # do nothing
 fi
 
 
@@ -496,7 +725,7 @@ SVN_LIB_Z
 MOD_ACTIVATION="-a"
 AC_ARG_ENABLE(mod-activation,
 AS_HELP_STRING([--disable-mod-activation],
-	       [Do not enable mod_dav_svn in httpd.conf]),
+               [Do not enable mod_dav_svn in httpd.conf]),
 [
     if test "$enableval" = "no" ; then
       MOD_ACTIVATION=""
@@ -511,7 +740,7 @@ AC_SUBST(MOD_ACTIVATION)
 
 AC_ARG_ENABLE(gprof,
 AS_HELP_STRING([--enable-gprof],
-	       [Produce gprof profiling data in 'gmon.out' (GCC only).]),
+               [Produce gprof profiling data in 'gmon.out' (GCC only).]),
 [
     if test "$enableval" = "yes" ; then
       dnl Probably other compilers support -pg or something similar;
@@ -542,7 +771,7 @@ AS_HELP_STRING([--enable-gprof],
 
 PYTHON="`$abs_srcdir/build/find_python.sh`"
 if test -z "$PYTHON"; then
-  AC_MSG_WARN([Python 2.2 or later is required to run the testsuite])
+  AC_MSG_WARN([Python 2.4 or later is required to run the testsuite])
   AC_MSG_WARN([or to use the Subversion Python bindings])
   AC_MSG_WARN([])
   AC_MSG_WARN([If you have a suitable Python installed, but not on the])
@@ -585,13 +814,15 @@ fi
 
 SVN_CHECK_SWIG
 
+SVN_CHECK_CTYPESGEN
+
 dnl decide whether we want to link against the RA/FS libraries
 AC_ARG_ENABLE(runtime-module-search,
 AS_HELP_STRING([--enable-runtime-module-search],
                [Turn on dynamic loading of RA/FS libraries]),
 [
     if test "$enableval" = "yes"; then
-      enable_dso=yes
+      use_dso=yes
       if test "$enable_shared" = "no"; then
         AC_MSG_ERROR([--enable-runtime-module-search conflicts with --disable-shared])
       fi
@@ -600,7 +831,7 @@ AS_HELP_STRING([--enable-runtime-module-search],
     fi
 ])
 
-if test "$enable_shared" = "no" || test "$enable_dso" != "yes"; then
+if test "$enable_shared" = "no" || test "$use_dso" != "yes"; then
   ### We want ra_local first to handle the following scenario:
   ### user has neon and db3 in /usr/local, and db4 in
   ### /usr/local/BerkeleyDB.4.0.  If libsvn_ra_neon.la comes before 
@@ -687,8 +918,6 @@ if test "$do_javahl_build" = "yes"; then
                   Please specify a suitable JDK using the --with-jdk option.])
   fi
   
-  AC_PROG_CXX
-  
   dnl The temporary directory where libtool compiles libsvnjavahl.
   dnl N.B. objdir is "the name of the directory that contains temporary
   dnl libtool files" and it is set by libtool.m4
@@ -762,16 +991,20 @@ AC_SUBST(INCLUDE_OUTPUTS)
 
 # ==== Detection complete - output and run config.status =====================
 
-AC_CONFIG_HEADER(subversion/svn_private_config.h)
+AC_CONFIG_HEADERS(subversion/svn_private_config.h)
+AC_CONFIG_COMMANDS([svn_private_config.h],
+                   [$SED -e "s/@SVN_DB_HEADER@/$SVN_DB_HEADER/" subversion/svn_private_config.h > subversion/svn_private_config.h.new
+                    mv -f subversion/svn_private_config.h.new subversion/svn_private_config.h],
+                   [SED="$SED"
+                    SVN_DB_HEADER="$SVN_DB_HEADER"])
 AC_CONFIG_FILES([Makefile])
-AC_CONFIG_COMMANDS(mkdir-init, [make mkdir-init])
 
 SVN_CONFIG_SCRIPT(tools/backup/hot-backup.py)
 SVN_CONFIG_SCRIPT(contrib/client-side/svn_load_dirs/svn_load_dirs.pl)
 SVN_CONFIG_SCRIPT(contrib/client-side/svncopy/svncopy.pl)
 SVN_CONFIG_SCRIPT(contrib/client-side/svncopy/testsvncopy.pl)
+SVN_CONFIG_SCRIPT(contrib/hook-scripts/commit-email.pl)
 SVN_CONFIG_SCRIPT(tools/hook-scripts/commit-access-control.pl)
-SVN_CONFIG_SCRIPT(tools/hook-scripts/commit-email.pl)
 SVN_CONFIG_SCRIPT(subversion/bindings/swig/perl/native/Makefile.PL)
 SVN_CONFIG_SCRIPT(packages/solaris/pkginfo)
 AC_SUBST(SVN_CONFIG_SCRIPT_FILES)

@@ -99,10 +99,11 @@ typedef struct {
 
   svn_boolean_t compression;            /* should we use http compression? */
 
-  /* Both of these function as caches, and are NULL when uninitialized
+  /* Each of these function as caches, and are NULL when uninitialized
      or cleared: */
   const char *vcc;                      /* version-controlled-configuration */
   const char *uuid;                     /* repository UUID */
+  const char *act_coll;                 /* activity collection set */
 
   svn_ra_progress_notify_func_t progress_func;
   void *progress_baton;
@@ -444,7 +445,7 @@ svn_error_t * svn_ra_neon__get_starting_props(svn_ra_neon__resource_t **rsrc,
 
    Also return *MISSING_PATH (allocated in POOL), which is the
    trailing portion of the URL that did not exist.  If an error
-   occurs, *MISSING_PATH isn't changed. 
+   occurs, *MISSING_PATH isn't changed.
 
    Cache the version-controlled-configuration in SESS->vcc, and the
    repository uuid in SESS->uuid. */
@@ -544,14 +545,11 @@ extern const ne_propname svn_ra_neon__vcc_prop;
 extern const ne_propname svn_ra_neon__checked_in_prop;
 
 
-
-
 /* send an OPTIONS request to fetch the activity-collection-set */
-svn_error_t * svn_ra_neon__get_activity_collection
-  (const svn_string_t **activity_coll,
-   svn_ra_neon__session_t *ras,
-   const char *url,
-   apr_pool_t *pool);
+svn_error_t *
+svn_ra_neon__get_activity_collection(const svn_string_t **activity_coll,
+                                     svn_ra_neon__session_t *ras,
+                                     apr_pool_t *pool);
 
 
 /* Call ne_set_request_body_pdovider on REQ with a provider function
@@ -803,7 +801,8 @@ enum {
   ELEM_mergeinfo_path,
   ELEM_mergeinfo_info,
   ELEM_has_children,
-  ELEM_merged_revision
+  ELEM_merged_revision,
+  ELEM_deleted_rev_report
 };
 
 /* ### docco */
@@ -853,7 +852,7 @@ svn_ra_neon__maybe_store_auth_info_after_result(svn_error_t *err,
 
 
 /* Create an error of type SVN_ERR_RA_DAV_MALFORMED_DATA for cases where
-   we recieve an element we didn't expect to see. */
+   we receive an element we didn't expect to see. */
 #define UNEXPECTED_ELEMENT(ns, elem)                               \
         (ns ? svn_error_createf(SVN_ERR_RA_DAV_MALFORMED_DATA,     \
                                 NULL,                              \
@@ -1052,6 +1051,26 @@ svn_ra_neon__has_capability(svn_ra_session_t *session,
                             const char *capability,
                             apr_pool_t *pool);
 
+/* Exchange capabilities with the server, by sending an OPTIONS
+   request announcing the client's capabilities, and by filling
+   RAS->capabilities with the server's capabilities as read from the
+   response headers.  Use POOL only for temporary allocation.
+
+   NOTE:  This function also expects the server to announce the
+   activity collection.  */
+svn_error_t *
+svn_ra_neon__exchange_capabilities(svn_ra_neon__session_t *ras,
+                                   apr_pool_t *pool);
+
+/*
+ * Implements the get_deleted_rev RA layer function. */
+svn_error_t *
+svn_ra_neon__get_deleted_rev(svn_ra_session_t *session,
+                             const char *path,
+                             svn_revnum_t peg_revision,
+                             svn_revnum_t end_revision,
+                             svn_revnum_t *revision_deleted,
+                             apr_pool_t *pool);
 
 /* Helper function.  Loop over LOCK_TOKENS and assemble all keys and
    values into a stringbuf allocated in POOL.  The string will be of

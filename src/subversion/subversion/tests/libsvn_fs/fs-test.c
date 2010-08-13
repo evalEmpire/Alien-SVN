@@ -1,7 +1,7 @@
 /* fs-test.c --- tests for the filesystem
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -20,14 +20,16 @@
 #include <apr_pools.h>
 #include <assert.h>
 
+#include "../svn_test.h"
+
 #include "svn_pools.h"
 #include "svn_time.h"
 #include "svn_string.h"
 #include "svn_fs.h"
-#include "svn_md5.h"
+#include "svn_checksum.h"
 #include "svn_mergeinfo.h"
+#include "svn_props.h"
 
-#include "../svn_test.h"
 #include "../svn_test_fs.h"
 
 #include "../../libsvn_delta/delta.h"
@@ -133,7 +135,7 @@ trivial_transaction(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-trivial-txn",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Begin a new transaction that is based on revision 0.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
@@ -189,7 +191,7 @@ reopen_trivial_transaction(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-reopen-trivial-txn",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Begin a new transaction that is based on revision 0.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, subpool));
@@ -228,7 +230,7 @@ create_file_transaction(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-create-file-txn",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Begin a new transaction that is based on revision 0.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
@@ -262,7 +264,7 @@ verify_txn_list(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-verify-txn-list",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Begin a new transaction, get its name (in the top pool), close it.  */
   subpool = svn_pool_create(pool);
@@ -389,8 +391,13 @@ txn_names_are_not_reused(const char **msg,
   if (msg_only)
     return SVN_NO_ERROR;
 
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "fsfs") == 0)
+      && (opts->server_minor_version && (opts->server_minor_version < 5)))
+    return SVN_NO_ERROR;
+
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-txn-names-are-not-reused",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   subpool = svn_pool_create(pool);
 
@@ -431,7 +438,7 @@ write_and_read_file(const char **msg,
 
   wstring = svn_stringbuf_create("Wicki wild, wicki wicki wild.", pool);
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-read-and-write-file",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -473,7 +480,7 @@ create_mini_tree_transaction(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-create-mini-tree-txn",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Begin a new transaction that is based on revision 0.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
@@ -512,7 +519,7 @@ create_greek_tree_transaction(const char **msg,
 
   /* Prepare a txn to receive the greek tree. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-create-greek-tree-txn",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -577,7 +584,7 @@ list_directory(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-list-dir",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -659,7 +666,7 @@ revision_props(const char **msg,
 
   /* Open the fs */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-rev-props",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Set some properties on the revision. */
   for (i = 0; i < 4; i++)
@@ -762,7 +769,7 @@ transaction_props(const char **msg,
 
   /* Open the fs */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-txn-props",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
 
   /* Set some properties on the revision. */
@@ -915,7 +922,7 @@ node_props(const char **msg,
 
   /* Open the fs and transaction */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-node-props",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -1071,7 +1078,7 @@ fetch_youngest_rev(const char **msg,
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-youngest-rev",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Get youngest revision of brand spankin' new filesystem. */
   SVN_ERR(svn_fs_youngest_rev(&youngest_rev, fs, pool));
@@ -1122,7 +1129,7 @@ basic_commit(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-basic-commit",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Save the current youngest revision. */
   SVN_ERR(svn_fs_youngest_rev(&before_rev, fs, pool));
@@ -1181,7 +1188,7 @@ test_tree_node_validation(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-validate-tree-entries",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* In a txn, create the greek tree. */
   subpool = svn_pool_create(pool);
@@ -1314,7 +1321,7 @@ merging_commit(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-merging-commit",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Initialize our revision number stuffs. */
   for (i = 0;
@@ -1624,6 +1631,15 @@ merging_commit(const char **msg,
     SVN_ERR(svn_fs_begin_txn(&txn, fs, revisions[1], pool));
     SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
     SVN_ERR(svn_fs_delete(txn_root, "A/D/H", pool));
+
+    /* ### FIXME: It is at this point that our test stops being valid,
+       ### hence its expected failure.  The following call will now
+       ### conflict on /A/D/H, causing revision 6 *not* to be created,
+       ### and the remainer of this test (which was written long ago)
+       ### to suffer from a shift in the expected state and behavior
+       ### of the filesystem as a result of this commit not happening.
+    */
+
     SVN_ERR(test_commit_txn(&after_rev, txn, NULL, pool));
     /*********************************************************************/
     /* REVISION 6 */
@@ -2095,7 +2111,7 @@ copy_test(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-copy-test",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* In first txn, create and commit the greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
@@ -2398,7 +2414,7 @@ delete_mutables(const char **msg,
 
   /* Prepare a txn to receive the greek tree. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-del-from-dir",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -2554,7 +2570,7 @@ delete(const char **msg,
 
   /* Prepare a txn to receive the greek tree. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-del-tree",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -2910,7 +2926,7 @@ commit_date(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-commit-date",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   before_commit = apr_time_now();
 
@@ -2966,7 +2982,7 @@ check_old_revisions(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-check-old-revisions",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Commit a greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, subpool));
@@ -3332,7 +3348,7 @@ check_all_revisions(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-check-all-revisions",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /***********************************************************************/
   /* REVISION 0 */
@@ -3552,44 +3568,27 @@ check_all_revisions(const char **msg,
 
 
 /* Helper function for large_file_integrity().  Given a ROOT and PATH
-   to a file, calculate and return the MD5 digest for the contents of
-   the file. */
+   to a file, set *CHECKSUM to the checksum of kind CHECKSUM_KIND for the
+   contents of the file. */
 static svn_error_t *
-get_file_digest(unsigned char digest[APR_MD5_DIGESTSIZE],
-                svn_fs_root_t *root,
-                const char *path,
-                apr_pool_t *pool)
+get_file_checksum(svn_checksum_t **checksum,
+                  svn_checksum_kind_t checksum_kind,
+                  svn_fs_root_t *root,
+                  const char *path,
+                  apr_pool_t *pool)
 {
   svn_stream_t *stream;
-  apr_size_t len;
-  const apr_size_t buf_size = 100000;
-  apr_md5_ctx_t context;
-
-  /* ### todo:  Pool usage in svndiff is currently really, really
-     crappy.  We need to keep this buffer fairly large so we don't run
-     out of memory doing undeltification of large files into tiny
-     buffers.  Issue #465.  */
-  char *buf = apr_palloc(pool, buf_size);
+  svn_stream_t *checksum_stream;
 
   /* Get a stream for the file contents. */
   SVN_ERR(svn_fs_file_contents(&stream, root, path, pool));
 
-  /* Initialize APR MD5 context. */
-  apr_md5_init(&context);
+  /* Get a checksummed stream for the contents. */
+  checksum_stream = svn_stream_checksummed2(stream, checksum, NULL,
+                                            checksum_kind, TRUE, pool);
 
-  do
-    {
-      /* "please fill the buf with bytes" */
-      len = buf_size;
-      SVN_ERR(svn_stream_read(stream, buf, &len));
-
-      /* Update the MD5 calculation with the data we just read.  */
-      apr_md5_update(&context, buf, len);
-
-    } while (len == buf_size);  /* Continue until a short read. */
-
-  /* Finalize MD5 calculation. */
-  apr_md5_final(digest, &context);
+  /* Close the stream, forcing a complete read and copy the digest. */
+  SVN_ERR(svn_stream_close(checksum_stream));
 
   return SVN_NO_ERROR;
 }
@@ -3650,7 +3649,7 @@ random_data_to_buffer(char *buf,
 
 static svn_error_t *
 file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
-                      const char *fs_type, const char *fs_name,
+                      svn_test_opts_t *opts, const char *fs_name,
                       apr_pool_t *pool)
 {
   svn_fs_t *fs;
@@ -3660,14 +3659,15 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
   apr_pool_t *subpool = svn_pool_create(pool);
   svn_string_t contents;
   char *content_buffer;
-  unsigned char digest[APR_MD5_DIGESTSIZE];
-  unsigned char digest_list[100][APR_MD5_DIGESTSIZE];
+  svn_checksum_t *checksum;
+  svn_checksum_kind_t checksum_kind = svn_checksum_md5;
+  svn_checksum_t *checksum_list[100];
   svn_txdelta_window_handler_t wh_func;
   void *wh_baton;
   svn_revnum_t j;
 
   /* Create a filesystem and repository. */
-  SVN_ERR(svn_test__create_fs(&fs, fs_name, fs_type, pool));
+  SVN_ERR(svn_test__create_fs(&fs, fs_name, opts, pool));
 
   /* Set up our file contents string buffer. */
   content_buffer = apr_palloc(pool, filesize);
@@ -3693,13 +3693,14 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   SVN_ERR(svn_fs_make_file(txn_root, "bigfile", subpool));
   random_data_to_buffer(content_buffer, filesize, TRUE, seed);
-  apr_md5(digest, contents.data, contents.len);
+  SVN_ERR(svn_checksum(&checksum, checksum_kind, contents.data, contents.len,
+                       pool));
   SVN_ERR(svn_fs_apply_textdelta
           (&wh_func, &wh_baton, txn_root, "bigfile", NULL, NULL, subpool));
   SVN_ERR(svn_txdelta_send_string(&contents, wh_func, wh_baton, subpool));
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   SVN_ERR(svn_fs_deltify_revision(fs, youngest_rev, subpool));
-  memcpy(digest_list[youngest_rev], digest, APR_MD5_DIGESTSIZE);
+  checksum_list[youngest_rev] = checksum;
   svn_pool_clear(subpool);
 
   /* Now, let's make some edits to the beginning of our file, and
@@ -3707,26 +3708,28 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   random_data_to_buffer(content_buffer, 20, TRUE, seed);
-  apr_md5(digest, contents.data, contents.len);
+  SVN_ERR(svn_checksum(&checksum, checksum_kind, contents.data, contents.len,
+                       pool));
   SVN_ERR(svn_fs_apply_textdelta
           (&wh_func, &wh_baton, txn_root, "bigfile", NULL, NULL, subpool));
   SVN_ERR(svn_txdelta_send_string(&contents, wh_func, wh_baton, subpool));
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   SVN_ERR(svn_fs_deltify_revision(fs, youngest_rev, subpool));
-  memcpy(digest_list[youngest_rev], digest, APR_MD5_DIGESTSIZE);
+  checksum_list[youngest_rev] = checksum;
   svn_pool_clear(subpool);
 
   /* Now, let's make some edits to the end of our file. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   random_data_to_buffer(content_buffer + (filesize - 20), 20, TRUE, seed);
-  apr_md5(digest, contents.data, contents.len);
+  SVN_ERR(svn_checksum(&checksum, checksum_kind, contents.data, contents.len,
+                       pool));
   SVN_ERR(svn_fs_apply_textdelta
           (&wh_func, &wh_baton, txn_root, "bigfile", NULL, NULL, subpool));
   SVN_ERR(svn_txdelta_send_string(&contents, wh_func, wh_baton, subpool));
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   SVN_ERR(svn_fs_deltify_revision(fs, youngest_rev, subpool));
-  memcpy(digest_list[youngest_rev], digest, APR_MD5_DIGESTSIZE);
+  checksum_list[youngest_rev] = checksum;
   svn_pool_clear(subpool);
 
   /* How about some edits to both the beginning and the end of the
@@ -3735,13 +3738,14 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   random_data_to_buffer(content_buffer, 20, TRUE, seed);
   random_data_to_buffer(content_buffer + (filesize - 20), 20, TRUE, seed);
-  apr_md5(digest, contents.data, contents.len);
+  SVN_ERR(svn_checksum(&checksum, checksum_kind, contents.data, contents.len,
+                       pool));
   SVN_ERR(svn_fs_apply_textdelta
           (&wh_func, &wh_baton, txn_root, "bigfile", NULL, NULL, subpool));
   SVN_ERR(svn_txdelta_send_string(&contents, wh_func, wh_baton, subpool));
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   SVN_ERR(svn_fs_deltify_revision(fs, youngest_rev, subpool));
-  memcpy(digest_list[youngest_rev], digest, APR_MD5_DIGESTSIZE);
+  checksum_list[youngest_rev] = checksum;
   svn_pool_clear(subpool);
 
   /* Alright, now we're just going to go crazy.  Let's make many more
@@ -3752,14 +3756,15 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
       SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
       SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
       random_data_to_buffer(content_buffer, filesize, FALSE, seed);
-      apr_md5(digest, contents.data, contents.len);
+      SVN_ERR(svn_checksum(&checksum, checksum_kind, contents.data,
+                           contents.len, pool));
       SVN_ERR(svn_fs_apply_textdelta(&wh_func, &wh_baton, txn_root,
                                      "bigfile", NULL, NULL, subpool));
       SVN_ERR(svn_txdelta_send_string
               (&contents, wh_func, wh_baton, subpool));
       SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
       SVN_ERR(svn_fs_deltify_revision(fs, youngest_rev, subpool));
-      memcpy(digest_list[youngest_rev], digest, APR_MD5_DIGESTSIZE);
+      checksum_list[youngest_rev] = checksum;
       svn_pool_clear(subpool);
     }
 
@@ -3770,16 +3775,42 @@ file_integrity_helper(apr_size_t filesize, apr_uint32_t *seed,
   for (j = youngest_rev; j > 0; j--)
     {
       SVN_ERR(svn_fs_revision_root(&rev_root, fs, j, subpool));
-      SVN_ERR(get_file_digest(digest, rev_root, "bigfile", subpool));
-      if (memcmp(digest, digest_list[j], APR_MD5_DIGESTSIZE))
+      SVN_ERR(get_file_checksum(&checksum, checksum_kind, rev_root, "bigfile",
+                                subpool));
+      if (!svn_checksum_match(checksum, checksum_list[j]))
         return svn_error_createf
           (SVN_ERR_FS_GENERAL, NULL,
-           "MD5 checksum failure, revision %ld", j);
+           "verify-checksum: checksum mismatch, revision %ld:\n"
+           "   expected:  %s\n"
+           "     actual:  %s\n", j,
+        svn_checksum_to_cstring(checksum_list[j], pool),
+        svn_checksum_to_cstring(checksum, pool));
+
       svn_pool_clear(subpool);
     }
 
   svn_pool_destroy(subpool);
   return SVN_NO_ERROR;
+}
+
+
+static svn_error_t *
+small_file_integrity(const char **msg,
+                     svn_boolean_t msg_only,
+                     svn_test_opts_t *opts,
+                     apr_pool_t *pool)
+{
+  apr_uint32_t seed = (apr_uint32_t) apr_time_now();
+  *msg = apr_psprintf(pool,
+                      "create and modify small file (seed=%lu)",
+                      (unsigned long) seed);
+
+  if (msg_only)
+    return SVN_NO_ERROR;
+
+  /* Just use a really small file size... */
+  return file_integrity_helper(20, &seed, opts,
+                               "test-repo-small-file-integrity", pool);
 }
 
 
@@ -3799,7 +3830,7 @@ medium_file_integrity(const char **msg,
 
   /* Being no larger than the standard delta window size affects
      deltification internally, so test that. */
-  return file_integrity_helper(SVN_DELTA_WINDOW_SIZE, &seed, opts->fs_type,
+  return file_integrity_helper(SVN_DELTA_WINDOW_SIZE, &seed, opts,
                                "test-repo-medium-file-integrity", pool);
 }
 
@@ -3820,7 +3851,7 @@ large_file_integrity(const char **msg,
 
   /* Being larger than the standard delta window size affects
      deltification internally, so test that. */
-  return file_integrity_helper(SVN_DELTA_WINDOW_SIZE + 1, &seed, opts->fs_type,
+  return file_integrity_helper(SVN_DELTA_WINDOW_SIZE + 1, &seed, opts,
                                "test-repo-large-file-integrity", pool);
 }
 
@@ -3845,7 +3876,7 @@ check_root_revision(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-check-root-revision",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Create and commit the greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, subpool));
@@ -3971,7 +4002,7 @@ test_node_created_rev(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-node-created-rev",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Created the greek tree in revision 1. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
@@ -4086,7 +4117,7 @@ check_related(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-check-related",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /*** Step I: Build up some state in our repository through a series
        of commits */
@@ -4296,7 +4327,7 @@ branch_test(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-branch-test",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /*** Revision 1:  Create the greek tree in revision.  ***/
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, spool));
@@ -4367,8 +4398,7 @@ verify_checksum(const char **msg,
   svn_fs_txn_t *txn;
   svn_fs_root_t *txn_root;
   svn_stringbuf_t *str;
-  unsigned char expected_digest[APR_MD5_DIGESTSIZE];
-  unsigned char actual_digest[APR_MD5_DIGESTSIZE];
+  svn_checksum_t *expected_checksum, *actual_checksum;
 
   /* Write a file, compare the repository's idea of its checksum
      against our idea of its checksum.  They should be the same. */
@@ -4379,24 +4409,25 @@ verify_checksum(const char **msg,
     return SVN_NO_ERROR;
 
   str = svn_stringbuf_create("My text editor charges me rent.", pool);
-  apr_md5(expected_digest, str->data, str->len);
+  svn_checksum(&expected_checksum, svn_checksum_md5, str->data, str->len, pool);
 
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-verify-checksum",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
   SVN_ERR(svn_fs_make_file(txn_root, "fact", pool));
   SVN_ERR(svn_test__set_file_contents(txn_root, "fact", str->data, pool));
-  SVN_ERR(svn_fs_file_md5_checksum(actual_digest, txn_root, "fact", pool));
+  SVN_ERR(svn_fs_file_checksum(&actual_checksum, svn_checksum_md5, txn_root,
+                               "fact", TRUE, pool));
 
-  if (memcmp(expected_digest, actual_digest, APR_MD5_DIGESTSIZE) != 0)
+  if (!svn_checksum_match(expected_checksum, actual_checksum))
     return svn_error_createf
       (SVN_ERR_FS_GENERAL, NULL,
        "verify-checksum: checksum mismatch:\n"
        "   expected:  %s\n"
        "     actual:  %s\n",
-       svn_md5_digest_to_cstring(expected_digest, pool),
-       svn_md5_digest_to_cstring(actual_digest, pool));
+       svn_checksum_to_cstring(expected_checksum, pool),
+       svn_checksum_to_cstring(actual_checksum, pool));
 
   return SVN_NO_ERROR;
 }
@@ -4474,7 +4505,7 @@ closest_copy_test(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-closest-copy",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* In first txn, create and commit the greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, spool));
@@ -4575,7 +4606,7 @@ root_revisions(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-root-revisions",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* In first txn, create and commit the greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, spool));
@@ -4651,7 +4682,7 @@ unordered_txn_dirprops(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-unordered-txn-dirprops",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Create and commit the greek tree. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
@@ -4673,7 +4704,7 @@ unordered_txn_dirprops(const char **msg,
      property just to make sure special handling logic for that
      property doesn't croak.) */
   SET_STR(&pval, "/A/C:1");
-  SVN_ERR(svn_fs_change_node_prop(txn_root2, "/A/B", "svn:mergeinfo", 
+  SVN_ERR(svn_fs_change_node_prop(txn_root2, "/A/B", "svn:mergeinfo",
                                   &pval, pool));
 
   /* Commit the second one first. */
@@ -4696,7 +4727,7 @@ unordered_txn_dirprops(const char **msg,
 
   /* Change dir props in the other. */
   SET_STR(&pval, "/A/C:1");
-  SVN_ERR(svn_fs_change_node_prop(txn_root2, "/A/B", "svn:mergeinfo", 
+  SVN_ERR(svn_fs_change_node_prop(txn_root2, "/A/B", "svn:mergeinfo",
                                   &pval, pool));
 
   /* Commit the first one first. */
@@ -4727,7 +4758,7 @@ set_uuid(const char **msg,
 
   /* Prepare a filesystem. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-set-uuid",
-                              opts->fs_type, pool));
+                              opts, pool));
 
   /* Set the repository UUID to something fixed. */
   SVN_ERR(svn_fs_set_uuid(fs, fixed_uuid, pool));
@@ -4777,8 +4808,8 @@ node_origin_rev(const char **msg,
     return SVN_NO_ERROR;
 
   /* Create the repository. */
-  SVN_ERR(svn_test__create_fs(&fs, "test-repo-node-origin-rev", 
-                              opts->fs_type, pool));
+  SVN_ERR(svn_test__create_fs(&fs, "test-repo-node-origin-rev",
+                              opts, pool));
 
   /* Revision 1: Create the Greek tree.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, subpool));
@@ -4828,21 +4859,24 @@ node_origin_rev(const char **msg,
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   svn_pool_clear(subpool);
 
-  /* Revision 7: Move A/D2 to A/D (replacing it), and tweak A/D/floop.  */
+  /* Revision 7: Move A/D2 to A/D (replacing it), Add a new file A/D2,
+     and tweak A/D/floop.  */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   SVN_ERR(svn_fs_revision_root(&root, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_delete(txn_root, "A/D", subpool));
   SVN_ERR(svn_fs_copy(root, "A/D2", txn_root, "A/D", subpool));
   SVN_ERR(svn_fs_delete(txn_root, "A/D2", subpool));
+  SVN_ERR(svn_fs_make_file(txn_root, "A/D2", subpool));
   SVN_ERR(svn_test__set_file_contents(txn_root, "A/D/floop", "7", subpool));
   SVN_ERR(svn_fs_commit_txn(NULL, &youngest_rev, txn, subpool));
   svn_pool_clear(subpool);
 
   /* Now test some origin revisions. */
   {
-    struct path_rev_t pathrevs[4] = { { "A/D",             1 },
+    struct path_rev_t pathrevs[5] = { { "A/D",             1 },
                                       { "A/D/floop",       3 },
+                                      { "A/D2",            7 },
                                       { "iota",            1 },
                                       { "A/B/E/alfalfa",   5 } };
 
@@ -4935,5 +4969,6 @@ struct svn_test_descriptor_t test_funcs[] =
     SVN_TEST_PASS(unordered_txn_dirprops),
     SVN_TEST_PASS(set_uuid),
     SVN_TEST_PASS(node_origin_rev),
+    SVN_TEST_PASS(small_file_integrity),
     SVN_TEST_NULL
   };

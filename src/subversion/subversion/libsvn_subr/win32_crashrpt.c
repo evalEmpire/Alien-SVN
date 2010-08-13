@@ -20,10 +20,7 @@
 #ifdef SVN_USE_WIN32_CRASHHANDLER
 
 /*** Includes. ***/
-#ifdef APR_HAVE_IPV6
-#include <winsock2.h>
-#endif
-#include <windows.h>
+#include <apr.h>
 #include <dbghelp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,12 +33,10 @@
 /*** Global variables ***/
 HANDLE dbghelp_dll = INVALID_HANDLE_VALUE;
 
-/* email address where the crash reports should be sent too. */
-#define CRASHREPORT_EMAIL "svn-breakage@subversion.tigris.org"
+/* Email address where the crash reports should be sent too. */
+#define CRASHREPORT_EMAIL "users@subversion.apache.org"
 
 #define DBGHELP_DLL "dbghelp.dll"
-
-#define VERSION_DLL "version.dll"
 
 #define LOGFILE_PREFIX "svn-crash-log"
 
@@ -243,7 +238,7 @@ write_process_info(EXCEPTION_RECORD *exception, CONTEXT *context,
 #endif
 }
 
-/* formats the value at address based on the specified basic type
+/* Formats the value at address based on the specified basic type
  * (char, int, long ...). */
 static void
 format_basic_type(char *buf, DWORD basic_type, DWORD64 length, void *address)
@@ -286,7 +281,7 @@ format_basic_type(char *buf, DWORD basic_type, DWORD64 length, void *address)
     }
 }
 
-/* formats the value at address based on the type (pointer, user defined,
+/* Formats the value at address based on the type (pointer, user defined,
  * basic type). */
 static void
 format_value(char *value_str, DWORD64 mod_base, DWORD type, void *value_addr)
@@ -376,7 +371,7 @@ typedef struct {
   BOOL log_params;
 } symbols_baton_t;
 
-/* write the details of one parameter or local variable to the log file */
+/* Write the details of one parameter or local variable to the log file */
 static BOOL WINAPI
 write_var_values(PSYMBOL_INFO sym_info, ULONG sym_size, void *baton)
 {
@@ -418,7 +413,7 @@ write_var_values(PSYMBOL_INFO sym_info, ULONG sym_size, void *baton)
   return TRUE;
 }
 
-/* write the details of one function to the log file */
+/* Write the details of one function to the log file */
 static void
 write_function_detail(STACKFRAME64 stack_frame, void *data)
 {
@@ -431,7 +426,7 @@ write_function_detail(STACKFRAME64 stack_frame, void *data)
 
   IMAGEHLP_STACK_FRAME ih_stack_frame;
   IMAGEHLP_LINE64 ih_line;
-	DWORD line_disp=0;
+  DWORD line_disp=0;
 
   HANDLE proc = GetCurrentProcess();
   FILE *log_file = (FILE *)data;
@@ -448,8 +443,8 @@ write_function_detail(STACKFRAME64 stack_frame, void *data)
   if (SymFromAddr_(proc, stack_frame.AddrPC.Offset, &func_disp, pIHS) == TRUE)
     {
       fprintf(log_file,
-                    "#%d  0x%08x in %.200s (",
-                    nr_of_frame, stack_frame.AddrPC.Offset,  pIHS->Name);
+                    "#%d  0x%08I64x in %.200s (",
+                    nr_of_frame, stack_frame.AddrPC.Offset, pIHS->Name);
 
       /* restrict symbol enumeration to this frame only */
       ih_stack_frame.InstructionOffset = stack_frame.AddrPC.Offset;
@@ -468,7 +463,7 @@ write_function_detail(STACKFRAME64 stack_frame, void *data)
   else
     {
       fprintf(log_file,
-                    "#%d  0x%08x in (unknown function)",
+                    "#%d  0x%08I64x in (unknown function)",
                     nr_of_frame, stack_frame.AddrPC.Offset);
     }
 
@@ -490,7 +485,7 @@ write_function_detail(STACKFRAME64 stack_frame, void *data)
   SymEnumSymbols_(proc, 0, 0, write_var_values, &ensym);
 }
 
-/* walk over the stack and log all relevant information to the log file */
+/* Walk over the stack and log all relevant information to the log file */
 static void
 write_stacktrace(CONTEXT *context, FILE *log_file)
 {
@@ -502,17 +497,17 @@ write_stacktrace(CONTEXT *context, FILE *log_file)
   int skip = 0, i = 0;
 
   /* The thread information - if not supplied. */
-	if (context == NULL)
+  if (context == NULL)
     {
       /* If no context is supplied, skip 1 frame */
       skip = 1;
 
-  		ctx.ContextFlags = CONTEXT_FULL;
-  		if (GetThreadContext(GetCurrentThread(), &ctx))
-		    context = &ctx;
-	  }
+      ctx.ContextFlags = CONTEXT_FULL;
+      if (GetThreadContext(GetCurrentThread(), &ctx))
+        context = &ctx;
+    }
 
-	if (context == NULL)
+  if (context == NULL)
     return;
 
   /* Write the stack trace */
@@ -587,64 +582,11 @@ is_debugger_present()
   return result;
 }
 
-/* Match the version of dbghelp.dll with the minimum expected version */
-static BOOL
-check_dbghelp_version(WORD exp_major, WORD exp_minor, WORD exp_build,
-                      WORD exp_qfe)
-{
-  HANDLE version_dll = LoadLibrary(VERSION_DLL);
-  GETFILEVERSIONINFOSIZE GetFileVersionInfoSize_ =
-         (GETFILEVERSIONINFOSIZE)GetProcAddress(version_dll,
-                                                "GetFileVersionInfoSizeA");
-  GETFILEVERSIONINFO GetFileVersionInfo_ =
-         (GETFILEVERSIONINFO)GetProcAddress(version_dll,
-                                            "GetFileVersionInfoA");
-  VERQUERYVALUE VerQueryValue_ =
-         (VERQUERYVALUE)GetProcAddress(version_dll, "VerQueryValueA");
-
-  DWORD version     = 0,
-        exp_version = MAKELONG(MAKEWORD(exp_qfe, exp_build),
-                               MAKEWORD(exp_minor, exp_major));
-  DWORD h = 0;
-  DWORD resource_size = GetFileVersionInfoSize_(DBGHELP_DLL, &h);
-
-  if (resource_size)
-    {
-      void *resource_data = malloc(resource_size);
-      if (GetFileVersionInfo_(DBGHELP_DLL, h, resource_size,
-                              resource_data) != FALSE)
-        {
-          void *buf = NULL;
-          UINT len;
-          if (VerQueryValue_(resource_data, "\\", &buf, &len))
-            {
-              VS_FIXEDFILEINFO *info = (VS_FIXEDFILEINFO*)buf;
-              version = MAKELONG(MAKEWORD(LOWORD(info->dwFileVersionLS),
-                                          HIWORD(info->dwFileVersionLS)),
-                                 MAKEWORD(LOWORD(info->dwFileVersionMS),
-                                          HIWORD(info->dwFileVersionMS)));
-            }
-        }
-      free(resource_data);
-    }
-
-   FreeLibrary(version_dll);
-
-   if (version >= exp_version)
-     return TRUE;
-
-   return FALSE;
-}
-
 /* Load the dbghelp.dll file, try to find a version that matches our
    requirements. */
 static BOOL
 load_dbghelp_dll()
 {
-  /* check version of the dll, should be at least 6.6.7.5 */
-  if (check_dbghelp_version(6, 6, 7, 5) == FALSE)
-    return FALSE;
-
   dbghelp_dll = LoadLibrary(DBGHELP_DLL);
   if (dbghelp_dll != INVALID_HANDLE_VALUE)
     {
@@ -671,7 +613,7 @@ load_dbghelp_dll()
       SymSetContext_ =
            (SYMSETCONTEXT)GetProcAddress(dbghelp_dll, "SymSetContext");
       SymFromAddr_ = (SYMFROMADDR)GetProcAddress(dbghelp_dll, "SymFromAddr");
-	  StackWalk64_ = (STACKWALK64)GetProcAddress(dbghelp_dll, "StackWalk64");
+      StackWalk64_ = (STACKWALK64)GetProcAddress(dbghelp_dll, "StackWalk64");
       SymFunctionTableAccess64_ =
            (SYMFUNCTIONTABLEACCESS64)GetProcAddress(dbghelp_dll,
                                                   "SymFunctionTableAccess64");
@@ -752,7 +694,7 @@ get_temp_filename(char *filename, const char *prefix, const char *ext)
    return FALSE;
 }
 
-/* unhandled exception callback set with SetUnhandledExceptionFilter() */
+/* Unhandled exception callback set with SetUnhandledExceptionFilter() */
 LONG WINAPI
 svn__unhandled_exception_filter(PEXCEPTION_POINTERS ptrs)
 {

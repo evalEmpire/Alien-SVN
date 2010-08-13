@@ -2,7 +2,7 @@
  * xml.c:  xml helper code shared among the Subversion libraries.
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2006, 2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -26,7 +26,8 @@
 #include "svn_xml.h"
 #include "svn_error.h"
 #include "svn_ctype.h"
-#include "utf_impl.h"
+
+#include "private/svn_utf_private.h"
 
 #ifdef SVN_HAVE_OLD_EXPAT
 #include <xmlparse.h>
@@ -94,6 +95,11 @@ svn_xml_is_xml_safe(const char *data, apr_size_t len)
 
 /*** XML escaping. ***/
 
+/* ### ...?
+ *
+ * If *OUTSTR is @c NULL, set *OUTSTR to a new stringbuf allocated
+ * in POOL, else append to the existing stringbuf there.
+ */
 static void
 xml_escape_cdata(svn_stringbuf_t **outstr,
                  const char *data,
@@ -153,7 +159,7 @@ xml_escape_attr(svn_stringbuf_t **outstr,
   const char *p = data, *q;
 
   if (*outstr == NULL)
-    *outstr = svn_stringbuf_create("", pool);
+    *outstr = svn_stringbuf_create_ensure(len, pool);
 
   while (1)
     {
@@ -560,9 +566,10 @@ svn_xml_make_open_tag_hash(svn_stringbuf_t **str,
                            apr_hash_t *attributes)
 {
   apr_hash_index_t *hi;
+  apr_size_t est_size = strlen(tagname) + 4 + apr_hash_count(attributes) * 30;
 
   if (*str == NULL)
-    *str = svn_stringbuf_create("", pool);
+    *str = svn_stringbuf_create_ensure(est_size, pool);
 
   svn_stringbuf_appendcstr(*str, "<");
   svn_stringbuf_appendcstr(*str, tagname);

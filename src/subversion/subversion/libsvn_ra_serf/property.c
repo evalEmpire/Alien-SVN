@@ -23,6 +23,7 @@
 #include "svn_path.h"
 #include "svn_base64.h"
 #include "svn_xml.h"
+#include "svn_props.h"
 
 #include "private/svn_dav_protocol.h"
 #include "svn_private_config.h"
@@ -415,50 +416,101 @@ cdata_propfind(svn_ra_serf__xml_parser_t *parser,
 }
 
 static apr_status_t
-setup_propfind(serf_request_t *request,
-               void *setup_baton,
-               serf_bucket_t **req_bkt,
-               serf_response_acceptor_t *acceptor,
-               void **acceptor_baton,
-               serf_response_handler_t *handler,
-               void **handler_baton,
-               apr_pool_t *pool)
+setup_propfind_headers(serf_bucket_t *headers,
+                        void *setup_baton,
+                        apr_pool_t *pool)
 {
   svn_ra_serf__propfind_context_t *ctx = setup_baton;
-  svn_ra_serf__xml_parser_t *parser_ctx = ctx->parser_ctx;
 
-  *req_bkt =
-      svn_ra_serf__bucket_propfind_create(ctx->conn, ctx->path, ctx->label,
-                                          ctx->depth, ctx->find_props,
-                                          serf_request_get_alloc(request));
-
-  if (ctx->conn->using_ssl)
+  if (ctx->conn->using_compression == TRUE)
     {
-      *req_bkt =
-          serf_bucket_ssl_encrypt_create(*req_bkt, ctx->conn->ssl_context,
-                                         serf_request_get_alloc(request));
-
-      if (!ctx->conn->ssl_context)
-        {
-          ctx->conn->ssl_context =
-              serf_bucket_ssl_encrypt_context_get(*req_bkt);
-        }
+      serf_bucket_headers_setn(headers, "Accept-Encoding", "gzip");
+    }
+  serf_bucket_headers_setn(headers, "Depth", ctx->depth);
+  if (ctx->label)
+    {
+      serf_bucket_headers_setn(headers, "Label", ctx->label);
     }
 
-  parser_ctx->pool = pool;
-  parser_ctx->user_data = ctx;
-  parser_ctx->start = start_propfind;
-  parser_ctx->end = end_propfind;
-  parser_ctx->cdata = cdata_propfind;
-  parser_ctx->status_code = &ctx->status_code;
-  parser_ctx->done = &ctx->done;
-  parser_ctx->done_list = ctx->done_list;
-  parser_ctx->done_item = &ctx->done_item;
-
-  *handler = svn_ra_serf__handle_xml_parser;
-  *handler_baton = parser_ctx;
-
   return APR_SUCCESS;
+}
+
+#define PROPFIND_HEADER "<?xml version=\"1.0\" encoding=\"utf-8\"?><propfind xmlns=\"DAV:\">"
+#define PROPFIND_TRAILER "</propfind>"
+
+static serf_bucket_t*
+create_propfind_body(void *setup_baton,
+                     serf_bucket_alloc_t *alloc,
+                     apr_pool_t *pool)
+{
+  svn_ra_serf__propfind_context_t *ctx = setup_baton;
+
+  serf_bucket_t *body_bkt, *tmp;
+  const svn_ra_serf__dav_props_t *prop;
+  svn_boolean_t requested_allprop = FALSE;
+
+  body_bkt = serf_bucket_aggregate_create(alloc);
+
+  prop = ctx->find_props;
+  while (prop && prop->namespace)
+    {
+      /* special case the allprop case. */
+      if (strcmp(prop->name, "allprop") == 0)
+        {
+          requested_allprop = TRUE;
+        }
+
+      /* <*propname* xmlns="*propns*" /> */
+      tmp = SERF_BUCKET_SIMPLE_STRING_LEN("<", 1, alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+
+      tmp = SERF_BUCKET_SIMPLE_STRING(prop->name, alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+
+      tmp = SERF_BUCKET_SIMPLE_STRING_LEN(" xmlns=\"",
+                                          sizeof(" xmlns=\"")-1,
+                                          alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+
+      tmp = SERF_BUCKET_SIMPLE_STRING(prop->namespace, alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+
+      tmp = SERF_BUCKET_SIMPLE_STRING_LEN("\"/>", sizeof("\"/>")-1,
+                                          alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+
+      prop++;
+    }
+
+  /* If we're not doing an allprop, add <prop> tags. */
+  if (requested_allprop == FALSE)
+    {
+      tmp = SERF_BUCKET_SIMPLE_STRING_LEN("<prop>",
+                                          sizeof("<prop>")-1,
+                                          alloc);
+      serf_bucket_aggregate_prepend(body_bkt, tmp);
+    }
+
+  tmp = SERF_BUCKET_SIMPLE_STRING_LEN(PROPFIND_HEADER,
+                                      sizeof(PROPFIND_HEADER)-1,
+                                      alloc);
+
+  serf_bucket_aggregate_prepend(body_bkt, tmp);
+
+  if (requested_allprop == FALSE)
+    {
+      tmp = SERF_BUCKET_SIMPLE_STRING_LEN("</prop>",
+                                          sizeof("</prop>")-1,
+                                          alloc);
+      serf_bucket_aggregate_append(body_bkt, tmp);
+    }
+
+  tmp = SERF_BUCKET_SIMPLE_STRING_LEN(PROPFIND_TRAILER,
+                                      sizeof(PROPFIND_TRAILER)-1,
+                                      alloc);
+  serf_bucket_aggregate_append(body_bkt, tmp);
+
+  return body_bkt;
 }
 
 static svn_boolean_t
@@ -523,6 +575,7 @@ svn_ra_serf__deliver_props(svn_ra_serf__propfind_context_t **prop_ctx,
   if (!*prop_ctx)
     {
       svn_ra_serf__handler_t *handler;
+      svn_ra_serf__xml_parser_t *parser_ctx;
 
       if (cache_props == TRUE)
         {
@@ -564,15 +617,33 @@ svn_ra_serf__deliver_props(svn_ra_serf__propfind_context_t **prop_ctx,
       handler = apr_pcalloc(pool, sizeof(*handler));
 
       handler->method = "PROPFIND";
-      handler->delegate = setup_propfind;
-      handler->delegate_baton = new_prop_ctx;
+      handler->path = path;
+      handler->body_delegate = create_propfind_body;
+      handler->body_type = "text/xml";
+      handler->body_delegate_baton = new_prop_ctx;
+      handler->header_delegate = setup_propfind_headers;
+      handler->header_delegate_baton = new_prop_ctx;
+
       handler->session = new_prop_ctx->sess;
       handler->conn = new_prop_ctx->conn;
 
       new_prop_ctx->handler = handler;
 
-      new_prop_ctx->parser_ctx = apr_pcalloc(pool,
-                                             sizeof(*new_prop_ctx->parser_ctx));
+      parser_ctx = apr_pcalloc(pool, sizeof(*new_prop_ctx->parser_ctx));
+      parser_ctx->pool = pool;
+      parser_ctx->user_data = new_prop_ctx;
+      parser_ctx->start = start_propfind;
+      parser_ctx->end = end_propfind;
+      parser_ctx->cdata = cdata_propfind;
+      parser_ctx->status_code = &new_prop_ctx->status_code;
+      parser_ctx->done = &new_prop_ctx->done;
+      parser_ctx->done_list = new_prop_ctx->done_list;
+      parser_ctx->done_item = &new_prop_ctx->done_item;
+
+      new_prop_ctx->parser_ctx = parser_ctx;
+
+      handler->response_handler = svn_ra_serf__handle_xml_parser;
+      handler->response_baton = parser_ctx;
 
       *prop_ctx = new_prop_ctx;
     }
@@ -604,16 +675,22 @@ svn_ra_serf__wait_for_props(svn_ra_serf__propfind_context_t *prop_ctx,
                             svn_ra_serf__session_t *sess,
                             apr_pool_t *pool)
 {
-  svn_error_t *err;
+  svn_error_t *err, *err2;
 
   err = svn_ra_serf__context_run_wait(&prop_ctx->done, sess, pool);
+
   if (prop_ctx->parser_ctx->error)
     {
       svn_error_clear(err);
       SVN_ERR(prop_ctx->parser_ctx->error);
     }
 
-  SVN_ERR(svn_ra_serf__error_on_status(prop_ctx->status_code, prop_ctx->path));
+  err2 = svn_ra_serf__error_on_status(prop_ctx->status_code, prop_ctx->path);
+  if (err2)
+    {
+      svn_error_clear(err);
+      return err2;
+    }
 
   return err;
 }
@@ -798,7 +875,7 @@ svn_ra_serf__set_baton_props(svn_ra_serf__prop_set_t setprop, void *baton,
   else if (strcmp(ns, "DAV:") == 0 ||
            strcmp(ns, SVN_DAV_PROP_NS_DAV) == 0)
     {
-      /* Here DAV: properties not yet converted to svn: properties should be 
+      /* Here DAV: properties not yet converted to svn: properties should be
          ignored. */
       return SVN_NO_ERROR;
     }
@@ -851,8 +928,10 @@ svn_error_t *
 svn_ra_serf__get_baseline_info(const char **bc_url,
                                const char **bc_relative,
                                svn_ra_serf__session_t *session,
+                               svn_ra_serf__connection_t *conn,
                                const char *url,
                                svn_revnum_t revision,
+                               svn_revnum_t *latest_revnum,
                                apr_pool_t *pool)
 {
   const char *vcc_url, *relative_url, *basecoll_url, *baseline_url;
@@ -862,12 +941,17 @@ svn_ra_serf__get_baseline_info(const char **bc_url,
   if (! url)
     url = session->repos_url.path;
 
+  /* If the caller didn't provide a specific connection for us to use,
+     we'll use the default one.  */
+  if (! conn)
+    conn = session->conns[0];
+
   SVN_ERR(svn_ra_serf__discover_root(&vcc_url, &relative_url,
-                                     session, session->conns[0], url, pool));
+                                     session, conn, url, pool));
 
   if (revision != SVN_INVALID_REVNUM)
     {
-      SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
+      SVN_ERR(svn_ra_serf__retrieve_props(props, session, conn,
                                           vcc_url, revision, "0",
                                           baseline_props, pool));
       basecoll_url = svn_ra_serf__get_ver_prop(props, vcc_url, revision,
@@ -875,7 +959,7 @@ svn_ra_serf__get_baseline_info(const char **bc_url,
     }
   else
     {
-      SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
+      SVN_ERR(svn_ra_serf__retrieve_props(props, session, conn,
                                           vcc_url, revision, "0",
                                           checked_in_props, pool));
       baseline_url = svn_ra_serf__get_ver_prop(props, vcc_url, revision,
@@ -887,7 +971,7 @@ svn_ra_serf__get_baseline_info(const char **bc_url,
                                     "requested checked-in value"));
         }
 
-      SVN_ERR(svn_ra_serf__retrieve_props(props, session, session->conns[0],
+      SVN_ERR(svn_ra_serf__retrieve_props(props, session, conn,
                                           baseline_url, revision, "0",
                                           baseline_props, pool));
       basecoll_url = svn_ra_serf__get_ver_prop(props, baseline_url, revision,
@@ -900,6 +984,26 @@ svn_ra_serf__get_baseline_info(const char **bc_url,
                               _("The OPTIONS response did not include the "
                                 "requested baseline-collection value"));
     }
+
+  basecoll_url = svn_path_canonicalize(basecoll_url, pool);
+
+  if (latest_revnum)
+    {
+      const char *version_name;
+
+      version_name = svn_ra_serf__get_prop(props, baseline_url,
+                                           "DAV:", SVN_DAV__VERSION_NAME);
+
+      if (!version_name)
+        {
+          return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
+                                  _("The OPTIONS response did not include the "
+                                    "requested version-name value"));
+        }
+
+      *latest_revnum = SVN_STR_TO_REV(version_name);
+    }
+
   *bc_url = basecoll_url;
   *bc_relative = relative_url;
   return SVN_NO_ERROR;

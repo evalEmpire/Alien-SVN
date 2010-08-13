@@ -2,7 +2,7 @@
  * opt-test.c -- test the option functions
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -17,10 +17,11 @@
  */
 
 #include <string.h>
-#include "svn_opt.h"
 #include <apr_general.h>
 
 #include "../svn_test.h"
+
+#include "svn_opt.h"
 
 
 static svn_error_t *
@@ -131,9 +132,13 @@ test_svn_opt_args_to_target_array2(const char **msg,
       apr_array_header_t *targets;
       apr_getopt_t *os;
       const int argc = 2;
-      const char *argv[] = { "opt-test", input, NULL };
+      const char *argv[3] = { 0 };
       apr_status_t apr_err;
       svn_error_t *err;
+
+      argv[0] = "opt-test";
+      argv[1] = input;
+      argv[2] = NULL;
 
       apr_err = apr_getopt_init(&os, pool, argc, argv);
       if (apr_err)
@@ -166,7 +171,7 @@ test_svn_opt_args_to_target_array2(const char **msg,
                                      "'%s' is not.",
                                      input,
                                      actual_output);
-            
+
           if (strcmp(expected_output, actual_output) != 0)
             return svn_error_createf(SVN_ERR_TEST_FAILED, NULL,
                                      "Input '%s' to "

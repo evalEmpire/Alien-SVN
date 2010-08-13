@@ -1,7 +1,7 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -25,9 +25,15 @@
 #include <apr.h>
 #include <apr_pools.h>
 #include <apr_getopt.h>
+#include <apr_tables.h>
+#include <apr_hash.h>
+
+#ifndef DOXYGEN_SHOULD_SKIP_THIS
+#define APR_WANT_STDIO
+#endif
+#include <apr_want.h>   /* for FILE* */
 
 #include "svn_types.h"
-#include "svn_error.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -144,6 +150,7 @@ svn_opt_get_canonical_subcommand2(const svn_opt_subcommand_desc2_t *table,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 const svn_opt_subcommand_desc_t *
 svn_opt_get_canonical_subcommand(const svn_opt_subcommand_desc_t *table,
                                  const char *cmd_name);
@@ -174,6 +181,7 @@ svn_opt_get_option_from_code2(int code,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 const apr_getopt_option_t *
 svn_opt_get_option_from_code(int code,
                              const apr_getopt_option_t *option_table);
@@ -198,6 +206,7 @@ svn_opt_subcommand_takes_option3(const svn_opt_subcommand_desc2_t *command,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_boolean_t
 svn_opt_subcommand_takes_option2(const svn_opt_subcommand_desc2_t *command,
                                  int option_code);
@@ -212,6 +221,7 @@ svn_opt_subcommand_takes_option2(const svn_opt_subcommand_desc2_t *command,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 svn_boolean_t
 svn_opt_subcommand_takes_option(const svn_opt_subcommand_desc_t *command,
                                 int option_code);
@@ -246,6 +256,7 @@ svn_opt_print_generic_help2(const char *header,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 void
 svn_opt_print_generic_help(const char *header,
                            const svn_opt_subcommand_desc_t *cmd_table,
@@ -291,6 +302,7 @@ svn_opt_subcommand_help3(const char *subcommand,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 void
 svn_opt_subcommand_help2(const char *subcommand,
                          const svn_opt_subcommand_desc2_t *table,
@@ -304,6 +316,7 @@ svn_opt_subcommand_help2(const char *subcommand,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 void
 svn_opt_subcommand_help(const char *subcommand,
                         const svn_opt_subcommand_desc_t *table,
@@ -405,10 +418,11 @@ typedef struct svn_opt_revision_range_t
  *
  * Use @a pool for temporary allocations.
  */
-int svn_opt_parse_revision(svn_opt_revision_t *start_revision,
-                           svn_opt_revision_t *end_revision,
-                           const char *arg,
-                           apr_pool_t *pool);
+int
+svn_opt_parse_revision(svn_opt_revision_t *start_revision,
+                       svn_opt_revision_t *end_revision,
+                       const char *arg,
+                       apr_pool_t *pool);
 
 /**
  * Parse @a arg, where @a arg is "N" or "N:M", into a
@@ -489,8 +503,10 @@ svn_opt_resolve_revisions(svn_opt_revision_t *peg_rev,
  * error, and if this is the only type of error encountered, complete
  * the operation before returning the error(s).
  *
- * @since New in 1.5.
+ * @deprecated Provided for backward compatibility with the 1.5 API.
+ * @see svn_client_args_to_target_array()
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array3(apr_array_header_t **targets_p,
                               apr_getopt_t *os,
@@ -506,6 +522,7 @@ svn_opt_args_to_target_array3(apr_array_header_t **targets_p,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array2(apr_array_header_t **targets_p,
                               apr_getopt_t *os,
@@ -527,6 +544,7 @@ svn_opt_args_to_target_array2(apr_array_header_t **targets_p,
  *
  * @deprecated Provided for backward compatibility with the 1.1 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array(apr_array_header_t **targets_p,
                              apr_getopt_t *os,
@@ -538,14 +556,29 @@ svn_opt_args_to_target_array(apr_array_header_t **targets_p,
 
 
 /**
+ * Parse revprop key/value pair from @a revprop_spec (name[=value]) into
+ * @a revprops, making copies of both with @a pool.  If @a revprops is
+ * @c NULL, allocate a new apr_hash_t in it.  @a revprops maps
+ * const char * revprop names to svn_string_t * revprop values for use
+ * with svn_repos_get_commit_editor5 and other get_commit_editor APIs.
+ *
+ * @since New in 1.6.
+ */
+svn_error_t *
+svn_opt_parse_revprop(apr_hash_t **revprops, const char *revprop_spec,
+                      apr_pool_t *pool);
+
+
+/**
  * If no targets exist in @a *targets, add `.' as the lone target.
  *
  * (Some commands take an implicit "." string argument when invoked
  * with no arguments. Those commands make use of this function to
  * add "." to the target array if the user passes no args.)
  */
-void svn_opt_push_implicit_dot_target(apr_array_header_t *targets,
-                                      apr_pool_t *pool);
+void
+svn_opt_push_implicit_dot_target(apr_array_header_t *targets,
+                                 apr_pool_t *pool);
 
 
 /**
@@ -588,20 +621,23 @@ svn_opt_parse_all_args(apr_array_header_t **args_p,
  *    "foo/bar@1:2"                  -> error
  *    "foo/bar@baz"                  -> error
  *    "foo/bar@"                     -> "foo/bar",       (base)
+ *    "foo/@bar@"                    -> "foo/@bar",      (base)
  *    "foo/bar/@13"                  -> "foo/bar/",      (number, 13)
  *    "foo/bar@@13"                  -> "foo/bar@",      (number, 13)
  *    "foo/@bar@HEAD"                -> "foo/@bar",      (head)
  *    "foo@/bar"                     -> "foo@/bar",      (unspecified)
  *    "foo@HEAD/bar"                 -> "foo@HEAD/bar",  (unspecified)
+ *    "@foo/bar"                     -> error
+ *    "@foo/bar@"                    -> "@foo/bar",      (unspecified)
  *
  *   [*] Syntactically valid but probably not semantically useful.
  *
  * If a trailing revision specifier is found, parse it into @a *rev and
  * put the rest of the path into @a *truepath, allocating from @a pool;
- * or return an @c SVN_ERR_CL_ARG_PARSING_ERROR if the revision
- * specifier is invalid.  If no trailing revision specifier is found,
- * set @a *truepath to @a path and @a rev->kind to @c
- * svn_opt_revision_unspecified.
+ * or return an @c SVN_ERR_CL_ARG_PARSING_ERROR (with the effect on
+ * @a *truepath undefined) if the revision specifier is invalid.
+ * If no trailing revision specifier is found, set @a *truepath to
+ * @a path and @a rev->kind to @c svn_opt_revision_unspecified.
  *
  * This function does not require that @a path be in canonical form.
  * No canonicalization is done and @a *truepath will only be in
@@ -669,6 +705,7 @@ svn_opt_print_help3(apr_getopt_t *os,
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
 
+SVN_DEPRECATED
 svn_error_t *
 svn_opt_print_help2(apr_getopt_t *os,
                     const char *pgm_name,
@@ -687,6 +724,7 @@ svn_opt_print_help2(apr_getopt_t *os,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_opt_print_help(apr_getopt_t *os,
                    const char *pgm_name,

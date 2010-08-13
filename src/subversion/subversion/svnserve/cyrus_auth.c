@@ -42,7 +42,11 @@
    authentication realm, and worst of all, this realm overrides the one that
    we pass to sasl_server_new().  If we didn't check this, a user that could
    successfully authenticate in one realm would be able to authenticate
-   in any other realm, simply by appending '@realm' to his username. */
+   in any other realm, simply by appending '@realm' to his username.
+
+   Note that the value returned in *OUT does not need to be
+   '\0'-terminated; we just need to set *OUT_LEN correctly.
+*/
 static int canonicalize_username(sasl_conn_t *conn,
                                  void *context, /* not used */
                                  const char *in, /* the username */
@@ -93,7 +97,7 @@ static sasl_callback_t callbacks[] =
   { SASL_CB_LIST_END, NULL, NULL }
 };
 
-static svn_error_t *initialize(apr_pool_t *pool)
+static svn_error_t *initialize(void *baton, apr_pool_t *pool)
 {
   int result;
   apr_status_t status;
@@ -118,7 +122,8 @@ static svn_error_t *initialize(apr_pool_t *pool)
 
 svn_error_t *cyrus_init(apr_pool_t *pool)
 {
-  SVN_ERR(svn_atomic__init_once(&svn_ra_svn__sasl_status, initialize, pool));
+  SVN_ERR(svn_atomic__init_once(&svn_ra_svn__sasl_status,
+                                initialize, NULL, pool));
   return SVN_NO_ERROR;
 }
 
@@ -192,7 +197,7 @@ static svn_error_t *try_auth(svn_ra_svn_conn_t *conn,
       arg = svn_string_ncreate(out, outlen, pool);
       /* Encode what we send to the client. */
       if (use_base64)
-        arg = svn_base64_encode_string(arg, pool);
+        arg = svn_base64_encode_string2(arg, TRUE, pool);
 
       SVN_ERR(svn_ra_svn_write_tuple(conn, pool, "w(s)", "step", arg));
 
@@ -212,8 +217,8 @@ static svn_error_t *try_auth(svn_ra_svn_conn_t *conn,
 
   /* Send our last response, if necessary. */
   if (outlen)
-    arg = svn_base64_encode_string(svn_string_ncreate(out, outlen, pool),
-                                   pool);
+    arg = svn_base64_encode_string2(svn_string_ncreate(out, outlen, pool), TRUE,
+                                    pool);
   else
     arg = NULL;
 
@@ -277,9 +282,6 @@ svn_error_t *cyrus_auth_request(svn_ra_svn_conn_t *conn,
 
   /* Initialize security properties. */
   svn_ra_svn__default_secprops(&secprops);
-
-  /* Don't allow PLAIN or LOGIN, since we don't support TLS yet. */
-  secprops.security_flags = SASL_SEC_NOPLAINTEXT;
 
   /* Don't allow ANONYMOUS if a username is required. */
   no_anonymous = needs_username || get_access(b, UNAUTHENTICATED) < required;

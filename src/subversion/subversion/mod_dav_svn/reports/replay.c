@@ -2,7 +2,7 @@
  * replay.c :  routines for replaying revisions
  *
  * ====================================================================
- * Copyright (c) 2005 CollabNet.  All rights reserved.
+ * Copyright (c) 2005, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -19,7 +19,6 @@
 #include <apr_pools.h>
 #include <apr_strings.h>
 #include <apr_xml.h>
-#include <apr_md5.h>
 
 #include <http_request.h>
 #include <http_log.h>
@@ -28,12 +27,12 @@
 #include "svn_pools.h"
 #include "svn_repos.h"
 #include "svn_fs.h"
-#include "svn_md5.h"
 #include "svn_base64.h"
 #include "svn_xml.h"
 #include "svn_path.h"
 #include "svn_dav.h"
 #include "svn_props.h"
+#include "private/svn_log.h"
 
 #include "../dav_svn.h"
 
@@ -150,12 +149,26 @@ change_file_or_dir_prop(const char *file_or_dir,
 
   if (value)
     {
-      const svn_string_t *enc_value = svn_base64_encode_string(value, pool);
+      apr_status_t apr_err;
+      const svn_string_t *enc_value =
+        svn_base64_encode_string2(value, TRUE, pool);
 
-      SVN_ERR(dav_svn__send_xml
-                (eb->bb, eb->output,
-                 "<S:change-%s-prop name=\"%s\">%s</S:change-%s-prop>" DEBUG_CR,
-                 file_or_dir, qname, enc_value->data, file_or_dir));
+      /* Some versions of apr_brigade_vprintf() have a buffer overflow
+         bug that can be triggered by just the wrong size of a large
+         property value.  The bug has been fixed (see
+         http://svn.apache.org/viewvc?view=rev&revision=768417), but
+         we need a workaround for the buggy APR versions. */
+      SVN_ERR(dav_svn__send_xml(eb->bb, eb->output,
+                                "<S:change-%s-prop name=\"%s\">",
+                                file_or_dir, qname));
+      if ((apr_err = apr_brigade_write(eb->bb, ap_filter_flush, eb->output,
+                                       enc_value->data, enc_value->len)))
+        return svn_error_create(apr_err, 0, NULL);
+      if (eb->output->c->aborted)
+        return svn_error_create(SVN_ERR_APMOD_CONNECTION_ABORTED, 0, NULL);
+      SVN_ERR(dav_svn__send_xml(eb->bb, eb->output,
+                                "</S:change-%s-prop>" DEBUG_CR,
+                                file_or_dir));
     }
   else
     {
@@ -302,9 +315,13 @@ apply_textdelta(void *file_baton,
   else
     SVN_ERR(dav_svn__send_xml(eb->bb, eb->output, ">"));
 
-  svn_txdelta_to_svndiff(dav_svn__make_base64_output_stream(eb->bb, eb->output,
-                                                            pool),
-                         pool, handler, handler_baton);
+  svn_txdelta_to_svndiff2(handler,
+                          handler_baton,
+                          dav_svn__make_base64_output_stream(eb->bb,
+                                                             eb->output,
+                                                             pool),
+                          0,
+                          pool);
 
   eb->sending_textdelta = TRUE;
 
@@ -388,6 +405,7 @@ dav_svn__replay_report(const dav_resource *resource,
                        const apr_xml_doc *doc,
                        ap_filter_t *output)
 {
+  dav_error *derr = NULL;
   svn_revnum_t low_water_mark = SVN_INVALID_REVNUM;
   svn_revnum_t rev = SVN_INVALID_REVNUM;
   const svn_delta_editor_t *editor;
@@ -465,9 +483,12 @@ dav_svn__replay_report(const dav_resource *resource,
 
   if ((err = svn_fs_revision_root(&root, resource->info->repos->fs, rev,
                                   resource->pool)))
-    return dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
-                                "Couldn't retrieve revision root",
-                                resource->pool);
+    {
+      derr = dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
+                                  "Couldn't retrieve revision root",
+                                  resource->pool);
+      goto cleanup;
+    }
 
   make_editor(&editor, &edit_baton, bb, output, resource->pool);
 
@@ -475,28 +496,27 @@ dav_svn__replay_report(const dav_resource *resource,
                                send_deltas, editor, edit_baton,
                                dav_svn__authz_read_func(&arb), &arb,
                                resource->pool)))
-    return dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
-                                "Problem replaying revision",
-                                resource->pool);
+    {
+      derr = dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
+                                  "Problem replaying revision",
+                                  resource->pool);
+      goto cleanup;
+    }
 
   if ((err = end_report(edit_baton)))
-    return dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
-                                "Problem closing editor drive",
-                                resource->pool);
+    {
+      derr = dav_svn__convert_err(err, HTTP_INTERNAL_SERVER_ERROR,
+                                  "Problem closing editor drive",
+                                  resource->pool);
+      goto cleanup;
+    }
 
-  {
-    const char *action, *log_base_dir;
+ cleanup:
+  dav_svn__operational_log(resource->info,
+                           svn_log__replay(base_dir, rev,
+                                           resource->info->r->pool));
 
-    if (base_dir && base_dir[0] != '\0')
-      log_base_dir = svn_path_uri_encode(base_dir, resource->info->r->pool);
-    else
-      log_base_dir = "/";
-    action = apr_psprintf(resource->info->r->pool, "replay %s r%ld",
-                          log_base_dir, rev);
-    dav_svn__operational_log(resource->info, action);
-  }
-
-  ap_fflush(output, bb);
-
-  return NULL;
+  /* Flush the brigade. */
+  return dav_svn__final_flush_or_error(resource->info->r, bb, output,
+                                       derr, resource->pool);
 }

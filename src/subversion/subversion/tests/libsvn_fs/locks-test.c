@@ -1,7 +1,7 @@
 /* lock-test.c --- tests for the filesystem locking functions
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -18,6 +18,8 @@
 #include <string.h>
 #include <apr_pools.h>
 #include <apr_time.h>
+
+#include "../svn_test.h"
 
 #include "svn_error.h"
 #include "svn_fs.h"
@@ -112,7 +114,7 @@ lock_only(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-only",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -158,7 +160,7 @@ lookup_lock_by_path(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lookup-lock-by-path",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -208,7 +210,7 @@ attach_lock(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-attach-lock",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -267,7 +269,7 @@ get_locks(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-get-locks",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -402,7 +404,7 @@ basic_lock(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-basic-lock",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -460,7 +462,7 @@ lock_credentials(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-credentials",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -557,7 +559,7 @@ final_lock_check(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-final-lock-check",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -621,7 +623,7 @@ lock_dir_propchange(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-dir-propchange",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -678,7 +680,7 @@ lock_name_reservation(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-name-reservation",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -737,7 +739,7 @@ directory_locks_kinda(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-directory-locks-kinda",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -815,7 +817,7 @@ lock_expiration(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-expiration",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -906,7 +908,7 @@ lock_break_steal_refresh(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-steal-refresh",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 
@@ -993,7 +995,7 @@ lock_out_of_date(const char **msg,
 
   /* Prepare a filesystem and a new txn. */
   SVN_ERR(svn_test__create_fs(&fs, "test-repo-lock-out-of-date",
-                              opts->fs_type, pool));
+                              opts, pool));
   SVN_ERR(svn_fs_begin_txn2(&txn, fs, 0, SVN_FS_TXN_CHECK_LOCKS, pool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
 

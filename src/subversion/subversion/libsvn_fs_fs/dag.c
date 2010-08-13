@@ -1,7 +1,7 @@
 /* dag.c : DAG-like interface filesystem, private to libsvn_fs
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2006, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -16,14 +16,12 @@
  */
 
 #include <string.h>
-#include <assert.h>
 
 #include "svn_path.h"
 #include "svn_error.h"
 #include "svn_fs.h"
 #include "svn_props.h"
 #include "svn_pools.h"
-#include "svn_md5.h"
 
 #include "dag.h"
 #include "err.h"
@@ -79,7 +77,7 @@ svn_node_kind_t svn_fs_fs__dag_node_kind(dag_node_t *node)
 
 
 const svn_fs_id_t *
-svn_fs_fs__dag_get_id(dag_node_t *node)
+svn_fs_fs__dag_get_id(const dag_node_t *node)
 {
   return node->id;
 }
@@ -96,6 +94,12 @@ svn_fs_t *
 svn_fs_fs__dag_get_fs(dag_node_t *node)
 {
   return node->fs;
+}
+
+void
+svn_fs_fs__dag_set_fs(dag_node_t *node, svn_fs_t *fs)
+{
+  node->fs = fs;
 }
 
 
@@ -157,7 +161,7 @@ get_node_revision(node_revision_t **noderev_p,
 }
 
 
-svn_boolean_t svn_fs_fs__dag_check_mutable(dag_node_t *node)
+svn_boolean_t svn_fs_fs__dag_check_mutable(const dag_node_t *node)
 {
   return (svn_fs_fs__id_txn_id(svn_fs_fs__dag_get_id(node)) != NULL);
 }
@@ -339,10 +343,8 @@ set_entry(dag_node_t *parent,
   SVN_ERR(get_node_revision(&parent_noderev, parent, pool));
 
   /* Set the new entry. */
-  SVN_ERR(svn_fs_fs__set_entry(parent->fs, txn_id, parent_noderev, name, id,
-                               kind, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__set_entry(parent->fs, txn_id, parent_noderev, name, id,
+                              kind, pool);
 }
 
 
@@ -404,10 +406,8 @@ make_entry(dag_node_t **child_p,
   /* We can safely call set_entry because we already know that
      PARENT is mutable, and we just created CHILD, so we know it has
      no ancestors (therefore, PARENT cannot be an ancestor of CHILD) */
-  SVN_ERR(set_entry(parent, name, svn_fs_fs__dag_get_id(*child_p),
-                    new_noderev.kind, txn_id, pool));
-
-  return SVN_NO_ERROR;
+  return set_entry(parent, name, svn_fs_fs__dag_get_id(*child_p),
+                   new_noderev.kind, txn_id, pool);
 }
 
 
@@ -496,9 +496,7 @@ svn_fs_fs__dag_set_proplist(dag_node_t *node,
   SVN_ERR(get_node_revision(&noderev, node, pool));
 
   /* Set the new proplist. */
-  SVN_ERR(svn_fs_fs__set_proplist(node->fs, noderev, proplist, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__set_proplist(node->fs, noderev, proplist, pool);
 }
 
 
@@ -550,10 +548,8 @@ svn_fs_fs__dag_increment_mergeinfo_count(dag_node_t *node,
     }
 
   /* Flush it out. */
-  SVN_ERR(svn_fs_fs__put_node_revision(node->fs, noderev->id,
-                                       noderev, FALSE, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__put_node_revision(node->fs, noderev->id,
+                                      noderev, FALSE, pool);
 }
 
 svn_error_t *
@@ -579,10 +575,8 @@ svn_fs_fs__dag_set_has_mergeinfo(dag_node_t *node,
   noderev->has_mergeinfo = has_mergeinfo;
 
   /* Flush it out. */
-  SVN_ERR(svn_fs_fs__put_node_revision(node->fs, noderev->id,
-                                       noderev, FALSE, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__put_node_revision(node->fs, noderev->id,
+                                      noderev, FALSE, pool);
 }
 
 
@@ -716,20 +710,15 @@ svn_fs_fs__dag_clone_root(dag_node_t **root_p,
   /* Oh, give me a clone...
      (If they're the same, we haven't cloned the transaction's root
      directory yet.)  */
-  if (svn_fs_fs__id_eq(root_id, base_root_id))
-    {
-      abort();
-    }
-
-  /* One way or another, root_id now identifies a cloned root node. */
-  SVN_ERR(svn_fs_fs__dag_get_node(root_p, fs, root_id, pool));
+  SVN_ERR_ASSERT(!svn_fs_fs__id_eq(root_id, base_root_id));
 
   /*
    * (Sung to the tune of "Home, Home on the Range", with thanks to
    * Randall Garrett and Isaac Asimov.)
    */
 
-  return SVN_NO_ERROR;
+  /* One way or another, root_id now identifies a cloned root node. */
+  return svn_fs_fs__dag_get_node(root_p, fs, root_id, pool);
 }
 
 
@@ -792,10 +781,8 @@ svn_fs_fs__dag_delete(dag_node_t *parent,
   SVN_ERR(svn_fs_fs__dag_delete_if_mutable(parent->fs, id, pool));
 
   /* Remove this entry from its parent's entries list. */
-  SVN_ERR(svn_fs_fs__set_entry(parent->fs, txn_id, parent_noderev, name,
-                               NULL, svn_node_unknown, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__set_entry(parent->fs, txn_id, parent_noderev, name,
+                              NULL, svn_node_unknown, pool);
 }
 
 
@@ -815,9 +802,7 @@ svn_fs_fs__dag_remove_node(svn_fs_t *fs,
                              "Attempted removal of immutable node");
 
   /* Delete the node revision. */
-  SVN_ERR(svn_fs_fs__delete_node_revision(fs, id, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__delete_node_revision(fs, id, pool);
 }
 
 
@@ -862,9 +847,7 @@ svn_fs_fs__dag_delete_if_mutable(svn_fs_t *fs,
 
   /* ... then delete the node itself, after deleting any mutable
      representations and strings it points to. */
-  SVN_ERR(svn_fs_fs__dag_remove_node(fs, id, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__dag_remove_node(fs, id, pool);
 }
 
 svn_error_t *
@@ -944,10 +927,8 @@ svn_fs_fs__dag_get_file_delta_stream(svn_txdelta_stream_t **stream_p,
   SVN_ERR(get_node_revision(&tgt_noderev, target, pool));
 
   /* Get the delta stream. */
-  SVN_ERR(svn_fs_fs__get_file_delta_stream(stream_p, target->fs,
-                                           src_noderev, tgt_noderev, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__get_file_delta_stream(stream_p, target->fs,
+                                          src_noderev, tgt_noderev, pool);
 }
 
 
@@ -967,15 +948,14 @@ svn_fs_fs__dag_file_length(svn_filesize_t *length,
   /* Go get a fresh node-revision for FILE, and . */
   SVN_ERR(get_node_revision(&noderev, file, pool));
 
-  SVN_ERR(svn_fs_fs__file_length(length, noderev, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__file_length(length, noderev, pool);
 }
 
 
 svn_error_t *
-svn_fs_fs__dag_file_checksum(unsigned char digest[],
+svn_fs_fs__dag_file_checksum(svn_checksum_t **checksum,
                              dag_node_t *file,
+                             svn_checksum_kind_t kind,
                              apr_pool_t *pool)
 {
   node_revision_t *noderev;
@@ -987,9 +967,7 @@ svn_fs_fs__dag_file_checksum(unsigned char digest[],
 
   SVN_ERR(get_node_revision(&noderev, file, pool));
 
-  SVN_ERR(svn_fs_fs__file_checksum(digest, noderev, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__file_checksum(checksum, noderev, kind, pool);
 }
 
 
@@ -1027,22 +1005,25 @@ svn_fs_fs__dag_get_edit_stream(svn_stream_t **contents,
 
 svn_error_t *
 svn_fs_fs__dag_finalize_edits(dag_node_t *file,
-                              const char *checksum,
+                              const svn_checksum_t *checksum,
                               apr_pool_t *pool)
 {
-  unsigned char digest[APR_MD5_DIGESTSIZE];
-  const char *hex;
-
   if (checksum)
     {
-      SVN_ERR(svn_fs_fs__dag_file_checksum(digest, file, pool));
-      hex = svn_md5_digest_to_cstring(digest, pool);
-      if (hex && strcmp(checksum, hex) != 0)
+      svn_checksum_t *file_checksum;
+
+      SVN_ERR(svn_fs_fs__dag_file_checksum(&file_checksum, file,
+                                           checksum->kind, pool));
+      if (!svn_checksum_match(checksum, file_checksum))
         return svn_error_createf(SVN_ERR_CHECKSUM_MISMATCH, NULL,
                                  _("Checksum mismatch, file '%s':\n"
                                    "   expected:  %s\n"
                                    "     actual:  %s\n"),
-                                 file->created_path, checksum, hex);
+                                 file->created_path,
+                                 svn_checksum_to_cstring_display(checksum,
+                                                                 pool),
+                                 svn_checksum_to_cstring_display(file_checksum,
+                                                                 pool));
     }
 
   return SVN_NO_ERROR;
@@ -1073,6 +1054,139 @@ svn_fs_fs__dag_dup(dag_node_t *node,
   return new_node;
 }
 
+svn_error_t *
+svn_fs_fs__dag_dup_for_cache(void **out,
+                             void *in,
+                             apr_pool_t *pool)
+{
+  dag_node_t *in_node = in, *out_node;
+  out_node = svn_fs_fs__dag_dup(in_node, pool);
+  out_node->fs = NULL;
+  *out = out_node;
+  return SVN_NO_ERROR;
+}
+
+/* The cache serialization format is:
+ *
+ * - For mutable nodes: the character 'M', then 'F' for files or 'D'
+ *   for directories, then the ID, then '\n', then the created path.
+ *
+ * - For immutable nodes: the character 'I' followed by the noderev
+ *   hash dump (the other fields can be reconstructed from this).  (We
+ *   assume that, once constructed, immutable nodes always contain
+ *   their noderev.)
+ */
+
+svn_error_t *
+svn_fs_fs__dag_serialize(char **data,
+                         apr_size_t *data_len,
+                         void *in,
+                         apr_pool_t *pool)
+{
+  dag_node_t *node = in;
+  svn_stringbuf_t *buf = svn_stringbuf_create("", pool);
+
+  if (svn_fs_fs__dag_check_mutable(node))
+    {
+      svn_stringbuf_appendcstr(buf, "M");
+      svn_stringbuf_appendcstr(buf, (node->kind == svn_node_file ? "F" : "D"));
+      svn_stringbuf_appendcstr(buf, svn_fs_fs__id_unparse(node->id,
+                                                          pool)->data);
+      svn_stringbuf_appendcstr(buf, "\n");
+      svn_stringbuf_appendcstr(buf, node->created_path);
+    }
+  else
+    {
+      fs_fs_data_t *ffd = node->fs->fsap_data;
+      svn_stringbuf_appendcstr(buf, "I");
+      SVN_ERR(svn_fs_fs__write_noderev(svn_stream_from_stringbuf(buf, pool),
+                                       node->node_revision, ffd->format,
+                                       TRUE, pool));
+    }
+
+  *data = buf->data;
+  *data_len = buf->len;
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_fs_fs__dag_deserialize(void **out,
+                           const char *data,
+                           apr_size_t data_len,
+                           apr_pool_t *pool)
+{
+  dag_node_t *node = apr_pcalloc(pool, sizeof(*node));
+
+  if (data_len == 0)
+    return svn_error_create(SVN_ERR_FS_CORRUPT, NULL,
+                            _("Empty noderev in cache"));
+
+  if (*data == 'M')
+    {
+      const char *newline;
+      int id_len;
+
+      data++; data_len--;
+      if (data_len == 0)
+        return svn_error_create(SVN_ERR_FS_CORRUPT, NULL,
+                                _("Kindless noderev in cache"));
+      if (*data == 'F')
+        node->kind = svn_node_file;
+      else if (*data == 'D')
+        node->kind = svn_node_dir;
+      else
+        return svn_error_createf(SVN_ERR_FS_CORRUPT, NULL,
+                                 _("Unknown kind for noderev in cache: '%c'"),
+                                 *data);
+
+      data++; data_len--;
+      newline = memchr(data, '\n', data_len);
+      if (!newline)
+        return svn_error_create(SVN_ERR_FS_CORRUPT, NULL,
+                                _("Unterminated ID in cache"));
+      id_len = newline - 1 - data;
+      node->id = svn_fs_fs__id_parse(data, id_len, pool);
+      if (! node->id)
+        return svn_error_createf(SVN_ERR_FS_CORRUPT, NULL,
+                                 _("Bogus ID '%s' in cache"),
+                                 apr_pstrndup(pool, data, id_len));
+
+      data += id_len; data_len -= id_len;
+      data++; data_len--;
+      if (data_len == 0)
+        return svn_error_create(SVN_ERR_FS_CORRUPT, NULL,
+                                _("No created path"));
+      node->created_path = apr_pstrndup(pool, data, data_len);
+    }
+  else if (*data == 'I')
+    {
+      node_revision_t *noderev;
+      apr_pool_t *subpool = svn_pool_create(pool);
+      svn_stream_t *stream =
+        svn_stream_from_stringbuf(svn_stringbuf_ncreate(data + 1,
+                                                        data_len - 1,
+                                                        subpool),
+                                  subpool);
+      SVN_ERR(svn_fs_fs__read_noderev(&noderev, stream, pool));
+      node->kind = noderev->kind;
+      node->id = svn_fs_fs__id_copy(noderev->id, pool);
+      node->created_path = apr_pstrdup(pool, noderev->created_path);
+
+      if (noderev->is_fresh_txn_root)
+        node->fresh_root_predecessor_id = noderev->predecessor_id;
+
+      node->node_revision = noderev;
+
+      svn_pool_destroy(subpool);
+    }
+  else
+    return svn_error_createf(SVN_ERR_FS_CORRUPT, NULL,
+                             _("Unknown node type in cache: '%c'"), *data);
+
+  *out = node;
+
+  return SVN_NO_ERROR;
+}
 
 svn_error_t *
 svn_fs_fs__dag_open(dag_node_t **child_p,
@@ -1151,10 +1265,8 @@ svn_fs_fs__dag_copy(dag_node_t *to_node,
     }
 
   /* Set the entry in to_node to the new id. */
-  SVN_ERR(svn_fs_fs__dag_set_entry(to_node, entry, id, from_node->kind,
-                                   txn_id, pool));
-
-  return SVN_NO_ERROR;
+  return svn_fs_fs__dag_set_entry(to_node, entry, id, from_node->kind,
+                                  txn_id, pool);
 }
 
 

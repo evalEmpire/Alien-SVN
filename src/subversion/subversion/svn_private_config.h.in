@@ -19,11 +19,17 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define to 1 if you have the `iconv' library (-liconv). */
+#undef HAVE_LIBICONV
+
 /* Define to 1 if you have the `socket' library (-lsocket). */
 #undef HAVE_LIBSOCKET
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
+
+/* Define to 1 if you have the `rb_errinfo' function. */
+#undef HAVE_RB_ERRINFO
 
 /* Define to 1 if you have the `readlink' function. */
 #undef HAVE_READLINK
@@ -73,6 +79,9 @@
 /* Define to the one symbol short name of this package. */
 #undef PACKAGE_TARNAME
 
+/* Define to the home page for this package. */
+#undef PACKAGE_URL
+
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
@@ -100,8 +109,17 @@
 /* The desired patch version for the Berkeley DB */
 #undef SVN_FS_WANT_DB_PATCH
 
+/* Is GNOME Keyring support enabled? */
+#undef SVN_HAVE_GNOME_KEYRING
+
 /* Is Mac OS KeyChain support enabled? */
 #undef SVN_HAVE_KEYCHAIN_SERVICES
+
+/* Defined if KWallet support is enabled */
+#undef SVN_HAVE_KWALLET
+
+/* Defined if apr_memcache (standalone or in apr-util) is present */
+#undef SVN_HAVE_MEMCACHE
 
 /* Defined if support for Neon is enabled */
 #undef SVN_HAVE_NEON
@@ -151,6 +169,9 @@
 /* Defined to be the path separator used on your local filesystem */
 #undef SVN_PATH_LOCAL_SEPARATOR
 
+/* Defined if svn should use the amalgamated version of sqlite */
+#undef SVN_SQLITE_INLINE
+
 /* Defined if svn should try to load DSOs */
 #undef SVN_USE_DSO
 
@@ -160,14 +181,23 @@
 /* Define to `unsigned int' if <sys/types.h> does not define. */
 #undef size_t
 
+#ifdef SVN_WANT_BDB
+#define APU_WANT_DB
+@SVN_DB_HEADER@
+#endif
+
+
 #define N_(x) x
+#define U_(x) x
 #ifdef ENABLE_NLS
 #include <locale.h>
 #include <libintl.h>
 #define _(x) dgettext(PACKAGE_NAME, x)
+#define Q_(x1, x2, n) dngettext(PACKAGE_NAME, x1, x2, n)
 #else
 #define _(x) (x)
+#define Q_(x1, x2, n) (((n) == 1) ? x1 : x2)
 #define gettext(x) (x)
-#define dgettext(domain,x) (x)
+#define dgettext(domain, x) (x)
 #endif
 

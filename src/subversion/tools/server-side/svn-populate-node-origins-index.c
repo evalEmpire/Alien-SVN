@@ -3,7 +3,7 @@
  *                                     origins index.
  *
  * ====================================================================
- * Copyright (c) 2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2007-2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -17,12 +17,13 @@
  * ====================================================================
  */
 
-#include "svn_pools.h"
-#include "svn_error.h"
 #include "svn_cmdline.h"
-#include "svn_path.h"
-#include "svn_repos.h"
+#include "svn_error.h"
 #include "svn_fs.h"
+#include "svn_path.h"
+#include "svn_pools.h"
+#include "svn_repos.h"
+#include "svn_utf.h"
 
 /* Used to terminate lines in large multi-line string literals. */
 #define NL APR_EOL_STR
@@ -61,7 +62,7 @@ usage_maybe_with_err(const char *progname, const char *err_msg)
 /* Build the node-origins index any newly added items introduced in
    REVISION in FS.  Set *COUNT to the number of new items found.  */
 static svn_error_t *
-index_revision_adds(int *count, svn_fs_t *fs, 
+index_revision_adds(int *count, svn_fs_t *fs,
                     svn_revnum_t revision, apr_pool_t *pool)
 {
   svn_fs_root_t *root;
@@ -128,7 +129,7 @@ build_index(const char *repos_path, apr_pool_t *pool)
   /* Fetch the youngest revision of the repository. */
   SVN_ERR(svn_fs_youngest_rev(&youngest_rev, fs, pool));
   slotsize = strlen(apr_ltoa(pool, youngest_rev));
-  progress_fmt = apr_psprintf(pool, 
+  progress_fmt = apr_psprintf(pool,
                               "[%%%dd/%%%dd]  Found %%d new lines of history."
                               "\n", slotsize, slotsize);
 
@@ -180,7 +181,7 @@ main(int argc, const char **argv)
 
   if (err)
     {
-      svn_handle_error2(err, stderr, FALSE, 
+      svn_handle_error2(err, stderr, FALSE,
                         "svn-populate-node-origins-index: ");
       return EXIT_FAILURE;
     }

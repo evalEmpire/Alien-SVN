@@ -19,7 +19,7 @@ AC_DEFUN(SVN_LIB_APRUTIL,
 
   AC_MSG_NOTICE([Apache Portable Runtime Utility (APRUTIL) library configuration])
 
-  APR_FIND_APU("$abs_srcdir/apr-util", "$abs_builddir/apr-util", 1, [0 1])
+  APR_FIND_APU("$abs_srcdir/apr-util", "$abs_builddir/apr-util", 1, [1 0])
 
   if test $apu_found = "no"; then
     AC_MSG_WARN([APRUTIL not found])
@@ -72,6 +72,11 @@ AC_DEFUN(SVN_LIB_APRUTIL,
     AC_MSG_ERROR([apu-config --includes failed])
   fi
 
+  SVN_APRUTIL_PREFIX="`$apu_config --prefix`"
+  if test $? -ne 0; then
+    AC_MSG_ERROR([apu-config --prefix failed])
+  fi
+
   dnl When APR stores the dependent libs in the .la file, we don't need
   dnl --libs.
   SVN_APRUTIL_LIBS="`$apu_config --link-libtool --libs`"
@@ -109,7 +114,7 @@ AC_DEFUN(SVN_DOWNLOAD_APRUTIL,
   echo "get it with SVN and put it in a subdirectory of this source:"
   echo ""
   echo "   svn co \\"
-  echo "    http://svn.apache.org/repos/asf/apr/apr-util/branches/0.9.x \\"
+  echo "    http://svn.apache.org/repos/asf/apr/apr-util/branches/1.2.x \\"
   echo "    apr-util"
   echo ""
   echo "Run that right here in the top level of the Subversion tree."

@@ -7,7 +7,7 @@
 
 /* This should only be incremented when either the layout of swig_type_info changes,
    or for whatever reason, the runtime changes incompatibly */
-#define SWIG_RUNTIME_VERSION "3"
+#define SWIG_RUNTIME_VERSION "4"
 
 /* define SWIG_TYPE_TABLE_NAME as "SWIG_TYPE_TABLE" */
 #ifdef SWIG_TYPE_TABLE
@@ -42,6 +42,7 @@
 
 /* Flags for pointer conversions */
 #define SWIG_POINTER_DISOWN        0x1
+#define SWIG_CAST_NEW_MEMORY       0x2
 
 /* Flags for new pointer objects */
 #define SWIG_POINTER_OWN           0x1
@@ -182,10 +183,10 @@ SWIGINTERNINLINE int SWIG_CheckState(int r) {
 extern "C" {
 #endif
 
-typedef void *(*swig_converter_func)(void *);
+typedef void *(*swig_converter_func)(void *, int *);
 typedef struct swig_type_info *(*swig_dycast_func)(void **);
 
-/* Structure to store inforomation on one type */
+/* Structure to store information on one type */
 typedef struct swig_type_info {
   const char             *name;			/* mangled name of this type */
   const char             *str;			/* human readable name of this type */
@@ -230,7 +231,7 @@ SWIG_TypeNameComp(const char *f1, const char *l1,
     while ((*f2 == ' ') && (f2 != l2)) ++f2;
     if (*f1 != *f2) return (*f1 > *f2) ? 1 : -1;
   }
-  return (l1 - f1) - (l2 - f2);
+  return (int)((l1 - f1) - (l2 - f2));
 }
 
 /*
@@ -312,8 +313,8 @@ SWIG_TypeCheckStruct(swig_type_info *from, swig_type_info *into) {
   Cast a pointer up an inheritance hierarchy
 */
 SWIGRUNTIMEINLINE void *
-SWIG_TypeCast(swig_cast_info *ty, void *ptr) {
-  return ((!ty) || (!ty->converter)) ? ptr : (*ty->converter)(ptr);
+SWIG_TypeCast(swig_cast_info *ty, void *ptr, int *newmemory) {
+  return ((!ty) || (!ty->converter)) ? ptr : (*ty->converter)(ptr, newmemory);
 }
 
 /* 

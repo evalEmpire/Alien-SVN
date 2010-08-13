@@ -16,12 +16,6 @@
  * ====================================================================
  */
 
-/* ==================================================================== */
-
-
-
-/*** Includes. ***/
-
 #include "svn_cmdline.h"
 #include "svn_client.h"
 #include "svn_error.h"
@@ -29,11 +23,13 @@
 #include "svn_time.h"
 #include "svn_xml.h"
 #include "svn_path.h"
+#include "svn_utf.h"
+
 #include "cl.h"
 
 #include "svn_private_config.h"
+
 
-/*** Code. ***/
 
 /* Baton used when printing directory entries. */
 struct print_baton {
@@ -104,7 +100,7 @@ print_dirent(void *baton,
 
       sizestr = apr_psprintf(pool, "%" SVN_FILESIZE_T_FMT, dirent->size);
 
-      SVN_ERR(svn_cmdline_printf
+      return svn_cmdline_printf
               (pool, "%7ld %-8.8s %c %10s %12s %s%s\n",
                dirent->created_rev,
                dirent->last_author ? dirent->last_author : " ? ",
@@ -112,16 +108,14 @@ print_dirent(void *baton,
                (dirent->kind == svn_node_file) ? sizestr : "",
                utf8_timestr,
                entryname,
-               (dirent->kind == svn_node_dir) ? "/" : ""));
+               (dirent->kind == svn_node_dir) ? "/" : "");
     }
   else
     {
-      SVN_ERR(svn_cmdline_printf(pool, "%s%s\n", entryname,
-                                 (dirent->kind == svn_node_dir)
-                                 ? "/" : ""));
+      return svn_cmdline_printf(pool, "%s%s\n", entryname,
+                                (dirent->kind == svn_node_dir)
+                                ? "/" : "");
     }
-
-  return SVN_NO_ERROR;
 }
 
 
@@ -158,7 +152,7 @@ print_dirent_xml(void *baton,
   sb = svn_stringbuf_create("", pool);
 
   svn_xml_make_open_tag(&sb, pool, svn_xml_normal, "entry",
-                        "kind", svn_cl__node_kind_str(dirent->kind),
+                        "kind", svn_cl__node_kind_str_xml(dirent->kind),
                         NULL);
 
   svn_cl__xml_tagged_cdata(&sb, pool, "name", entryname);
@@ -198,9 +192,7 @@ print_dirent_xml(void *baton,
 
   svn_xml_make_close_tag(&sb, pool, "entry");
 
-  SVN_ERR(svn_cl__error_checked_fputs(sb->data, stdout));
-
-  return SVN_NO_ERROR;
+  return svn_cl__error_checked_fputs(sb->data, stdout);
 }
 
 
@@ -219,8 +211,8 @@ svn_cl__list(apr_getopt_t *os,
   struct print_baton pb;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   /* Add "." if user passed 0 arguments */
   svn_opt_push_implicit_dot_target(targets, pool);

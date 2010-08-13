@@ -2,7 +2,7 @@
  * wc.h :  shared stuff internal to the svn_wc library.
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -69,9 +69,12 @@ extern "C" {
  * The change from 8 to 9 was the addition of changelists, keep-local,
  * and sticky depth (for selective/sparse checkouts).
  *
+ * The change from 9 to 10 was the addition of tree-conflicts, file
+ * externals and a different canonicalization of urls.
+ *
  * Please document any further format changes here.
  */
-#define SVN_WC__VERSION       9
+#define SVN_WC__VERSION       10
 
 /* A version <= this doesn't have property caching in the entries file. */
 #define SVN_WC__NO_PROPCACHING_VERSION 5
@@ -81,6 +84,10 @@ extern "C" {
 
 /* A version <= this has wcprops stored in one file per entry. */
 #define SVN_WC__WCPROPS_MANY_FILES_VERSION 7
+
+/* A version < this can have urls that aren't canonical according to the new
+   rules. See issue #2475. */
+#define SVN_WC__CHANGED_CANONICAL_URLS 10
 
 /*** Update traversals. ***/
 
@@ -223,9 +230,14 @@ svn_wc__text_modified_internal_p(svn_boolean_t *modified_p,
 /* Merge the difference between LEFT and RIGHT into MERGE_TARGET,
    accumulating instructions to update the working copy into LOG_ACCUM.
 
+   Note that, in the case of updating, the update can have sent new
+   properties, which could affect the way the wc target is
+   detranslated and compared with LEFT and RIGHT for merging.
+
    If COPYFROM_TEXT is not NULL, the "local mods" text should be taken
-   from the path named their instead of MERGE_TARGET (but the merge
-   should still be installed into MERGE_TARGET).
+   from the path named there instead of from MERGE_TARGET (but the
+   merge should still be installed into MERGE_TARGET).  The merge
+   target is allowed to not be under version control in this case.
 
    The merge result is stored in *MERGE_OUTCOME and merge conflicts
    are marked in MERGE_RESULT using LEFT_LABEL, RIGHT_LABEL and
@@ -243,15 +255,24 @@ svn_wc__text_modified_internal_p(svn_boolean_t *modified_p,
    conflict is encountered, giving the callback a chance to resolve
    the conflict (before marking the file 'conflicted').
 
-   For a complete description, see svn_wc_merge2() for which this is
-   the (loggy) implementation.
+   When LEFT_VERSION and RIGHT_VERSION are non-NULL, pass them to the
+   conflict resolver as older_version and their_version.
 
+   ## TODO: We should store the information in LEFT_VERSION and RIGHT_VERSION
+            in the workingcopy for future retrieval via svn info.
+
+   Property changes sent by the update are provided in PROP_DIFF.
+
+   For a complete description, see svn_wc_merge3() for which this is
+   the (loggy) implementation.
 */
 svn_error_t *
 svn_wc__merge_internal(svn_stringbuf_t **log_accum,
                        enum svn_wc_merge_outcome_t *merge_outcome,
                        const char *left,
+                       svn_wc_conflict_version_t *left_version,
                        const char *right,
+                       svn_wc_conflict_version_t *right_version,
                        const char *merge_target,
                        const char *copyfrom_text,
                        svn_wc_adm_access_t *adm_access,
@@ -298,6 +319,26 @@ svn_wc__ambient_depth_filter_editor(const svn_delta_editor_t **editor,
                                     const char *target,
                                     svn_wc_adm_access_t *adm_access,
                                     apr_pool_t *pool);
+
+/* Similar to svn_wc_walk_entries3(), but also visit unversioned paths that
+ * are tree conflict victims. For such a path, call the "found_entry"
+ * callback but with a null "entry" parameter. Walk all entries including
+ * hidden and schedule-delete entries, like with "show_hidden = TRUE" in
+ * svn_wc_walk_entries3().
+ *
+ * @a adm_access should be an access baton in a set that includes @a path
+ * (unless @a path is an unversioned victim of a tree conflict) and @a
+ * path's parent directory (if available).  If neither is available, @a
+ * adm_access may be null. */
+svn_error_t *
+svn_wc__walk_entries_and_tc(const char *path,
+                            svn_wc_adm_access_t *adm_access,
+                            const svn_wc_entry_callbacks2_t *walk_callbacks,
+                            void *walk_baton,
+                            svn_depth_t depth,
+                            svn_cancel_func_t cancel_func,
+                            void *cancel_baton,
+                            apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

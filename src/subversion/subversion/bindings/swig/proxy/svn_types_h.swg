@@ -44,6 +44,7 @@
 %proxy(svn_error_t);
 %proxy(svn_dirent_t);
 %proxy(svn_commit_info_t);
+%proxy(svn_log_changed_path2_t);
 %proxy(svn_log_changed_path_t);
 %proxy(svn_log_entry_t);
 %proxy(svn_lock_t);

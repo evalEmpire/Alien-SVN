@@ -4,7 +4,7 @@
  * in here.
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -200,7 +200,9 @@ svn_cl__merge_file_externally(const char *base_path,
                               const char *their_path,
                               const char *my_path,
                               const char *merged_path,
+                              const char *wc_path,
                               apr_hash_t *config,
+                              svn_boolean_t *remains_in_conflict,
                               apr_pool_t *pool)
 {
   char *merge_tool;
@@ -238,16 +240,37 @@ svn_cl__merge_file_externally(const char *base_path,
            "configuration option were not set.\n"));
 
   {
-    const char *arguments[] = { merge_tool, base_path, their_path,
-                                my_path, merged_path, NULL};
+    const char *arguments[7] = { 0 };
     char *cwd;
+    int exitcode;
+
     apr_status_t status = apr_filepath_get(&cwd, APR_FILEPATH_NATIVE, pool);
     if (status != 0)
       return svn_error_wrap_apr(status, NULL);
-    return svn_io_run_cmd(svn_path_internal_style(cwd, pool), merge_tool,
-                          arguments, NULL, NULL, TRUE, NULL, NULL, NULL,
-                          pool);
+
+    arguments[0] = merge_tool;
+    arguments[1] = base_path;
+    arguments[2] = their_path;
+    arguments[3] = my_path;
+    arguments[4] = merged_path;
+    arguments[5] = wc_path;
+    arguments[6] = NULL;
+
+    SVN_ERR(svn_io_run_cmd(svn_path_internal_style(cwd, pool), merge_tool,
+                           arguments, &exitcode, NULL, TRUE, NULL, NULL, NULL,
+                           pool));
+    /* Exit code 0 means the merge was successful.
+     * Exit code 1 means the file was left in conflict but it
+     * is OK to continue with the merge.
+     * Any other exit code means there was a real problem. */
+    if (exitcode != 0 && exitcode != 1)
+      return svn_error_createf
+        (SVN_ERR_EXTERNAL_PROGRAM, NULL,
+         _("The external merge tool exited with exit code %d"), exitcode);
+    else if (remains_in_conflict)
+      *remains_in_conflict = exitcode == 1;
   }
+  return SVN_NO_ERROR;
 }
 
 svn_error_t *
@@ -256,7 +279,7 @@ svn_cl__edit_string_externally(svn_string_t **edited_contents /* UTF-8! */,
                                const char *editor_cmd,
                                const char *base_dir /* UTF-8! */,
                                const svn_string_t *contents /* UTF-8! */,
-                               const char *prefix,
+                               const char *filename,
                                apr_hash_t *config,
                                svn_boolean_t as_text,
                                const char *encoding,
@@ -318,10 +341,12 @@ svn_cl__edit_string_externally(svn_string_t **edited_contents /* UTF-8! */,
 
   /*** From here on, any problems that occur require us to cd back!! ***/
 
-  /* Ask the working copy for a temporary file that starts with
-     PREFIX. */
-  err = svn_io_open_unique_file2(&tmp_file, &tmpfile_name,
-                                 prefix, ".tmp", svn_io_file_del_none, pool);
+  /* Ask the working copy for a temporary file named FILENAME-something. */
+  err = svn_io_open_uniquely_named(&tmp_file, &tmpfile_name,
+                                   "" /* dirpath */,
+                                   filename,
+                                   ".tmp",
+                                   svn_io_file_del_none, pool, pool);
 
   if (err && (APR_STATUS_IS_EACCES(err->apr_err) || err->apr_err == EROFS))
     {
@@ -339,9 +364,11 @@ svn_cl__edit_string_externally(svn_string_t **edited_contents /* UTF-8! */,
             (apr_err, _("Can't change working directory to '%s'"), base_dir);
         }
 
-      err = svn_io_open_unique_file2(&tmp_file, &tmpfile_name,
-                                     prefix, ".tmp",
-                                     svn_io_file_del_none, pool);
+      err = svn_io_open_uniquely_named(&tmp_file, &tmpfile_name,
+                                       "" /* dirpath */,
+                                       filename,
+                                       ".tmp",
+                                       svn_io_file_del_none, pool, pool);
     }
 
   if (err)
@@ -432,7 +459,7 @@ svn_cl__edit_string_externally(svn_string_t **edited_contents /* UTF-8! */,
       (finfo_before.size != finfo_after.size))
     {
       svn_stringbuf_t *edited_contents_s;
-      err = svn_stringbuf_from_file(&edited_contents_s, tmpfile_name, pool);
+      err = svn_stringbuf_from_file2(&edited_contents_s, tmpfile_name, pool);
       if (err)
         goto cleanup;
 
@@ -557,9 +584,11 @@ svn_cl__make_log_msg_baton(void **baton,
 
 svn_error_t *
 svn_cl__cleanup_log_msg(void *log_msg_baton,
-                        svn_error_t *commit_err)
+                        svn_error_t *commit_err,
+                        apr_pool_t *pool)
 {
   struct log_msg_baton *lmb = log_msg_baton;
+  svn_error_t *err;
 
   /* If there was no tmpfile left, or there is no log message baton,
      return COMMIT_ERR. */
@@ -575,11 +604,12 @@ svn_cl__cleanup_log_msg(void *log_msg_baton,
      chain.  Then return COMMIT_ERR.  If the conversion from UTF-8 to
      native encoding fails, we have to compose that error with the
      commit error chain, too. */
-  svn_error_compose
-    (commit_err,
-     svn_error_create(commit_err->apr_err,
-                      svn_error_createf(commit_err->apr_err, NULL,
-                                        "   '%s'", lmb->tmpfile_left),
+
+  err = svn_error_createf(commit_err->apr_err, NULL,
+                          "   '%s'",
+                          svn_path_local_style(lmb->tmpfile_left, pool));
+  svn_error_compose(commit_err,
+                    svn_error_create(commit_err->apr_err, err,
                       _("Your commit message was left in "
                         "a temporary file:")));
   return commit_err;
@@ -653,29 +683,24 @@ svn_cl__get_log_message(const char **log_msg,
   *tmp_file = NULL;
   if (lmb->message)
     {
-      svn_string_t *log_msg_string = svn_string_create(lmb->message, pool);
+      svn_stringbuf_t *log_msg_buf = svn_stringbuf_create(lmb->message, pool);
+      svn_string_t *log_msg_str = apr_pcalloc(pool, sizeof(*log_msg_str));
 
-      SVN_ERR_W(svn_subst_translate_string(&log_msg_string, log_msg_string,
+      /* Trim incoming messages of the EOF marker text and the junk
+         that follows it.  */
+      truncate_buffer_at_prefix(&(log_msg_buf->len), log_msg_buf->data,
+                                EDITOR_EOF_PREFIX);
+
+      /* Make a string from a stringbuf, sharing the data allocation. */
+      log_msg_str->data = log_msg_buf->data;
+      log_msg_str->len = log_msg_buf->len;
+      SVN_ERR_W(svn_subst_translate_string(&log_msg_str, log_msg_str,
                                            lmb->message_encoding, pool),
                 _("Error normalizing log message to internal format"));
 
-      *log_msg = log_msg_string->data;
-
-      /* Trim incoming messages the EOF marker text and the junk that
-         follows it.  */
-      truncate_buffer_at_prefix(NULL, (char*)*log_msg, EDITOR_EOF_PREFIX);
-
+      *log_msg = log_msg_str->data;
       return SVN_NO_ERROR;
     }
-#ifdef AS400
-  /* OS400 supports only -F and -m for specifying log messages. */
-  else
-    return svn_error_create
-      (SVN_ERR_CL_NO_EXTERNAL_EDITOR, NULL,
-       _("Use of an external editor to fetch log message is not supported "
-         "on OS400; consider using the --message (-m) or --file (-F) "
-         "options"));
-#endif
 
   if (! commit_items->nelts)
     {
@@ -705,7 +730,7 @@ svn_cl__get_log_message(const char **log_msg,
           else if (! *path)
             path = ".";
 
-          if (path && lmb->base_dir)
+          if (! svn_path_is_url(path) && lmb->base_dir)
             path = svn_path_is_child(lmb->base_dir, path, pool);
 
           /* If still no path, then just use current directory. */
@@ -805,10 +830,10 @@ svn_cl__get_log_message(const char **log_msg,
       if (! message)
         {
           const char *reply;
-          SVN_ERR(svn_cmdline_prompt_user
+          SVN_ERR(svn_cmdline_prompt_user2
                   (&reply,
                    _("\nLog message unchanged or not specified\n"
-                     "(a)bort, (c)ontinue, (e)dit :\n"), pool));
+                     "(a)bort, (c)ontinue, (e)dit:\n"), NULL, pool));
           if (reply)
             {
               char letter = apr_tolower(reply[0]);
@@ -911,7 +936,7 @@ svn_cl__try(svn_error_t *err,
           if (err->apr_err == apr_err)
             {
               if (! quiet)
-                svn_handle_warning(stderr, err);
+                svn_handle_warning2(stderr, err, "svn: ");
               svn_error_clear(err);
               return SVN_NO_ERROR;
             }
@@ -997,10 +1022,12 @@ svn_cl__xml_print_footer(const char *tagname,
 
 
 const char *
-svn_cl__node_kind_str(svn_node_kind_t kind)
+svn_cl__node_kind_str_xml(svn_node_kind_t kind)
 {
   switch (kind)
     {
+    case svn_node_none:
+      return "none";
     case svn_node_dir:
       return "dir";
     case svn_node_file:
@@ -1010,15 +1037,67 @@ svn_cl__node_kind_str(svn_node_kind_t kind)
     }
 }
 
+const char *
+svn_cl__node_kind_str_human_readable(svn_node_kind_t kind)
+{
+  switch (kind)
+    {
+    case svn_node_none:
+      return _("none");
+    case svn_node_dir:
+      return _("dir");
+    case svn_node_file:
+      return _("file");
+    default:
+      return "";
+    }
+}
+
+
+const char *
+svn_cl__operation_str_xml(svn_wc_operation_t operation, apr_pool_t *pool)
+{
+  switch(operation){
+	case svn_wc_operation_none:
+      return "none";
+    case svn_wc_operation_update:
+      return "update";
+    case svn_wc_operation_switch:
+      return "switch";
+    case svn_wc_operation_merge:
+      return "merge";
+  }
+  return "unknown_operation";
+}
+
+const char *
+svn_cl__operation_str_human_readable(svn_wc_operation_t operation,
+                                     apr_pool_t *pool)
+{
+  switch(operation){
+	case svn_wc_operation_none:
+      return _("none");
+    case svn_wc_operation_update:
+      return _("update");
+    case svn_wc_operation_switch:
+      return _("switch");
+    case svn_wc_operation_merge:
+      return _("merge");
+  }
+  return _("unknown operation");
+}
+
 
 svn_error_t *
 svn_cl__args_to_target_array_print_reserved(apr_array_header_t **targets,
                                             apr_getopt_t *os,
                                             apr_array_header_t *known_targets,
+                                            svn_client_ctx_t *ctx,
                                             apr_pool_t *pool)
 {
-  svn_error_t *error = svn_opt_args_to_target_array3(targets, os,
-                                                     known_targets, pool);
+  svn_error_t *error = svn_client_args_to_target_array(targets, os,
+                                                       known_targets,
+                                                       ctx, pool);
   if (error)
     {
       if (error->apr_err ==  SVN_ERR_RESERVED_FILENAME_SPECIFIED)
@@ -1117,3 +1196,76 @@ svn_cl__time_cstring_to_human_cstring(const char **human_cstring,
 
   return SVN_NO_ERROR;
 }
+
+
+/* Return a copy, allocated in POOL, of the next line of text from *STR
+ * up to and including a CR and/or an LF. Change *STR to point to the
+ * remainder of the string after the returned part. If there are no
+ * characters to be returned, return NULL; never return an empty string.
+ */
+static const char *
+next_line(const char **str, apr_pool_t *pool)
+{
+  const char *start = *str;
+  const char *p = *str;
+
+  /* n.b. Throughout this fn, we never read any character after a '\0'. */
+  /* Skip over all non-EOL characters, if any. */
+  while (*p != '\r' && *p != '\n' && *p != '\0')
+    p++;
+  /* Skip over \r\n or \n\r or \r or \n, if any. */
+  if (*p == '\r' || *p == '\n')
+    {
+      char c = *p++;
+
+      if ((c == '\r' && *p == '\n') || (c == '\n' && *p == '\r'))
+        p++;
+    }
+
+  /* Now p points after at most one '\n' and/or '\r'. */
+  *str = p;
+
+  if (p == start)
+    return NULL;
+
+  return svn_string_ncreate(start, p - start, pool)->data;
+}
+
+const char *
+svn_cl__indent_string(const char *str,
+                      const char *indent,
+                      apr_pool_t *pool)
+{
+  svn_stringbuf_t *out = svn_stringbuf_create("", pool);
+  const char *line;
+
+  while ((line = next_line(&str, pool)))
+    {
+      svn_stringbuf_appendcstr(out, indent);
+      svn_stringbuf_appendcstr(out, line);
+    }
+  return out->data;
+}
+
+const char *
+svn_cl__node_description(const svn_wc_conflict_version_t *node,
+                         apr_pool_t *pool)
+{
+  const char *url_str;
+
+  /* Construct the whole URL if we can, else use whatever we have. */
+  if (node->repos_url && node->path_in_repos)
+    url_str = svn_path_url_add_component2(node->repos_url,
+                                          node->path_in_repos, pool);
+  else if (node->repos_url)
+    url_str = svn_path_url_add_component2(node->repos_url, "...", pool);
+  else if (node->path_in_repos)
+    url_str = node->path_in_repos;
+  else
+    url_str = "...";
+
+  return apr_psprintf(pool, "(%s) %s@%ld",
+                      svn_cl__node_kind_str_human_readable(node->node_kind),
+                      url_str, node->peg_rev);
+}
+

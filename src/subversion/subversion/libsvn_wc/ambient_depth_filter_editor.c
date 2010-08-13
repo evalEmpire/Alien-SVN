@@ -115,8 +115,7 @@ make_dir_baton(struct dir_baton **d_p,
 {
   struct dir_baton *d;
 
-  if (pb && (! path))
-    abort();
+  SVN_ERR_ASSERT(path || (! pb));
 
   if (pb && pb->ambiently_excluded)
     {
@@ -133,19 +132,32 @@ make_dir_baton(struct dir_baton **d_p,
   if (path)
     d->path = svn_path_join(d->path, path, pool);
 
-  if (pb
-      && (pb->ambient_depth == svn_depth_empty
-          || pb->ambient_depth == svn_depth_files))
+  /* The svn_depth_unknown means that: 1) pb is the anchor; 2) there
+     is an non-null target, for which we are preparing the baton.
+     This enables explicitly pull in the target. */
+  if (pb && pb->ambient_depth != svn_depth_unknown)
     {
-      /* This is not a depth upgrade, and the parent directory is
-         depth==empty or depth==files.  So if the parent doesn't
-         already have an entry for the new dir, then the parent
-         doesn't want the new dir at all, thus we should initialize
-         it with ambiently_excluded=TRUE. */
       const svn_wc_entry_t *entry;
+      svn_boolean_t exclude;
 
-      SVN_ERR(svn_wc_entry(&entry, d->path, eb->adm_access, FALSE, pool));
-      if (! entry)
+      SVN_ERR(svn_wc_entry(&entry, d->path, eb->adm_access, TRUE, pool));
+      if (pb->ambient_depth == svn_depth_empty
+          || pb->ambient_depth == svn_depth_files)
+        {
+          /* This is not a depth upgrade, and the parent directory is
+             depth==empty or depth==files.  So if the parent doesn't
+             already have an entry for the new dir, then the parent
+             doesn't want the new dir at all, thus we should initialize
+             it with ambiently_excluded=TRUE. */
+          exclude = (entry == NULL);
+        }
+      else
+        {
+          /* If the parent expect all children by default, only exclude
+             it whenever it is explicitly marked as exclude. */
+          exclude = (entry && (entry->depth == svn_depth_exclude));
+        }
+      if (exclude)
         {
           d->ambiently_excluded = TRUE;
           *d_p = d;
@@ -170,8 +182,7 @@ make_file_baton(struct file_baton **f_p,
 {
   struct file_baton *f = apr_pcalloc(pool, sizeof(*f));
 
-  if (! path)
-    abort();
+  SVN_ERR_ASSERT(path);
 
   if (pb->ambiently_excluded)
     {
@@ -321,11 +332,10 @@ add_directory(const char *path,
       b->ambient_depth = svn_depth_infinity;
     }
 
-  SVN_ERR(eb->wrapped_editor->add_directory(path, pb->wrapped_baton,
-                                            copyfrom_path,
-                                            copyfrom_revision,
-                                            pool, &b->wrapped_baton));
-  return SVN_NO_ERROR;
+  return eb->wrapped_editor->add_directory(path, pb->wrapped_baton,
+                                           copyfrom_path,
+                                           copyfrom_revision,
+                                           pool, &b->wrapped_baton);
 }
 
 static svn_error_t *
@@ -377,11 +387,9 @@ add_file(const char *path,
   if (b->ambiently_excluded)
     return SVN_NO_ERROR;
 
-  SVN_ERR(eb->wrapped_editor->add_file(path, pb->wrapped_baton,
-                                       copyfrom_path, copyfrom_revision,
-                                       pool, &b->wrapped_baton));
-
-  return SVN_NO_ERROR;
+  return eb->wrapped_editor->add_file(path, pb->wrapped_baton,
+                                      copyfrom_path, copyfrom_revision,
+                                      pool, &b->wrapped_baton);
 }
 
 static svn_error_t *
@@ -400,10 +408,9 @@ open_file(const char *path,
   if (b->ambiently_excluded)
     return SVN_NO_ERROR;
 
-  SVN_ERR(eb->wrapped_editor->open_file(path, pb->wrapped_baton,
-                                        base_revision, pool,
-                                        &b->wrapped_baton));
-  return SVN_NO_ERROR;
+  return eb->wrapped_editor->open_file(path, pb->wrapped_baton,
+                                       base_revision, pool,
+                                       &b->wrapped_baton);
 }
 
 static svn_error_t *

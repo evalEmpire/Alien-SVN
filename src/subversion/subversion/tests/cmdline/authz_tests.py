@@ -117,10 +117,10 @@ def broken_authz_file(sbox):
 
   write_restrictive_svnserve_conf(sbox.repo_dir)
 
-  out, err = svntest.main.run_svn(1,
-                                  "delete",
-                                  sbox.repo_url + "/A",
-                                  "-m", "a log message");
+  exit_code, out, err = svntest.main.run_svn(1,
+                                             "delete",
+                                             sbox.repo_url + "/A",
+                                             "-m", "a log message");
   if out:
     raise svntest.verify.SVNUnexpectedStdout(out)
   if not err:
@@ -638,6 +638,8 @@ def authz_validate(sbox):
 
   if sbox.repo_url.startswith("http"):
     expected_err = ".*403 Forbidden.*"
+  elif sbox.repo_url.startswith("svn"):
+    expected_err = ".*Invalid authz configuration"
   else:
     expected_err = ".*@undefined_group.*"
 
@@ -656,6 +658,8 @@ devs = @devs1, dev3, dev4""" })
 
   if sbox.repo_url.startswith("http"):
     expected_err = ".*403 Forbidden.*"
+  elif sbox.repo_url.startswith("svn"):
+    expected_err = ".*Invalid authz configuration"
   else:
     expected_err = ".*Circular dependency.*"
 
@@ -818,6 +822,44 @@ def authz_switch_to_directory(sbox):
   # Switch /A/B/E to /A/B/F.
   svntest.main.run_svn(None, 'switch', sbox.repo_url + "/A/B/E", G_path)
 
+
+def authz_access_required_at_repo_root2(sbox):
+  "more authz issue #3242 - update to renamed file"
+
+  sbox.build(create_wc = False)
+  root_url = sbox.repo_url
+
+  # Now we get all restrictive.
+  write_authz_file(sbox, {'/': '* =',
+                          '/A': 'jrandom = rw'})
+  write_restrictive_svnserve_conf(sbox.repo_dir)
+
+  # Rename a file.
+  svntest.main.run_svn(None, 'mv',
+                       '-m', 'rename file in readable writable space',
+                       root_url + '/A/B/E/alpha',
+                       root_url + '/A/B/E/alpha-renamed')
+  
+  # Check out original greek sub tree below /A/B/E 
+  # and update it to the above rename.
+  wc_dir = sbox.add_wc_path('ABE')
+  os.mkdir(wc_dir)
+  svntest.main.run_svn(None, 'co', '-r', '1', root_url + '/A/B/E', wc_dir)
+  svntest.main.run_svn(None, 'up', wc_dir)
+
+  # Rename a directory.
+  svntest.main.run_svn(None, 'mv',
+                       '-m', 'rename diretory in readable writable space',
+                       root_url + '/A/D/H',
+                       root_url + '/A/D/a g e')
+  
+  # Check out original greek sub tree below /A/D
+  # and update it to the above rename.
+  wc_dir = sbox.add_wc_path('AD')
+  os.mkdir(wc_dir)
+  svntest.main.run_svn(None, 'co', '-r', '1', root_url + '/A/D', wc_dir)
+  svntest.main.run_svn(None, 'up', wc_dir)
+
 ########################################################################
 # Run the tests
 
@@ -841,6 +883,8 @@ test_list = [ None,
                                svntest.main.is_ra_type_svn)),
               XFail(Skip(authz_switch_to_directory,
                          svntest.main.is_ra_type_file)),
+              Skip(authz_access_required_at_repo_root2,
+                   svntest.main.is_ra_type_file),
              ]
 
 if __name__ == '__main__':

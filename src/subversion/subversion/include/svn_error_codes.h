@@ -1,7 +1,7 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -42,10 +42,7 @@
 #if defined(SVN_ERROR_BUILD_ARRAY) || !defined(SVN_ERROR_ENUM_DEFINED)
 
 
-#include <apr.h>
 #include <apr_errno.h>     /* APR's error system */
-
-#include "svn_props.h"     /* For SVN_PROP_EXTERNALS. */
 
 #ifdef __cplusplus
 extern "C" {
@@ -142,6 +139,8 @@ extern "C" {
                                          + (21 * SVN_ERR_CATEGORY_SIZE))
 #define SVN_ERR_RA_SERF_CATEGORY_START  (APR_OS_START_USERERR \
                                          + (22 * SVN_ERR_CATEGORY_SIZE))
+#define SVN_ERR_MALFUNC_CATEGORY_START  (APR_OS_START_USERERR \
+                                         + (23 * SVN_ERR_CATEGORY_SIZE))
 
 #endif /* DOXYGEN_SHOULD_SKIP_THIS */
 
@@ -192,6 +191,23 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_BAD_UUID,
              SVN_ERR_BAD_CATEGORY_START + 8,
              "Bogus UUID")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_BAD_CONFIG_VALUE,
+             SVN_ERR_BAD_CATEGORY_START + 9,
+             "Invalid configuration value")
+
+  SVN_ERRDEF(SVN_ERR_BAD_SERVER_SPECIFICATION,
+             SVN_ERR_BAD_CATEGORY_START + 10,
+             "Bogus server specification")
+
+  SVN_ERRDEF(SVN_ERR_BAD_CHECKSUM_KIND,
+             SVN_ERR_BAD_CATEGORY_START + 11,
+             "Unsupported checksum type")
+
+  SVN_ERRDEF(SVN_ERR_BAD_CHECKSUM_PARSE,
+             SVN_ERR_BAD_CATEGORY_START + 12,
+             "Invalid character in hex checksum")
 
   /* xml errors */
 
@@ -295,6 +311,10 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_ENTRY_ATTRIBUTE_INVALID,
              SVN_ERR_ENTRY_CATEGORY_START + 5,
              "Entry has an invalid attribute")
+
+  SVN_ERRDEF(SVN_ERR_ENTRY_FORBIDDEN,
+             SVN_ERR_ENTRY_CATEGORY_START + 6,
+             "Can't create an entry for a forbidden name")
 
   /* wc errors */
 
@@ -428,6 +448,15 @@ SVN_ERROR_START
              SVN_ERR_WC_CATEGORY_START + 29,
              "Moving a path from one changelist to another")
 
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_WC_CANNOT_DELETE_FILE_EXTERNAL,
+             SVN_ERR_WC_CATEGORY_START + 30,
+             "Cannot delete a file external")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_WC_CANNOT_MOVE_FILE_EXTERNAL,
+             SVN_ERR_WC_CATEGORY_START + 31,
+             "Cannot move a file external")
 
   /* fs errors */
 
@@ -645,6 +674,11 @@ SVN_ERROR_START
              SVN_ERR_FS_CATEGORY_START + 47,
              "Filesystem upgrade is not supported")
 
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_FS_NO_SUCH_CHECKSUM_REP,
+             SVN_ERR_FS_CATEGORY_START + 48,
+             "Filesystem has no such checksum-representation index record")
+
   /* repos errors */
 
   SVN_ERRDEF(SVN_ERR_REPOS_LOCKED,
@@ -744,6 +778,11 @@ SVN_ERROR_START
              SVN_ERR_RA_CATEGORY_START + 9,
              "Repository UUID does not match expected UUID")
 
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_RA_REPOS_ROOT_URL_MISMATCH,
+             SVN_ERR_RA_CATEGORY_START + 10,
+             "Repository root URL does not match expected root URL")
+
   /* ra_dav errors */
 
   SVN_ERRDEF(SVN_ERR_RA_DAV_SOCK_INIT,
@@ -770,6 +809,9 @@ SVN_ERROR_START
              SVN_ERR_RA_DAV_CATEGORY_START + 5,
              "RA layer file already exists")
 
+  /** @deprecated To improve consistency between ra layers, this error code
+      is replaced by SVN_ERR_BAD_CONFIG_VALUE.
+      Slated for removal in the next major release. */
   SVN_ERRDEF(SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE,
              SVN_ERR_RA_DAV_CATEGORY_START + 6,
              "Invalid configuration value")
@@ -799,6 +841,13 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_RA_DAV_RELOCATED,
              SVN_ERR_RA_DAV_CATEGORY_START + 11,
              "Repository has been moved")
+
+  /* SVN_ERR_RA_DAV_CATEGORY_START + 12 is reserved for use in 1.7. */
+
+  /** @since New in 1.6 */
+  SVN_ERRDEF(SVN_ERR_RA_DAV_FORBIDDEN,
+             SVN_ERR_RA_DAV_CATEGORY_START + 13,
+             "URL access forbidden for unknown reason")
 
   /* ra_local errors */
 
@@ -1035,11 +1084,16 @@ SVN_ERROR_START
              SVN_ERR_CLIENT_CATEGORY_START + 16,
              "Working copy and merge source not ready for reintegration")
 
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_FILE_EXTERNAL_OVERWRITE_VERSIONED,
+             SVN_ERR_CLIENT_CATEGORY_START + 17,
+             "A file external cannot overwrite an existing versioned item")
+
   /* misc errors */
 
   SVN_ERRDEF(SVN_ERR_BASE,
              SVN_ERR_MISC_CATEGORY_START + 0,
-             "A problem occurred; see later errors for details")
+             "A problem occurred; see other errors for details")
 
   SVN_ERRDEF(SVN_ERR_PLUGIN_LOAD_FAILURE,
              SVN_ERR_MISC_CATEGORY_START + 1,
@@ -1142,7 +1196,7 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_UNKNOWN_CHANGELIST,
              SVN_ERR_MISC_CATEGORY_START + 24,
              "Unknown changelist")
-  
+
   /** @since New in 1.5. */
   SVN_ERRDEF(SVN_ERR_RESERVED_FILENAME_SPECIFIED,
              SVN_ERR_MISC_CATEGORY_START + 25,
@@ -1152,6 +1206,36 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_UNKNOWN_CAPABILITY,
              SVN_ERR_MISC_CATEGORY_START + 26,
              "Inquiry about unknown capability")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_TEST_SKIPPED,
+             SVN_ERR_MISC_CATEGORY_START + 27,
+             "Test skipped")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_NO_APR_MEMCACHE,
+             SVN_ERR_MISC_CATEGORY_START + 28,
+             "apr memcache library not available")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_ATOMIC_INIT_FAILURE,
+             SVN_ERR_MISC_CATEGORY_START + 29,
+             "Couldn't perform atomic initialization")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_ERROR,
+             SVN_ERR_MISC_CATEGORY_START + 30,
+             "SQLite error")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_READONLY,
+             SVN_ERR_MISC_CATEGORY_START + 31,
+             "Attempted to write to readonly SQLite db")
+
+  /** @since New in 1.6. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_UNSUPPORTED_SCHEMA,
+             SVN_ERR_MISC_CATEGORY_START + 32,
+             "Unsupported schema found in SQLite db")
 
   /* command-line client errors */
 
@@ -1198,6 +1282,12 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_CL_NO_EXTERNAL_MERGE_TOOL,
              SVN_ERR_CL_CATEGORY_START + 10,
              "No external merge tool available")
+
+  /* malfunctions such as assertion failures */
+
+  SVN_ERRDEF(SVN_ERR_ASSERTION_FAIL,
+             SVN_ERR_MALFUNC_CATEGORY_START + 0,
+             "Assertion failure")
 
 SVN_ERROR_END
 

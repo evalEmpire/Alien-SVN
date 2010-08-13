@@ -10,18 +10,28 @@
 /* Callback typemaps */
 #ifdef SWIGPYTHON
 %apply CALLABLE_CALLBACK {
+  svn_auth_simple_provider_func_t,
+  svn_auth_ssl_client_cert_pw_provider_func_t,
   svn_auth_simple_prompt_func_t,
   svn_auth_username_prompt_func_t,
   svn_auth_ssl_server_trust_prompt_func_t,
   svn_auth_ssl_client_cert_prompt_func_t,
-  svn_auth_ssl_client_cert_pw_prompt_func_t
+  svn_auth_ssl_client_cert_pw_prompt_func_t,
+  svn_auth_plaintext_prompt_func_t,
+  svn_auth_plaintext_passphrase_prompt_func_t,
+  svn_auth_gnome_keyring_unlock_prompt_func_t
 };
 %apply CALLABLE_CALLBACK * {
+  svn_auth_simple_provider_func_t *,
+  svn_auth_ssl_client_cert_pw_provider_func_t *,
   svn_auth_simple_prompt_func_t *,
   svn_auth_username_prompt_func_t *,
   svn_auth_ssl_server_trust_prompt_func_t *,
   svn_auth_ssl_client_cert_prompt_func_t *,
-  svn_auth_ssl_client_cert_pw_prompt_func_t *
+  svn_auth_ssl_client_cert_pw_prompt_func_t *,
+  svn_auth_plaintext_prompt_func_t *,
+  svn_auth_plaintext_passphrase_prompt_func_t *,
+  svn_auth_gnome_keyring_unlock_prompt_func_t *
 };
 #endif
 
@@ -73,6 +83,16 @@ static svn_error_t * svn_auth_provider_invoke_save_credentials(
   return (_obj->save_credentials)(saved, credentials, provider_baton, parameters, realmstring, pool);
 }
 
+static void svn_auth_invoke_simple_provider_func(
+  svn_auth_simple_provider_func_t _obj, svn_auth_provider_object_t **provider, apr_pool_t *pool) {
+  _obj(provider, pool);
+}
+
+static void svn_auth_invoke_ssl_client_cert_pw_provider_func(
+  svn_auth_ssl_client_cert_pw_provider_func_t _obj, svn_auth_provider_object_t **provider, apr_pool_t *pool) {
+  _obj(provider, pool);
+}
+
 static svn_error_t * svn_auth_invoke_simple_prompt_func(
   svn_auth_simple_prompt_func_t _obj, svn_auth_cred_simple_t **cred, void *baton, const char *realm, const char *username, svn_boolean_t may_save, apr_pool_t *pool) {
   return _obj(cred, baton, realm, username, may_save, pool);
@@ -98,16 +118,31 @@ static svn_error_t * svn_auth_invoke_ssl_client_cert_pw_prompt_func(
   return _obj(cred, baton, realm, may_save, pool);
 }
 
+static svn_error_t * svn_auth_invoke_plaintext_prompt_func(
+  svn_auth_plaintext_prompt_func_t _obj, svn_boolean_t *may_save_plaintext, const char *realmstring, void *baton, apr_pool_t *pool) {
+  return _obj(may_save_plaintext, realmstring, baton, pool);
+}
+
+static svn_error_t * svn_auth_invoke_plaintext_passphrase_prompt_func(
+  svn_auth_plaintext_passphrase_prompt_func_t _obj, svn_boolean_t *may_save_plaintext, const char *realmstring, void *baton, apr_pool_t *pool) {
+  return _obj(may_save_plaintext, realmstring, baton, pool);
+}
+
 %}
 
 #ifdef SWIGPYTHON
 %funcptr_member_proxy(svn_auth_provider_t, first_credentials, svn_auth_provider_invoke_first_credentials);
 %funcptr_member_proxy(svn_auth_provider_t, next_credentials, svn_auth_provider_invoke_next_credentials);
 %funcptr_member_proxy(svn_auth_provider_t, save_credentials, svn_auth_provider_invoke_save_credentials);
+%funcptr_proxy(svn_auth_simple_provider_func_t, svn_auth_invoke_simple_provider_func);
+%funcptr_proxy(svn_auth_ssl_client_cert_pw_provider_func_t, svn_auth_invoke_ssl_client_cert_pw_provider_func);
 %funcptr_proxy(svn_auth_simple_prompt_func_t, svn_auth_invoke_simple_prompt_func);
 %funcptr_proxy(svn_auth_username_prompt_func_t, svn_auth_invoke_username_prompt_func);
 %funcptr_proxy(svn_auth_ssl_server_trust_prompt_func_t, svn_auth_invoke_ssl_server_trust_prompt_func);
 %funcptr_proxy(svn_auth_ssl_client_cert_prompt_func_t, svn_auth_invoke_ssl_client_cert_prompt_func);
 %funcptr_proxy(svn_auth_ssl_client_cert_pw_prompt_func_t, svn_auth_invoke_ssl_client_cert_pw_prompt_func);
+%funcptr_proxy(svn_auth_plaintext_prompt_func_t, svn_auth_invoke_plaintext_prompt_func);
+%funcptr_proxy(svn_auth_plaintext_passphrase_prompt_func_t, svn_auth_invoke_plaintext_passphrase_prompt_func);
+%funcptr_proxy(svn_auth_gnome_keyring_unlock_prompt_func_t, svn_auth_invoke_gnome_keyring_unlock_prompt_func);
 
 #endif

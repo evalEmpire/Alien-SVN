@@ -2,7 +2,7 @@
  * fetch.c :  routines for fetching updates and checkouts
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -18,7 +18,6 @@
 
 
 
-#include <assert.h>
 #include <stdlib.h> /* for free() */
 
 #define APR_WANT_STRFUNC
@@ -27,7 +26,6 @@
 #include <apr_pools.h>
 #include <apr_tables.h>
 #include <apr_strings.h>
-#include <apr_md5.h>
 #include <apr_xml.h>
 
 #include <ne_basic.h>
@@ -36,7 +34,6 @@
 #include "svn_pools.h"
 #include "svn_delta.h"
 #include "svn_io.h"
-#include "svn_md5.h"
 #include "svn_base64.h"
 #include "svn_ra.h"
 #include "../libsvn_ra/ra_loader.h"
@@ -78,7 +75,7 @@ typedef struct {
 
 typedef struct {
   svn_boolean_t do_checksum;  /* only accumulate checksum if set */
-  apr_md5_ctx_t md5_context;  /* accumulating checksum of file contents */
+  svn_checksum_ctx_t *checksum_ctx; /* accumulating checksum of file contents */
   svn_stream_t *stream;       /* stream to write file contents to */
 } file_write_ctx_t;
 
@@ -544,10 +541,7 @@ static svn_error_t *simple_fetch_file(svn_ra_neon__session_t *ras,
 
   /* Only bother with text-deltas if our caller cares. */
   if (! text_deltas)
-    {
-      SVN_ERR((*frc.handler)(NULL, frc.handler_baton));
-      return SVN_NO_ERROR;
-    }
+    return (*frc.handler)(NULL, frc.handler_baton);
 
   frc.pool = pool;
 
@@ -557,9 +551,7 @@ static svn_error_t *simple_fetch_file(svn_ra_neon__session_t *ras,
                              TRUE, pool));
 
   /* close the handler, since the file reading completed successfully. */
-  SVN_ERR((*frc.handler)(NULL, frc.handler_baton));
-
-  return SVN_NO_ERROR;
+  return (*frc.handler)(NULL, frc.handler_baton);
 }
 
 /* Helper for svn_ra_neon__get_file.  This implements
@@ -574,12 +566,10 @@ get_file_reader(void *userdata, const char *buf, size_t len)
   svn_stream_t *stream = fwc->stream;
 
   if (fwc->do_checksum)
-    apr_md5_update(&(fwc->md5_context), buf, len);
+    SVN_ERR(svn_checksum_update(fwc->checksum_ctx, buf, len));
 
   /* Write however many bytes were passed in by neon. */
-  SVN_ERR(svn_stream_write(stream, buf, &len));
-
-  return SVN_NO_ERROR;
+  return svn_stream_write(stream, buf, &len);
 }
 
 
@@ -713,7 +703,6 @@ svn_error_t *svn_ra_neon__get_file(svn_ra_session_t *session,
       const svn_string_t *expected_checksum = NULL;
       file_write_ctx_t fwc;
       ne_propname md5_propname = { SVN_DAV_PROP_NS_DAV, "md5-checksum" };
-      unsigned char digest[APR_MD5_DIGESTSIZE];
       const char *hex_digest;
 
       /* Only request a checksum if we're getting the file contents. */
@@ -744,7 +733,7 @@ svn_error_t *svn_ra_neon__get_file(svn_ra_session_t *session,
       fwc.stream = stream;
 
       if (fwc.do_checksum)
-        apr_md5_init(&(fwc.md5_context));
+        fwc.checksum_ctx = svn_checksum_ctx_create(svn_checksum_md5, pool);
 
       /* Fetch the file, shoving it at the provided stream. */
       SVN_ERR(custom_get_request(ras, final_url, path,
@@ -755,8 +744,10 @@ svn_error_t *svn_ra_neon__get_file(svn_ra_session_t *session,
 
       if (fwc.do_checksum)
         {
-          apr_md5_final(digest, &(fwc.md5_context));
-          hex_digest = svn_md5_digest_to_cstring_display(digest, pool);
+          svn_checksum_t *checksum;
+
+          SVN_ERR(svn_checksum_final(&checksum, fwc.checksum_ctx, pool));
+          hex_digest = svn_checksum_to_cstring_display(checksum, pool);
 
           if (strcmp(hex_digest, expected_checksum->data) != 0)
             return svn_error_createf
@@ -925,7 +916,7 @@ svn_error_t *svn_ra_neon__get_dir(svn_ra_session_t *session,
               which_props[num_props--].name = "creator-displayname";
             }
 
-          assert(num_props == -1);
+          SVN_ERR_ASSERT(num_props == -1);
         }
       else
         {
@@ -1203,9 +1194,7 @@ svn_error_t *svn_ra_neon__rev_proplist(svn_ra_session_t *session,
      resource.  In particular, convert the xml-property-namespaces
      into ones that the client understands.  Strip away the DAV:
      liveprops as well. */
-  SVN_ERR(filter_props(*props, baseline, FALSE, pool));
-
-  return SVN_NO_ERROR;
+  return filter_props(*props, baseline, FALSE, pool);
 }
 
 
@@ -1868,11 +1857,11 @@ add_node_props(report_baton_t *rb, apr_pool_t *pool)
       if (lock_token)
         {
           svn_lock_t *lock;
-          SVN_ERR(svn_ra_neon__get_lock_internal(rb->ras, &lock, 
-                                                 TOP_DIR(rb).pathbuf->data, 
+          SVN_ERR(svn_ra_neon__get_lock_internal(rb->ras, &lock,
+                                                 TOP_DIR(rb).pathbuf->data,
                                                  pool));
           if (! (lock
-                 && lock->token 
+                 && lock->token
                  && (strcmp(lock->token, lock_token) == 0)))
             SVN_ERR(rb->editor->change_file_prop(rb->file_baton,
                                                  SVN_PROP_ENTRY_LOCK_TOKEN,
@@ -2115,10 +2104,9 @@ end_element(void *userdata, int state,
           }
         else
           {
-            SVN_ERR(svn_error_createf(SVN_ERR_XML_UNKNOWN_ENCODING, NULL,
-                                      _("Unknown XML encoding: '%s'"),
-                                      rb->encoding->data));
-            abort(); /* Not reached. */
+            return svn_error_createf(SVN_ERR_XML_UNKNOWN_ENCODING, NULL,
+                                     _("Unknown XML encoding: '%s'"),
+                                     rb->encoding->data);
           }
 
         /* Set the prop. */
@@ -2253,8 +2241,8 @@ static svn_error_t * reporter_set_path(void *report_baton,
   if (lock_token)
     {
       tokenstring = apr_psprintf(pool, "lock-token=\"%s\"", lock_token);
-      apr_hash_set(rb->lock_tokens, 
-                   apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), path), 
+      apr_hash_set(rb->lock_tokens,
+                   apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), path),
                    APR_HASH_KEY_STRING,
                    apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), lock_token));
     }
@@ -2295,8 +2283,8 @@ static svn_error_t * reporter_link_path(void *report_baton,
   if (lock_token)
     {
       tokenstring = apr_psprintf(pool, "lock-token=\"%s\"", lock_token);
-      apr_hash_set(rb->lock_tokens, 
-                   apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), path), 
+      apr_hash_set(rb->lock_tokens,
+                   apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), path),
                    APR_HASH_KEY_STRING,
                    apr_pstrdup(apr_hash_pool_get(rb->lock_tokens), lock_token));
     }
@@ -2389,6 +2377,9 @@ static svn_error_t * reporter_finish_report(void *report_baton,
   if ((err = svn_ra_neon__get_vcc(&vcc, rb->ras,
                                   rb->ras->url->data, pool)))
     {
+      /* We're done with the file.  this should delete it. Note: it
+         isn't a big deal if this line is never executed -- the pool
+         will eventually get it. We're just being proactive here. */
       (void) apr_file_close(rb->tmpfile);
       return err;
     }
@@ -2403,7 +2394,7 @@ static svn_error_t * reporter_finish_report(void *report_baton,
                                     request_headers, NULL,
                                     rb->spool_response, pool);
 
-  /* we're done with the file */
+  /* We're done with the file. Proactively close/delete the thing. */
   (void) apr_file_close(rb->tmpfile);
 
   SVN_ERR(err);
@@ -2419,9 +2410,7 @@ static svn_error_t * reporter_finish_report(void *report_baton,
     }
 
   /* store auth info if we can. */
-  SVN_ERR(svn_ra_neon__maybe_store_auth_info(rb->ras, pool));
-
-  return SVN_NO_ERROR;
+  return svn_ra_neon__maybe_store_auth_info(rb->ras, pool);
 }
 
 static const svn_ra_reporter3_t ra_neon_reporter = {
@@ -2501,7 +2490,7 @@ make_reporter(svn_ra_session_t *session,
   svn_stringbuf_t *xml_s;
   const svn_delta_editor_t *filter_editor;
   void *filter_baton;
-  svn_boolean_t has_target = *target ? TRUE : FALSE;
+  svn_boolean_t has_target = *target != '\0';
   svn_boolean_t server_supports_depth;
 
   SVN_ERR(svn_ra_neon__has_capability(session, &server_supports_depth,
@@ -2533,7 +2522,7 @@ make_reporter(svn_ra_session_t *session,
   rb->fetch_content = fetch_content;
   rb->in_resource = FALSE;
   rb->current_wcprop_path = svn_stringbuf_create("", pool);
-  rb->is_switch = dst_path ? TRUE : FALSE;
+  rb->is_switch = dst_path != NULL;
   rb->target = target;
   rb->receiving_all = FALSE;
   rb->spool_response = spool_response;
@@ -2556,9 +2545,12 @@ make_reporter(svn_ra_session_t *session,
      work.
   */
 
-  /* Use the client callback to create a tmpfile. */
-  SVN_ERR(ras->callbacks->open_tmp_file(&rb->tmpfile, ras->callback_baton,
-                                        pool));
+  /* Create a temp file in the system area to hold the contents. Note that
+     we need a file since we will be rewinding it. The file will be closed
+     and deleted when the pool is cleaned up. */
+  SVN_ERR(svn_io_open_unique_file3(&rb->tmpfile, NULL, NULL,
+                                   svn_io_file_del_on_pool_cleanup,
+                                   pool, pool));
 
   /* prep the file */
   s = apr_psprintf(pool, "<S:update-report send-all=\"%s\" xmlns:S=\""

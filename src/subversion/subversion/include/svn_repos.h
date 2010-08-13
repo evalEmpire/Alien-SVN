@@ -16,20 +16,24 @@
  * @endcopyright
  *
  * @file svn_repos.h
- * @brief tools built on top of the filesystem.
+ * @brief Tools built on top of the filesystem.
  */
-
 
 #ifndef SVN_REPOS_H
 #define SVN_REPOS_H
 
 #include <apr_pools.h>
 #include <apr_hash.h>
-#include "svn_fs.h"
-#include "svn_delta.h"
+#include <apr_tables.h>
+#include <apr_time.h>
+
 #include "svn_types.h"
-#include "svn_error.h"
+#include "svn_string.h"
+#include "svn_delta.h"
+#include "svn_fs.h"
+#include "svn_io.h"
 #include "svn_version.h"
+#include "svn_mergeinfo.h"
 
 
 #ifdef __cplusplus
@@ -43,7 +47,8 @@ extern "C" {
  *
  * @since New in 1.1.
  */
-const svn_version_t *svn_repos_version(void);
+const svn_version_t *
+svn_repos_version(void);
 
 
 
@@ -246,7 +251,9 @@ svn_repos_upgrade(const char *path,
 /** Destroy the Subversion repository found at @a path, using @a pool for any
  * necessary allocations.
  */
-svn_error_t *svn_repos_delete(const char *path, apr_pool_t *pool);
+svn_error_t *
+svn_repos_delete(const char *path,
+                 apr_pool_t *pool);
 
 /**
  * Set @a *has to TRUE if @a repos has @a capability (one of the
@@ -284,7 +291,8 @@ svn_repos_has_capability(svn_repos_t *repos,
 
 
 /** Return the filesystem associated with repository object @a repos. */
-svn_fs_t *svn_repos_fs(svn_repos_t *repos);
+svn_fs_t *
+svn_repos_fs(svn_repos_t *repos);
 
 
 /** Make a hot copy of the Subversion repository found at @a src_path
@@ -301,6 +309,22 @@ svn_repos_hotcopy(const char *src_path,
                   const char *dst_path,
                   svn_boolean_t clean_logs,
                   apr_pool_t *pool);
+
+
+/**
+ * Possibly update the repository, @a repos, to use a more efficient
+ * filesystem representation.  Use @a pool for allocations.
+ *
+ * @since New in 1.6.
+ */
+svn_error_t *
+svn_repos_fs_pack(svn_repos_t *repos,
+                  svn_fs_pack_notify_t notify_func,
+                  void *notify_baton,
+                  svn_cancel_func_t cancel_func,
+                  void *cancel_baton,
+                  apr_pool_t *pool);
+
 
 /**
  * Run database recovery procedures on the repository at @a path,
@@ -343,6 +367,7 @@ svn_repos_recover3(const char *path,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_recover2(const char *path,
                    svn_boolean_t nonblocking,
@@ -356,7 +381,10 @@ svn_repos_recover2(const char *path,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
-svn_error_t *svn_repos_recover(const char *path, apr_pool_t *pool);
+SVN_DEPRECATED
+svn_error_t *
+svn_repos_recover(const char *path,
+                  apr_pool_t *pool);
 
 /** This function is a wrapper around svn_fs_berkeley_logfiles(),
  * returning log file paths relative to the root of the repository.
@@ -374,39 +402,61 @@ svn_repos_db_logfiles(apr_array_header_t **logfiles,
 /* Repository Paths */
 
 /** Return the top-level repository path allocated in @a pool. */
-const char *svn_repos_path(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_path(svn_repos_t *repos,
+               apr_pool_t *pool);
 
 /** Return the path to @a repos's filesystem directory, allocated in
  * @a pool.
  */
-const char *svn_repos_db_env(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_db_env(svn_repos_t *repos,
+                 apr_pool_t *pool);
 
 /** Return path to @a repos's config directory, allocated in @a pool. */
-const char *svn_repos_conf_dir(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_conf_dir(svn_repos_t *repos,
+                   apr_pool_t *pool);
 
 /** Return path to @a repos's svnserve.conf, allocated in @a pool. */
-const char *svn_repos_svnserve_conf(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_svnserve_conf(svn_repos_t *repos,
+                        apr_pool_t *pool);
 
 /** Return path to @a repos's lock directory, allocated in @a pool. */
-const char *svn_repos_lock_dir(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_lock_dir(svn_repos_t *repos,
+                   apr_pool_t *pool);
 
 /** Return path to @a repos's db lockfile, allocated in @a pool. */
-const char *svn_repos_db_lockfile(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_db_lockfile(svn_repos_t *repos,
+                      apr_pool_t *pool);
 
 /** Return path to @a repos's db logs lockfile, allocated in @a pool. */
-const char *svn_repos_db_logs_lockfile(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_db_logs_lockfile(svn_repos_t *repos,
+                           apr_pool_t *pool);
 
 /** Return the path to @a repos's hook directory, allocated in @a pool. */
-const char *svn_repos_hook_dir(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_hook_dir(svn_repos_t *repos,
+                   apr_pool_t *pool);
 
 /** Return the path to @a repos's start-commit hook, allocated in @a pool. */
-const char *svn_repos_start_commit_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_start_commit_hook(svn_repos_t *repos,
+                            apr_pool_t *pool);
 
 /** Return the path to @a repos's pre-commit hook, allocated in @a pool. */
-const char *svn_repos_pre_commit_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_pre_commit_hook(svn_repos_t *repos,
+                          apr_pool_t *pool);
 
 /** Return the path to @a repos's post-commit hook, allocated in @a pool. */
-const char *svn_repos_post_commit_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_post_commit_hook(svn_repos_t *repos,
+                           apr_pool_t *pool);
 
 /** Return the path to @a repos's pre-revprop-change hook, allocated in
  * @a pool.
@@ -428,16 +478,24 @@ svn_repos_post_revprop_change_hook(svn_repos_t *repos,
  * @since New in 1.2. */
 
 /** Return the path to @a repos's pre-lock hook, allocated in @a pool. */
-const char *svn_repos_pre_lock_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_pre_lock_hook(svn_repos_t *repos,
+                        apr_pool_t *pool);
 
 /** Return the path to @a repos's post-lock hook, allocated in @a pool. */
-const char *svn_repos_post_lock_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_post_lock_hook(svn_repos_t *repos,
+                         apr_pool_t *pool);
 
 /** Return the path to @a repos's pre-unlock hook, allocated in @a pool. */
-const char *svn_repos_pre_unlock_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_pre_unlock_hook(svn_repos_t *repos,
+                          apr_pool_t *pool);
 
 /** Return the path to @a repos's post-unlock hook, allocated in @a pool. */
-const char *svn_repos_post_unlock_hook(svn_repos_t *repos, apr_pool_t *pool);
+const char *
+svn_repos_post_unlock_hook(svn_repos_t *repos,
+                           apr_pool_t *pool);
 
 /** @} */
 
@@ -546,6 +604,7 @@ svn_repos_begin_report2(void **report_baton,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_begin_report(void **report_baton,
                        svn_revnum_t revnum,
@@ -574,7 +633,7 @@ svn_repos_begin_report(void **report_baton,
  *
  * @a revision may be SVN_INVALID_REVNUM if (for example) @a path
  * represents a locally-added path with no revision number, or @a
- * depth is @c svn_depth_exclude.  
+ * depth is @c svn_depth_exclude.
  *
  * @a path may not be underneath a path on which svn_repos_set_path3()
  * was previously called with @c svn_depth_exclude in this report.
@@ -613,6 +672,7 @@ svn_repos_set_path3(void *report_baton,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_set_path2(void *report_baton,
                     const char *path,
@@ -626,6 +686,7 @@ svn_repos_set_path2(void *report_baton,
  *
  * @deprecated Provided for backward compatibility with the 1.1 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_set_path(void *report_baton,
                    const char *path,
@@ -676,6 +737,7 @@ svn_repos_link_path3(void *report_baton,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_link_path2(void *report_baton,
                      const char *path,
@@ -690,6 +752,7 @@ svn_repos_link_path2(void *report_baton,
  *
  * @deprecated Provided for backward compatibility with the 1.1 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_link_path(void *report_baton,
                     const char *path,
@@ -836,6 +899,7 @@ svn_repos_dir_delta2(svn_fs_root_t *src_root,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_dir_delta(svn_fs_root_t *src_root,
                     const char *src_parent_dir,
@@ -904,6 +968,7 @@ svn_repos_replay2(svn_fs_root_t *root,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_replay(svn_fs_root_t *root,
                  const svn_delta_editor_t *editor,
@@ -938,14 +1003,17 @@ svn_repos_replay(svn_fs_root_t *root,
  * due to authz will return SVN_ERR_AUTHZ_UNREADABLE or
  * SVN_ERR_AUTHZ_UNWRITABLE.
  *
- * Calling @a (*editor)->close_edit completes the commit.  Before
- * @c close_edit returns, but after the commit has succeeded, it will
- * invoke @a callback with the new revision number, the commit date (as a
- * <tt>const char *</tt>), commit author (as a <tt>const char *</tt>), and
- * @a callback_baton as arguments.  If @a callback returns an error, that
- * error will be returned from @c close_edit, otherwise if there was a
- * post-commit hook failure, then that error will be returned and will
- * have code SVN_ERR_REPOS_POST_COMMIT_HOOK_FAILED.
+ * Calling @a (*editor)->close_edit completes the commit.
+ *
+ * If @a callback is non-NULL, then before @c close_edit returns (but
+ * after the commit has succeeded) @c close_edit will invoke
+ * @a callback with a filled-in @c svn_commit_info_t *, @a callback_baton,
+ * and @a pool or some subpool thereof as arguments.  If @a callback
+ * returns an error, that error will be returned from @c close_edit,
+ * otherwise if there was a post-commit hook failure, then that error
+ * will be returned with code SVN_ERR_REPOS_POST_COMMIT_HOOK_FAILED.
+ * (Note that prior to Subversion 1.6, @a callback cannot be NULL; if
+ * you don't need a callback, pass a dummy function.)
  *
  * Calling @a (*editor)->abort_edit aborts the commit, and will also
  * abort the commit transaction unless @a txn was supplied (not @c
@@ -978,6 +1046,7 @@ svn_repos_get_commit_editor5(const svn_delta_editor_t **editor,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_commit_editor4(const svn_delta_editor_t **editor,
                              void **edit_baton,
@@ -1001,6 +1070,7 @@ svn_repos_get_commit_editor4(const svn_delta_editor_t **editor,
  *
  * @deprecated Provided for backward compatibility with the 1.3 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_commit_editor3(const svn_delta_editor_t **editor,
                              void **edit_baton,
@@ -1022,6 +1092,7 @@ svn_repos_get_commit_editor3(const svn_delta_editor_t **editor,
  *
  * @deprecated Provided for backward compatibility with the 1.2 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_commit_editor2(const svn_delta_editor_t **editor,
                              void **edit_baton,
@@ -1042,6 +1113,7 @@ svn_repos_get_commit_editor2(const svn_delta_editor_t **editor,
  *
  * @deprecated Provided for backward compatibility with the 1.1 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_commit_editor(const svn_delta_editor_t **editor,
                             void **edit_baton,
@@ -1107,7 +1179,7 @@ svn_repos_stat(svn_dirent_t **dirent,
 /**
  * Given @a path which exists at revision @a start in @a fs, set
  * @a *deleted to the revision @a path was first deleted, within the
- * inclusive revision range set by @a start and @a end.  If @a path
+ * inclusive revision range bounded by @a start and @a end.  If @a path
  * does not exist at revision @a start or was not deleted within the
  * specified range, then set @a *deleted to SVN_INVALID_REVNUM.
  * Use @a pool for memory allocation.
@@ -1178,6 +1250,7 @@ svn_repos_history2(svn_fs_t *fs,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_history(svn_fs_t *fs,
                   const char *path,
@@ -1288,7 +1361,9 @@ svn_repos_node_location_segments(svn_repos_t *repos,
  * revisions in which at least one of @a paths was changed (i.e., if
  * file, text or props changed; if dir, props or entries changed or any node
  * changed below it).  Each path is a <tt>const char *</tt> representing
- * an absolute path in the repository.
+ * an absolute path in the repository.  If @a paths is NULL or empty,
+ * show all revisions regardless of what paths were changed in those
+ * revisions.
  *
  * If @a limit is non-zero then only invoke @a receiver on the first
  * @a limit logs.
@@ -1349,11 +1424,13 @@ svn_repos_get_logs4(svn_repos_t *repos,
  * Same as svn_repos_get_logs4(), but with @a receiver being @c
  * svn_log_message_receiver_t instead of @c svn_log_entry_receiver_t.
  * Also, @a include_merged_revisions is set to @c FALSE and @a revprops is
- * svn:author, svn:date, and svn:log.
+ * svn:author, svn:date, and svn:log.  If @a paths is empty, nothing
+ * is returned.
  *
  * @since New in 1.2.
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_logs3(svn_repos_t *repos,
                     const apr_array_header_t *paths,
@@ -1374,6 +1451,7 @@ svn_repos_get_logs3(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.1 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_logs2(svn_repos_t *repos,
                     const apr_array_header_t *paths,
@@ -1393,6 +1471,7 @@ svn_repos_get_logs2(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_logs(svn_repos_t *repos,
                    const apr_array_header_t *paths,
@@ -1411,8 +1490,9 @@ svn_repos_get_logs(svn_repos_t *repos,
 /* Retrieving mergeinfo. */
 
 /**
- * Fetch the mergeinfo for @a paths at @a rev, and save it to @a
- * *catalog.  It will never be @c NULL but may be empty.
+ * Fetch the mergeinfo for @a paths at @a revision in @a repos, and
+ * set @a *catalog to a catalog of this mergeinfo.  @a *catalog will
+ * never be @c NULL but may be empty.
  *
  * @a inherit indicates whether explicit, explicit or inherited, or
  * only inherited mergeinfo for @a paths is fetched.
@@ -1424,14 +1504,14 @@ svn_repos_get_logs(svn_repos_t *repos,
  * the @c SVN_PROP_MERGEINFO property explicitly set on it.  (Note
  * that inheritance is only taken into account for the elements in @a
  * paths; descendants of the elements in @a paths which get their
- * mergeinfo via inheritance are not included in @a *mergeoutput.)
+ * mergeinfo via inheritance are not included in @a *catalog.)
  *
  * If optional @a authz_read_func is non-NULL, then use this function
  * (along with optional @a authz_read_baton) to check the readability
  * of each path which mergeinfo was requested for (from @a paths).
  * Silently omit unreadable paths from the request for mergeinfo.
  *
- * Use @a pool for temporary allocations.
+ * Use @a pool for all allocations.
  *
  * @since New in 1.5.
  */
@@ -1502,6 +1582,7 @@ svn_repos_get_file_revs2(svn_repos_t *repos,
  * @deprecated Provided for backward compatibility with the 1.4 API.
  * @since New in 1.1.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_file_revs(svn_repos_t *repos,
                         const char *path,
@@ -1573,6 +1654,7 @@ svn_repos_fs_begin_txn_for_commit2(svn_fs_txn_t **txn_p,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_fs_begin_txn_for_commit(svn_fs_txn_t **txn_p,
                                   svn_repos_t *repos,
@@ -1611,6 +1693,10 @@ svn_repos_fs_begin_txn_for_update(svn_fs_txn_t **txn_p,
  * hook, return the original error wrapped with
  * SVN_ERR_REPOS_POST_LOCK_HOOK_FAILED.  If the caller sees this
  * error, it knows that the lock succeeded anyway.
+ *
+ * The pre-lock hook may cause a different token to be used for the
+ * lock, instead of @a token; see the pre-lock-hook documentation for
+ * more.
  */
 svn_error_t *
 svn_repos_fs_lock(svn_lock_t **lock,
@@ -1679,7 +1765,7 @@ svn_repos_fs_get_locks(apr_hash_t **locks,
  *
  * Validate @a name and @a new_value like the same way
  * svn_repos_fs_change_node_prop() does.
- *   
+ *
  * Use @a pool for temporary allocations.
  *
  * @since New in 1.5.
@@ -1706,6 +1792,7 @@ svn_repos_fs_change_rev_prop3(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.4 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_fs_change_rev_prop2(svn_repos_t *repos,
                               svn_revnum_t rev,
@@ -1723,6 +1810,7 @@ svn_repos_fs_change_rev_prop2(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_fs_change_rev_prop(svn_repos_t *repos,
                              svn_revnum_t rev,
@@ -1802,8 +1890,9 @@ svn_repos_fs_revision_proplist(apr_hash_t **table_p,
  * @a value and return SVN_ERR_BAD_PROPERTY_VALUE if it is invalid for the
  * property.
  *
- * @note Currently, the only "svn:" property validated is @c
- * SVN_PROP_REVISION_DATE.  This may change in a future release.
+ * @note Currently, the only properties validated are the "svn:" properties
+ * @c SVN_PROP_REVISION_LOG and @c SVN_PROP_REVISION_DATE. This may change
+ * in future releases.
  */
 svn_error_t *
 svn_repos_fs_change_node_prop(svn_fs_root_t *root,
@@ -1825,7 +1914,7 @@ svn_repos_fs_change_txn_prop(svn_fs_txn_t *txn,
 /** Validating wrapper for svn_fs_change_txn_props() (which see for
  * argument descriptions).  Validate properties and their values the
  * same way svn_repos_fs_change_node_prop() does.
- * 
+ *
  * @since New in 1.5.
  */
 svn_error_t *
@@ -1918,7 +2007,8 @@ svn_repos_node_editor(const svn_delta_editor_t **editor,
  * svn_repos_dir_delta2(), which is stored in @a edit_baton.  This is
  * only really useful if used *after* the editor drive is completed.
  */
-svn_repos_node_t *svn_repos_node_from_baton(void *edit_baton);
+svn_repos_node_t *
+svn_repos_node_from_baton(void *edit_baton);
 
 /** @} */
 
@@ -1960,18 +2050,29 @@ svn_repos_node_t *svn_repos_node_from_baton(void *edit_baton);
 #define SVN_REPOS_DUMPFILE_NODE_ACTION               "Node-action"
 #define SVN_REPOS_DUMPFILE_NODE_COPYFROM_PATH        "Node-copyfrom-path"
 #define SVN_REPOS_DUMPFILE_NODE_COPYFROM_REV         "Node-copyfrom-rev"
-#define SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_CHECKSUM "Text-copy-source-md5"
-#define SVN_REPOS_DUMPFILE_TEXT_CONTENT_CHECKSUM     "Text-content-md5"
+#define SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_MD5      "Text-copy-source-md5"
+#define SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_SHA1     "Text-copy-source-sha1"
+#define SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_CHECKSUM \
+                                        SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_MD5
+#define SVN_REPOS_DUMPFILE_TEXT_CONTENT_MD5          "Text-content-md5"
+#define SVN_REPOS_DUMPFILE_TEXT_CONTENT_SHA1         "Text-content-sha1"
+#define SVN_REPOS_DUMPFILE_TEXT_CONTENT_CHECKSUM     \
+                                        SVN_REPOS_DUMPFILE_TEXT_CONTENT_MD5
 
 #define SVN_REPOS_DUMPFILE_PROP_CONTENT_LENGTH       "Prop-content-length"
 #define SVN_REPOS_DUMPFILE_TEXT_CONTENT_LENGTH       "Text-content-length"
 
-/* @since New in 1.1. */
+/** @since New in 1.1. */
 #define SVN_REPOS_DUMPFILE_PROP_DELTA                "Prop-delta"
-/* @since New in 1.1. */
+/** @since New in 1.1. */
 #define SVN_REPOS_DUMPFILE_TEXT_DELTA                "Text-delta"
-/* @since New in 1.5. */
-#define SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_CHECKSUM  "Text-delta-base-md5"
+/** @since New in 1.5. */
+#define SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_MD5       "Text-delta-base-md5"
+/** @since New in 1.6. */
+#define SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_SHA1      "Text-delta-base-sha1"
+/** @since New in 1.6. */
+#define SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_CHECKSUM  \
+                                        SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_MD5
 
 /** The different "actions" attached to nodes in the dumpfile. */
 enum svn_node_action
@@ -2065,6 +2166,7 @@ svn_repos_dump_fs2(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_dump_fs(svn_repos_t *repos,
                   svn_stream_t *dumpstream,
@@ -2132,6 +2234,7 @@ svn_repos_load_fs2(svn_repos_t *repos,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_load_fs(svn_repos_t *repos,
                   svn_stream_t *dumpstream,
@@ -2351,6 +2454,7 @@ typedef struct svn_repos_parse_fns_t
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_parse_dumpstream(svn_stream_t *stream,
                            const svn_repos_parser_fns_t *parse_fns,
@@ -2366,6 +2470,7 @@ svn_repos_parse_dumpstream(svn_stream_t *stream,
  *
  * @deprecated Provided for backward compatibility with the 1.0 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_repos_get_fs_build_parser(const svn_repos_parser_fns_t **parser,
                               void **parse_baton,

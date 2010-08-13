@@ -94,7 +94,7 @@ summarize_xml(const svn_client_diff_summarize_t *summary,
     path = svn_path_local_style(path, pool);
 
   svn_xml_make_open_tag(&sb, pool, svn_xml_protect_pcdata, "path",
-                        "kind", svn_cl__node_kind_str(summary->node_kind),
+                        "kind", svn_cl__node_kind_str_xml(summary->node_kind),
                         "item", kind_to_word(summary->summarize_kind),
                         "props", summary->prop_changed ? "modified" : "none",
                         NULL);
@@ -102,9 +102,7 @@ summarize_xml(const svn_client_diff_summarize_t *summary,
   svn_xml_escape_cdata_cstring(&sb, path, pool);
   svn_xml_make_close_tag(&sb, pool, "path");
 
-  SVN_ERR(svn_cl__error_checked_fputs(sb->data, stdout));
-
-  return SVN_NO_ERROR;
+  return svn_cl__error_checked_fputs(sb->data, stdout);
 }
 
 /* Print summary information about a given change, implements the
@@ -129,14 +127,12 @@ summarize_regular(const svn_client_diff_summarize_t *summary,
    *       a diff summary would go. */
 
   SVN_ERR(svn_cmdline_printf(pool,
-                             "%c%c     %s\n",
+                             "%c%c      %s\n",
                              kind_to_char(summary->summarize_kind),
                              summary->prop_changed ? 'M' : ' ',
                              path));
 
-  SVN_ERR(svn_cmdline_fflush(stdout));
-
-  return SVN_NO_ERROR;
+  return svn_cmdline_fflush(stdout);
 }
 
 /* An svn_opt_subcommand_t to handle the 'diff' command.
@@ -147,6 +143,7 @@ svn_cl__diff(apr_getopt_t *os,
              apr_pool_t *pool)
 {
   svn_cl__opt_state_t *opt_state = ((svn_cl__cmd_baton_t *) baton)->opt_state;
+  svn_client_ctx_t *ctx = ((svn_cl__cmd_baton_t *) baton)->ctx;
   apr_array_header_t *options;
   apr_array_header_t *targets;
   apr_file_t *outfile, *errfile;
@@ -189,8 +186,8 @@ svn_cl__diff(apr_getopt_t *os,
     }
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   if (! opt_state->old_target && ! opt_state->new_target
       && (targets->nelts == 2)
@@ -229,8 +226,8 @@ svn_cl__diff(apr_getopt_t *os,
                                            : APR_ARRAY_IDX(tmp, 0,
                                                            const char *));
 
-      SVN_ERR(svn_cl__args_to_target_array_print_reserved(&tmp2, os, tmp, 
-                                                          pool));
+      SVN_ERR(svn_cl__args_to_target_array_print_reserved(&tmp2, os, tmp,
+                                                          ctx, pool));
       SVN_ERR(svn_opt_parse_path(&old_rev, &old_target,
                                  APR_ARRAY_IDX(tmp2, 0, const char *),
                                  pool));
@@ -314,6 +311,12 @@ svn_cl__diff(apr_getopt_t *os,
       svn_pool_clear(iterpool);
       if (! pegged_diff)
         {
+          /* We can't be tacking URLs onto base paths! */
+          if (svn_path_is_url(path))
+            return svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+                                     _("Path '%s' not relative to base URLs"),
+                                     path);
+
           target1 = svn_path_join(old_target, path, iterpool);
           target2 = svn_path_join(new_target, path, iterpool);
 
@@ -324,12 +327,11 @@ svn_cl__diff(apr_getopt_t *os,
                      target2,
                      &opt_state->end_revision,
                      opt_state->depth,
-                     opt_state->notice_ancestry ? FALSE : TRUE,
+                     ! opt_state->notice_ancestry,
                      opt_state->changelists,
                      summarize_func,
                      (void *) target1,
-                     ((svn_cl__cmd_baton_t *)baton)->ctx,
-                     iterpool));
+                     ctx, iterpool));
           else
             SVN_ERR(svn_client_diff4
                     (options,
@@ -339,15 +341,14 @@ svn_cl__diff(apr_getopt_t *os,
                      &(opt_state->end_revision),
                      NULL,
                      opt_state->depth,
-                     opt_state->notice_ancestry ? FALSE : TRUE,
+                     ! opt_state->notice_ancestry,
                      opt_state->no_diff_deleted,
                      opt_state->force,
                      svn_cmdline_output_encoding(pool),
                      outfile,
                      errfile,
                      opt_state->changelists,
-                     ((svn_cl__cmd_baton_t *)baton)->ctx,
-                     iterpool));
+                     ctx, iterpool));
         }
       else
         {
@@ -370,12 +371,11 @@ svn_cl__diff(apr_getopt_t *os,
                      &opt_state->start_revision,
                      &opt_state->end_revision,
                      opt_state->depth,
-                     opt_state->notice_ancestry ? FALSE : TRUE,
+                     ! opt_state->notice_ancestry,
                      opt_state->changelists,
                      summarize_func,
                      (void *) truepath,
-                     ((svn_cl__cmd_baton_t *)baton)->ctx,
-                     iterpool));
+                     ctx, iterpool));
           else
             SVN_ERR(svn_client_diff_peg4
                     (options,
@@ -385,15 +385,14 @@ svn_cl__diff(apr_getopt_t *os,
                      &opt_state->end_revision,
                      NULL,
                      opt_state->depth,
-                     opt_state->notice_ancestry ? FALSE : TRUE,
+                     ! opt_state->notice_ancestry,
                      opt_state->no_diff_deleted,
                      opt_state->force,
                      svn_cmdline_output_encoding(pool),
                      outfile,
                      errfile,
                      opt_state->changelists,
-                     ((svn_cl__cmd_baton_t *)baton)->ctx,
-                     iterpool));
+                     ctx, iterpool));
         }
     }
 

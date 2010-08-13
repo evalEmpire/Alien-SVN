@@ -18,8 +18,6 @@
 
 
 
-#include <assert.h>
-
 #include <apr_uri.h>
 
 #include <expat.h>
@@ -30,16 +28,17 @@
 #include "svn_ra.h"
 #include "svn_dav.h"
 #include "svn_xml.h"
-#include "../libsvn_ra/ra_loader.h"
 #include "svn_config.h"
 #include "svn_delta.h"
 #include "svn_version.h"
 #include "svn_path.h"
+#include "svn_props.h"
 
 #include "private/svn_dav_protocol.h"
 #include "svn_private_config.h"
 
 #include "ra_serf.h"
+#include "../libsvn_ra/ra_loader.h"
 
 
 /*
@@ -69,7 +68,7 @@ typedef struct {
   apr_size_t tmp_len;
 
   /* Temporary change path - ultimately inserted into changed_paths hash. */
-  svn_log_changed_path_t *tmp_path;
+  svn_log_changed_path2_t *tmp_path;
 
   /* Log information */
   svn_log_entry_t *log_entry;
@@ -127,12 +126,13 @@ push_state(svn_ra_serf__xml_parser_t *parser,
     {
       log_info_t *info = parser->state->private;
 
-      if (!info->log_entry->changed_paths)
+      if (!info->log_entry->changed_paths2)
         {
-          info->log_entry->changed_paths = apr_hash_make(info->pool);
+          info->log_entry->changed_paths2 = apr_hash_make(info->pool);
+          info->log_entry->changed_paths = info->log_entry->changed_paths;
         }
 
-      info->tmp_path = apr_pcalloc(info->pool, sizeof(*info->tmp_path));
+      info->tmp_path = svn_log_changed_path2_create(info->pool);
       info->tmp_path->copyfrom_rev = SVN_INVALID_REVNUM;
     }
 
@@ -224,6 +224,9 @@ start_log(svn_ra_serf__xml_parser_t *parser,
                   info->tmp_path->copyfrom_rev = copy_rev;
                 }
             }
+
+          info->tmp_path->node_kind = svn_node_kind_from_word(
+                                     svn_xml_get_attr_value("node-kind", attrs));
         }
       else if (strcmp(name.name, "replaced-path") == 0)
         {
@@ -246,16 +249,23 @@ start_log(svn_ra_serf__xml_parser_t *parser,
                   info->tmp_path->copyfrom_rev = copy_rev;
                 }
             }
+
+          info->tmp_path->node_kind = svn_node_kind_from_word(
+                                     svn_xml_get_attr_value("node-kind", attrs));
         }
       else if (strcmp(name.name, "deleted-path") == 0)
         {
           info = push_state(parser, log_ctx, DELETED_PATH);
           info->tmp_path->action = 'D';
+          info->tmp_path->node_kind = svn_node_kind_from_word(
+                                     svn_xml_get_attr_value("node-kind", attrs));
         }
       else if (strcmp(name.name, "modified-path") == 0)
         {
           info = push_state(parser, log_ctx, MODIFIED_PATH);
           info->tmp_path->action = 'M';
+          info->tmp_path->node_kind = svn_node_kind_from_word(
+                                     svn_xml_get_attr_value("node-kind", attrs));
         }
     }
 
@@ -282,12 +292,12 @@ end_log(svn_ra_serf__xml_parser_t *parser,
   else if (state == ITEM &&
            strcmp(name.name, "log-item") == 0)
     {
-      if (log_ctx->limit && (log_ctx->nest_level == 0) 
+      if (log_ctx->limit && (log_ctx->nest_level == 0)
           && (++log_ctx->count > log_ctx->limit))
         {
           return SVN_NO_ERROR;
         }
-       
+
       /* Give the info to the reporter */
       SVN_ERR(log_ctx->receiver(log_ctx->receiver_baton,
                                 info->log_entry,
@@ -299,7 +309,7 @@ end_log(svn_ra_serf__xml_parser_t *parser,
         }
       if (! SVN_IS_VALID_REVNUM(info->log_entry->revision))
         {
-          assert(log_ctx->nest_level);
+          SVN_ERR_ASSERT(log_ctx->nest_level);
           log_ctx->nest_level--;
         }
 
@@ -379,7 +389,7 @@ end_log(svn_ra_serf__xml_parser_t *parser,
       path = apr_pstrmemdup(info->pool, info->tmp, info->tmp_len);
       info->tmp_len = 0;
 
-      apr_hash_set(info->log_entry->changed_paths, path, APR_HASH_KEY_STRING,
+      apr_hash_set(info->log_entry->changed_paths2, path, APR_HASH_KEY_STRING,
                    info->tmp_path);
       svn_ra_serf__xml_pop_state(parser);
     }
@@ -441,7 +451,7 @@ svn_ra_serf__get_log(svn_ra_session_t *ra_session,
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  serf_bucket_t *buckets, *tmp;
+  serf_bucket_t *buckets;
   svn_boolean_t want_custom_revprops;
   svn_revnum_t peg_rev;
   const char *relative_url, *basecoll_url, *req_url;
@@ -458,20 +468,10 @@ svn_ra_serf__get_log(svn_ra_session_t *ra_session,
 
   buckets = serf_bucket_aggregate_create(session->bkt_alloc);
 
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("<S:log-report xmlns:S=\"",
-                                      sizeof("<S:log-report xmlns:S=\"")-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
-
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN(SVN_XML_NAMESPACE,
-                                      sizeof(SVN_XML_NAMESPACE)-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
-
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("\">",
-                                      sizeof("\">")-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
+  svn_ra_serf__add_open_tag_buckets(buckets, session->bkt_alloc,
+                                    "S:log-report",
+                                    "xmlns:S", SVN_XML_NAMESPACE,
+                                    NULL);
 
   svn_ra_serf__add_tag_buckets(buckets,
                                "S:start-revision", apr_ltoa(pool, start),
@@ -527,6 +527,12 @@ svn_ra_serf__get_log(svn_ra_session_t *ra_session,
           else
             want_custom_revprops = TRUE;
         }
+      if (revprops->nelts == 0)
+	{
+	  svn_ra_serf__add_tag_buckets(buckets,
+				       "S:no-revprops", NULL,
+				       session->bkt_alloc);
+	}
     }
   else
     {
@@ -560,18 +566,15 @@ svn_ra_serf__get_log(svn_ra_session_t *ra_session,
         }
     }
 
-  tmp = SERF_BUCKET_SIMPLE_STRING_LEN("</S:log-report>",
-                                      sizeof("</S:log-report>")-1,
-                                      session->bkt_alloc);
-  serf_bucket_aggregate_append(buckets, tmp);
-
+  svn_ra_serf__add_close_tag_buckets(buckets, session->bkt_alloc,
+                                     "S:log-report");
   /* At this point, we may have a deleted file.  So, we'll match ra_neon's
    * behavior and use the larger of start or end as our 'peg' rev.
    */
   peg_rev = (start > end) ? start : end;
 
-  SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url,
-                                         session, NULL, peg_rev, pool));
+  SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url, session,
+                                         NULL, NULL, peg_rev, NULL, pool));
 
   req_url = svn_path_url_add_component(basecoll_url, relative_url, pool);
 

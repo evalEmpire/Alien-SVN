@@ -1,10 +1,11 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 #
 # which-error.py: Print semantic Subversion error code names mapped from
 #                 their numeric error code values
 #
 # ====================================================================
-# Copyright (c) 2005 CollabNet.  All rights reserved.
+# Copyright (c) 2005, 2008-2009 CollabNet.  All rights reserved.
 #
 # * This software is licensed as described in the file COPYING, which
 # you should have received as part of this distribution.  The terms
@@ -17,10 +18,10 @@
 # history and logs, available at http://subversion.tigris.org/.
 # ====================================================================
 #
-# $HeadURL: http://svn.collab.net/repos/svn/branches/1.5.x/tools/dev/which-error.py $
-# $LastChangedDate: 2007-08-26 01:04:48 +0000 (Sun, 26 Aug 2007) $
-# $LastChangedBy: hwright $
-# $LastChangedRevision: 26317 $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.6.x/tools/dev/which-error.py $
+# $LastChangedDate: 2009-01-30 20:47:46 +0000 (Fri, 30 Jan 2009) $
+# $LastChangedBy: arfrever $
+# $LastChangedRevision: 875675 $
 #
 
 import sys
@@ -30,11 +31,11 @@ import re
 try:
   from svn import core
 except ImportError, e:
-  print >> sys.stderr, \
-        "ERROR: Unable to import Subversion's Python bindings: '%s'\n" \
-        "Hint: Set your PYTHONPATH environment variable, or adjust your " \
-        "PYTHONSTARTUP\nfile to point to your Subversion install " \
-        "location's svn-python directory." % e
+  sys.stderr.write("ERROR: Unable to import Subversion's Python bindings: '%s'\n" \
+                   "Hint: Set your PYTHONPATH environment variable, or adjust your " \
+                   "PYTHONSTARTUP\nfile to point to your Subversion install " \
+                   "location's svn-python directory.\n" % e)
+  sys.stderr.flush()
   sys.exit(1)
 
 
@@ -73,9 +74,9 @@ def get_errors():
 
 def print_error(code):
   try:
-    print '%08d  %s' % (code, __svn_error_codes[code])
+    print('%08d  %s' % (code, __svn_error_codes[code]))
   except KeyError:
-    print '%08d  *** UNKNOWN ERROR CODE ***' % (code)
+    print('%08d  *** UNKNOWN ERROR CODE ***' % (code))
 
 if __name__ == "__main__":
   global __svn_error_codes
@@ -88,8 +89,7 @@ if __name__ == "__main__":
   if sys.argv[1] == 'list':
     if len(sys.argv) > 2:
       usage_and_exit()
-    codes = __svn_error_codes.keys()
-    codes.sort()
+    codes = sorted(__svn_error_codes.keys())
 
   # Get a list of code by parsing stdin for apr_err=CODE instances
   elif sys.argv[1] == 'parse':

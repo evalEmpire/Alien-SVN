@@ -22,7 +22,6 @@
 
 
 #include <stdio.h>
-#include <assert.h>
 
 #define APR_WANT_STRFUNC
 #include <apr_want.h>
@@ -257,7 +256,7 @@ add_open_helper(const char *path,
   struct edit_baton *eb = pb->edit_baton;
   struct node_baton *nb = apr_pcalloc(pool, sizeof(*nb));
 
-  assert(parent_baton && path);
+  SVN_ERR_ASSERT(parent_baton && path);
 
   nb->edit_baton = eb;
   nb->parent_baton = pb;
@@ -303,10 +302,9 @@ open_directory(const char *path,
                apr_pool_t *pool,
                void **child_baton)
 {
-  SVN_ERR(add_open_helper(path, 'R', svn_node_dir, parent_baton,
-                          NULL, SVN_INVALID_REVNUM,
-                          pool, child_baton));
-  return SVN_NO_ERROR;
+  return add_open_helper(path, 'R', svn_node_dir, parent_baton,
+                         NULL, SVN_INVALID_REVNUM,
+                         pool, child_baton);
 }
 
 
@@ -318,10 +316,9 @@ add_directory(const char *path,
               apr_pool_t *pool,
               void **child_baton)
 {
-  SVN_ERR(add_open_helper(path, 'A', svn_node_dir, parent_baton,
-                          copyfrom_path, copyfrom_revision,
-                          pool, child_baton));
-  return SVN_NO_ERROR;
+  return add_open_helper(path, 'A', svn_node_dir, parent_baton,
+                         copyfrom_path, copyfrom_revision,
+                         pool, child_baton);
 }
 
 
@@ -332,10 +329,9 @@ open_file(const char *path,
           apr_pool_t *pool,
           void **file_baton)
 {
-  SVN_ERR(add_open_helper(path, 'R', svn_node_file, parent_baton,
-                          NULL, SVN_INVALID_REVNUM,
-                          pool, file_baton));
-  return SVN_NO_ERROR;
+  return add_open_helper(path, 'R', svn_node_file, parent_baton,
+                         NULL, SVN_INVALID_REVNUM,
+                         pool, file_baton);
 }
 
 
@@ -347,10 +343,9 @@ add_file(const char *path,
          apr_pool_t *pool,
          void **file_baton)
 {
-  SVN_ERR(add_open_helper(path, 'A', svn_node_file, parent_baton,
-                          copyfrom_path, copyfrom_revision,
-                          pool, file_baton));
-  return SVN_NO_ERROR;
+  return add_open_helper(path, 'A', svn_node_file, parent_baton,
+                         copyfrom_path, copyfrom_revision,
+                         pool, file_baton);
 }
 
 

@@ -35,6 +35,11 @@
 #include "private/svn_dav_protocol.h"
 
 
+/* Enforce the minimum version of serf. */
+#if !SERF_VERSION_AT_LEAST(0, 3, 0)
+#error Please update your version of serf to at least 0.3.0.
+#endif
+
 /** Use this to silence compiler warnings about unused parameters. */
 #define UNUSED_CTX(x) ((void)(x))
 
@@ -45,10 +50,8 @@
                    APR_STRINGIFY(SERF_PATCH_VERSION)
 
 #ifdef WIN32
-#if SERF_VERSION_AT_LEAST(0, 1, 3)
 #define SVN_RA_SERF_SSPI_ENABLED
 #endif
-#endif /* WIN32 */
 
 
 /* Forward declarations. */
@@ -97,6 +100,9 @@ typedef struct {
 #ifdef SVN_RA_SERF_SSPI_ENABLED
   /* Optional SSPI context for this connection. */
   serf_sspi_context_t *sspi_context;
+
+  /* Optional SSPI context for the proxy on this connection. */
+  serf_sspi_context_t *proxy_sspi_context;
 #endif
 
   /* Current authorization header used for the proxy server; may be NULL */
@@ -104,7 +110,7 @@ typedef struct {
 
   /* Current authorization value used for the proxy server; may be NULL */
   char *proxy_auth_value;
-  
+
   /* user agent string */
   const char *useragent;
 
@@ -315,9 +321,6 @@ svn_ra_serf__conn_closed(serf_connection_t *conn,
                          apr_pool_t *pool);
 
 apr_status_t
-svn_ra_serf__is_conn_closing(serf_bucket_t *response);
-
-apr_status_t
 svn_ra_serf__cleanup_serf_session(void *data);
 
 /* Helper function to provide SSL client certificates. */
@@ -444,6 +447,9 @@ typedef struct {
   /* The connection and session to be used for this request. */
   svn_ra_serf__connection_t *conn;
   svn_ra_serf__session_t *session;
+
+  /* Marks whether a snapshot was set on the body bucket. */
+  svn_boolean_t body_snapshot_set;
 } svn_ra_serf__handler_t;
 
 /*
@@ -712,6 +718,53 @@ svn_ra_serf__add_tag_buckets(serf_bucket_t *agg_bucket,
                              serf_bucket_alloc_t *bkt_alloc);
 
 /*
+ * Add the appropriate serf buckets to AGG_BUCKET with standard XML header:
+ *  <?xml version="1.0" encoding="utf-8"?>
+ *
+ * The bucket will be allocated from BKT_ALLOC.
+ */
+void
+svn_ra_serf__add_xml_header_buckets(serf_bucket_t *agg_bucket,
+                                    serf_bucket_alloc_t *bkt_alloc);
+
+/*
+ * Add the appropriate serf buckets to AGG_BUCKET representing xml tag open
+ * with name TAG.
+ *
+ * Take the tag's attributes from varargs, a NULL-terminated list of
+ * alternating <tt>char *</tt> key and <tt>char *</tt> val.  Do xml-escaping
+ * on each val. Attribute will be ignored if it's value is NULL.
+ *
+ * The bucket will be allocated from BKT_ALLOC.
+ */
+void
+svn_ra_serf__add_open_tag_buckets(serf_bucket_t *agg_bucket,
+                                  serf_bucket_alloc_t *bkt_alloc,
+                                  const char *tag,
+                                  ...);
+
+/*
+ * Add the appropriate serf buckets to AGG_BUCKET representing xml tag close
+ * with name TAG.
+ *
+ * The bucket will be allocated from BKT_ALLOC.
+ */
+void
+svn_ra_serf__add_close_tag_buckets(serf_bucket_t *agg_bucket,
+                                   serf_bucket_alloc_t *bkt_alloc,
+                                   const char *tag);
+
+/*
+ * Add the appropriate serf buckets to AGG_BUCKET with xml-escaped
+ * version of DATA.
+ *
+ * The bucket will be allocated from BKT_ALLOC.
+ */
+void
+svn_ra_serf__add_cdata_len_buckets(serf_bucket_t *agg_bucket,
+                                   serf_bucket_alloc_t *bkt_alloc,
+                                   const char *data, apr_size_t len);
+/*
  * Look up the @a attrs array for namespace definitions and add each one
  * to the @a ns_list of namespaces.
  *
@@ -759,15 +812,6 @@ svn_ra_serf__propfind_is_done(svn_ra_serf__propfind_context_t *ctx);
  */
 int
 svn_ra_serf__propfind_status_code(svn_ra_serf__propfind_context_t *ctx);
-
-/* Our PROPFIND bucket */
-serf_bucket_t *
-svn_ra_serf__bucket_propfind_create(svn_ra_serf__connection_t *conn,
-                                    const char *path,
-                                    const char *label,
-                                    const char *depth,
-                                    const svn_ra_serf__dav_props_t *find_props,
-                                    serf_bucket_alloc_t *allocator);
 
 /*
  * This function will deliver a PROP_CTX PROPFIND request in the SESS
@@ -992,14 +1036,24 @@ svn_ra_serf__discover_root(const char **vcc_url,
  *
  * REVISION may be SVN_INVALID_REVNUM (to mean "the current HEAD
  * revision").  If URL is NULL, use SESSION's session url.
+ *
+ * If LATEST_REVNUM is not NULL, set it to the baseline revision. If
+ * REVISION was set to SVN_INVALID_REVNUM, this will return the current
+ * HEAD revision.
+ *
+ * If non-NULL, use CONN for communications with the server;
+ * otherwise, use the default connection.
+ *
  * Use POOL for all allocations.
  */
 svn_error_t *
 svn_ra_serf__get_baseline_info(const char **bc_url,
                                const char **bc_relative,
                                svn_ra_serf__session_t *session,
+                               svn_ra_serf__connection_t *conn,
                                const char *url,
                                svn_revnum_t revision,
+                               svn_revnum_t *latest_revnum,
                                apr_pool_t *pool);
 
 /** RA functions **/
@@ -1192,6 +1246,15 @@ svn_ra_serf__has_capability(svn_ra_session_t *ra_session,
                             const char *capability,
                             apr_pool_t *pool);
 
+/* Implements the get_deleted_rev RA layer function. */
+svn_error_t *
+svn_ra_serf__get_deleted_rev(svn_ra_session_t *session,
+                             const char *path,
+                             svn_revnum_t peg_revision,
+                             svn_revnum_t end_revision,
+                             svn_revnum_t *revision_deleted,
+                             apr_pool_t *pool);
+
 /*** Authentication handler declarations ***/
 
 /**
@@ -1230,7 +1293,7 @@ typedef svn_error_t *
 
 /**
  * svn_ra_serf__auth_protocol_t: vtable for an authn protocol provider.
- * 
+ *
  */
 struct svn_ra_serf__auth_protocol_t {
   /* The http status code that's handled by this authentication protocol.
@@ -1266,7 +1329,7 @@ svn_ra_serf__handle_auth(int code,
                          apr_pool_t *pool);
 
 /**
- * encode_auth_header: base64 encodes the authentication data and builds an 
+ * encode_auth_header: base64 encodes the authentication data and builds an
  * authentication header in this format:
  * [PROTOCOL] [BASE64 AUTH DATA]
  */
@@ -1282,7 +1345,7 @@ svn_ra_serf__encode_auth_header(const char * protocol,
 
 /**
  * Convert an HTTP status code resulting from a WebDAV request to the relevant
- * error code. 
+ * error code.
  */
 svn_error_t *
 svn_ra_serf__error_on_status(int status_code, const char *path);

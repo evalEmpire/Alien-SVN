@@ -26,21 +26,16 @@
 /*** Data Structures ***/
 
 
-/* Structure used by discover_and_merge_children() and consumers of the
-   children_with_mergeinfo array it populates.  The struct describes
-   working copy paths that meet one or more of the following criteria:
-
-     1) Path has explicit mergeinfo
-     2) Path is switched
-     3) Path has an immediate child which is switched or otherwise
-        missing from the WC.
-     4) Path has a sibling which is switched or otherwise missing
-        from the WC.
-     5) Path is the target of a merge.
+/* Structure to store information about working copy paths that need special
+   consideration during a mergeinfo aware merge -- See the
+   'THE CHILDREN_WITH_MERGEINFO ARRAY' meta comment and the doc string for the
+   function get_mergeinfo_paths() in libsvn_client/merge.c.
 */
 typedef struct svn_client__merge_path_t
 {
-  const char *path;
+  const char *path;                  /* Working copy path, either absolute or
+                                        relative to the current working
+                                        directory. */
   svn_boolean_t missing_child;       /* PATH has an immediate child which is
                                         missing. */
   svn_boolean_t switched;            /* PATH is switched. */
@@ -49,14 +44,30 @@ typedef struct svn_client__merge_path_t
                                         ranges. */
   svn_boolean_t absent;              /* PATH is absent from the WC, probably
                                         due to authz restrictions. */
-  apr_array_header_t *remaining_ranges; /* Per path remaining ranges list. */
-  svn_mergeinfo_t pre_merge_mergeinfo;  /* mergeinfo on a path prior to a
-                                           merge.*/
-  svn_mergeinfo_t implicit_mergeinfo;   /* Implicit mergeinfo on a path prior
-                                           to a merge.*/
-  svn_boolean_t indirect_mergeinfo;
+
+  /* The remaining ranges to be merged to PATH.  When describing a forward
+     merge this rangelist adheres to the rules for rangelists described in
+     svn_mergeinfo.h.  However, when describing reverse merges this
+     rangelist can contain reverse merge ranges that are not sorted per
+     svn_sort_compare_ranges(), but rather are sorted such that the ranges
+     with the youngest start revisions come first.  In both the forward and
+     reverse merge cases the ranges should never overlap.  This rangelist
+     may be empty but should never be NULL. */
+  apr_array_header_t *remaining_ranges;
+
+  svn_mergeinfo_t pre_merge_mergeinfo;  /* Mergeinfo on PATH prior to a
+                                           merge. May be NULL. */
+  svn_mergeinfo_t implicit_mergeinfo;   /* Implicit mergeinfo on PATH prior
+                                           to a merge.  May be NULL. */
+  svn_boolean_t indirect_mergeinfo;     /* Whether PRE_MERGE_MERGEINFO was
+                                           explicit or inherited. */
   svn_boolean_t scheduled_for_deletion; /* PATH is scheduled for deletion. */
 } svn_client__merge_path_t;
+
+/* Return a deep copy of the merge-path structure OLD, allocated in POOL. */
+svn_client__merge_path_t *
+svn_client__merge_path_dup(const svn_client__merge_path_t *old,
+                           apr_pool_t *pool);
 
 
 
@@ -65,7 +76,7 @@ typedef struct svn_client__merge_path_t
 /* Find explicit or inherited WC mergeinfo for WCPATH, and return it
    in *MERGEINFO (NULL if no mergeinfo is set).  Set *INHERITED to
    whether the mergeinfo was inherited (TRUE or FALSE).
-   
+
    This function will search for inherited mergeinfo in the parents of
    WCPATH only if the working revision of WCPATH falls within the range
    of the parent's last committed revision to the parent's working
@@ -92,8 +103,9 @@ svn_client__get_wc_mergeinfo(svn_mergeinfo_t *mergeinfo,
                              svn_client_ctx_t *ctx,
                              apr_pool_t *pool);
 
-/* Obtain any mergeinfo for the root-relative repository filesystem path
-   REL_PATH from the repository, and set it in *TARGET_MERGEINFO.
+/* Obtain any mergeinfo for repository filesystem path REL_PATH
+   (relative to RA_SESSION's session URL) from the repository, and set
+   it in *TARGET_MERGEINFO.
 
    INHERIT indicates whether explicit, explicit or inherited, or only
    inherited mergeinfo for REL_PATH is obtained.
@@ -119,14 +131,18 @@ svn_client__get_repos_mergeinfo(svn_ra_session_t *ra_session,
    target has no info of its own.
 
    If no mergeinfo can be obtained from the WC or REPOS_ONLY is TRUE,
-   get it from the repository (opening a new RA session if RA_SESSION
+   get it from the repository.  RA_SESSION should be an open RA
+   session pointing at ENTRY->URL, or NULL, in which case this
+   function will open its own temporary session.
+
+   (opening a new RA session if RA_SESSION
    is NULL).  Store any mergeinfo obtained for TARGET_WCPATH -- which
    is reflected by ENTRY -- in *TARGET_MERGEINFO, if no mergeinfo is
    found *TARGET_MERGEINFO is NULL.
 
-   Like svn_client__get_wc_mergeinfo, this function considers no inherited
-   mergeinfo to be found in the WC when trying to crawl into a parent path
-   with a different working revision.
+   Like svn_client__get_wc_mergeinfo(), this function considers no
+   inherited mergeinfo to be found in the WC when trying to crawl into
+   a parent path with a different working revision.
 
    INHERIT indicates whether explicit, explicit or inherited, or only
    inherited mergeinfo for TARGET_WCPATH is retrieved.
@@ -261,5 +277,15 @@ svn_error_t *
 svn_client__elide_mergeinfo_catalog(svn_mergeinfo_t mergeinfo_catalog,
                                     apr_pool_t *pool);
 
+/* For each source path : rangelist pair in MERGEINFO, append REL_PATH to
+   the source path and add the new source path : rangelist pair to
+   ADJUSTED_MERGEINFO.  The new source path and rangelist are both deep
+   copies allocated in POOL.  Neither ADJUSTED_MERGEINFO
+   nor MERGEINFO should be NULL. */
+svn_error_t *
+svn_client__adjust_mergeinfo_source_paths(svn_mergeinfo_t adjusted_mergeinfo,
+                                          const char *rel_path,
+                                          svn_mergeinfo_t mergeinfo,
+                                          apr_pool_t *pool);
 
 #endif /* SVN_LIBSVN_CLIENT_MERGEINFO_H */

@@ -22,7 +22,6 @@
 #include <apr_tables.h>
 #include <apr_strings.h>
 #include <apr_xml.h>
-#include <assert.h>
 
 #include <ne_socket.h>
 
@@ -113,8 +112,8 @@ end_element(void *baton, int state, const char *nspace, const char *elt_name)
         {
           svn_mergeinfo_t path_mergeinfo;
 
-          assert(mb->curr_path->data);
-          SVN_ERR((mb->err = svn_mergeinfo_parse(&path_mergeinfo, 
+          SVN_ERR_ASSERT(mb->curr_path->data);
+          SVN_ERR((mb->err = svn_mergeinfo_parse(&path_mergeinfo,
                                                  mb->curr_info->data,
                                                  mb->pool)));
           apr_hash_set(mb->catalog, apr_pstrdup(mb->pool, mb->curr_path->data),
@@ -134,21 +133,17 @@ cdata_handler(void *baton, int state, const char *cdata, size_t len)
   switch (state)
     {
     case ELEM_mergeinfo_path:
-      if (mb->curr_path)
-        svn_stringbuf_appendbytes(mb->curr_path, cdata, nlen);
+      svn_stringbuf_appendbytes(mb->curr_path, cdata, nlen);
       break;
 
     case ELEM_mergeinfo_info:
-      if (mb->curr_info)
-        svn_stringbuf_appendbytes(mb->curr_info, cdata, nlen);
+      svn_stringbuf_appendbytes(mb->curr_info, cdata, nlen);
       break;
 
     default:
       break;
     }
-  SVN_ERR(mb->err);
-
-  return SVN_NO_ERROR;
+  return mb->err;
 }
 
 /* Request a mergeinfo-report from the URL attached to SESSION,

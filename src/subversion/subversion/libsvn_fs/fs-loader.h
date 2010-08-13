@@ -88,6 +88,10 @@ typedef struct fs_library_vtable_t
   svn_error_t *(*recover)(svn_fs_t *fs,
                           svn_cancel_func_t cancel_func, void *cancel_baton,
                           apr_pool_t *pool);
+  svn_error_t *(*pack_fs)(svn_fs_t *fs, const char *path,
+                          svn_fs_pack_notify_t notify_func, void *notify_baton,
+                          svn_cancel_func_t cancel_func, void *cancel_baton,
+                          apr_pool_t *pool);
 
   /* Provider-specific functions should go here, even if they could go
      in an object vtable, so that they are all kept together. */
@@ -273,9 +277,9 @@ typedef struct root_vtable_t
   /* Files */
   svn_error_t *(*file_length)(svn_filesize_t *length_p, svn_fs_root_t *root,
                               const char *path, apr_pool_t *pool);
-  svn_error_t *(*file_md5_checksum)(unsigned char digest[],
-                                    svn_fs_root_t *root,
-                                    const char *path, apr_pool_t *pool);
+  svn_error_t *(*file_checksum)(svn_checksum_t **checksum,
+                                svn_checksum_kind_t kind, svn_fs_root_t *root,
+                                const char *path, apr_pool_t *pool);
   svn_error_t *(*file_contents)(svn_stream_t **contents,
                                 svn_fs_root_t *root, const char *path,
                                 apr_pool_t *pool);
@@ -284,11 +288,11 @@ typedef struct root_vtable_t
   svn_error_t *(*apply_textdelta)(svn_txdelta_window_handler_t *contents_p,
                                   void **contents_baton_p,
                                   svn_fs_root_t *root, const char *path,
-                                  const char *base_checksum,
-                                  const char *result_checksum,
+                                  svn_checksum_t *base_checksum,
+                                  svn_checksum_t *result_checksum,
                                   apr_pool_t *pool);
   svn_error_t *(*apply_text)(svn_stream_t **contents_p, svn_fs_root_t *root,
-                             const char *path, const char *result_checksum,
+                             const char *path, svn_checksum_t *result_checksum,
                              apr_pool_t *pool);
   svn_error_t *(*contents_changed)(int *changed_p, svn_fs_root_t *root1,
                                    const char *path1, svn_fs_root_t *root2,

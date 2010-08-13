@@ -1,7 +1,7 @@
 /* repos-test.c --- tests for the filesystem
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -18,7 +18,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <apr_pools.h>
-#include <apr_md5.h>
+
+#include "../svn_test.h"
+
 #include "svn_pools.h"
 #include "svn_error.h"
 #include "svn_fs.h"
@@ -26,8 +28,8 @@
 #include "svn_path.h"
 #include "svn_delta.h"
 #include "svn_config.h"
+#include "svn_props.h"
 
-#include "../svn_test.h"
 #include "../svn_test_fs.h"
 
 #include "dir-delta-editor.h"
@@ -79,7 +81,7 @@ dir_deltas(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-dir-deltas",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
   expected_trees[revision_count].num_entries = 0;
   expected_trees[revision_count++].entries = 0;
@@ -386,7 +388,7 @@ node_tree_delete_under_copy(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-del-under-copy",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Prepare a txn to receive the greek tree. */
@@ -526,7 +528,7 @@ revisions_changed(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-revisions-changed",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /*** Testing Algorithm ***
@@ -785,7 +787,7 @@ node_locations(const char **msg,
 
   /* Create the repository with a Greek tree. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-node-locations",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
   SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
@@ -838,7 +840,7 @@ node_locations2(const char **msg,
 
   /* Create the repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-node-locations2",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Revision 1:  Add a directory /foo  */
@@ -1051,7 +1053,7 @@ rmlocks(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-rmlocks",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Prepare a txn to receive the greek tree. */
@@ -1123,43 +1125,21 @@ static svn_error_t *
 authz_get_handle(svn_authz_t **authz_p, const char *authz_contents,
                  apr_pool_t *pool)
 {
-  apr_file_t *authz_file;
-  apr_status_t apr_err;
   const char *authz_file_path;
-  svn_error_t *err;
 
-  /* Create a temporary file, and fetch its name. */
-  SVN_ERR_W(svn_io_open_unique_file2(&authz_file, &authz_file_path,
-                                     "authz_file", "tmp",
-                                     svn_io_file_del_none, pool),
-            "Opening temporary file");
-
-  /* Write the authz ACLs to the file. */
-  if ((apr_err = apr_file_write_full(authz_file, authz_contents,
-                                     strlen(authz_contents), NULL)))
-    {
-      (void) apr_file_close(authz_file);
-      (void) apr_file_remove(authz_file_path, pool);
-      return svn_error_wrap_apr(apr_err, "Writing test authz file");
-    }
-
-  /* Close the temporary descriptor. */
-  if ((apr_err = apr_file_close(authz_file)))
-    {
-      (void) apr_file_remove(authz_file_path, pool);
-      return svn_error_wrap_apr(apr_err, "Closing test authz file");
-    }
+  /* Create a temporary file. */
+  SVN_ERR_W(svn_io_write_unique(&authz_file_path, NULL,
+                                authz_contents, strlen(authz_contents),
+                                svn_io_file_del_on_pool_cleanup, pool),
+            "Writing temporary authz file");
 
   /* Read the authz configuration back and start testing. */
-  if ((err = svn_repos_authz_read(authz_p, authz_file_path, TRUE, pool)))
-    {
-      (void) apr_file_remove(authz_file_path, pool);
-      return svn_error_quick_wrap(err, "Opening test authz file");
-    }
+  SVN_ERR_W(svn_repos_authz_read(authz_p, authz_file_path, TRUE, pool),
+            "Opening test authz file");
 
-  /* Delete the file, but ignore the error if we've a more important one. */
-  if ((apr_err = apr_file_remove(authz_file_path, pool)))
-    return svn_error_wrap_apr(apr_err, "Removing test authz file");
+  /* Done with the file. */
+  SVN_ERR_W(svn_io_remove_file(authz_file_path, pool),
+            "Removing test authz file");
 
   return SVN_NO_ERROR;
 }
@@ -1425,7 +1405,7 @@ commit_editor_authz(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-commit-authz",
-                                 opts->fs_type, subpool));
+                                 opts, subpool));
   fs = svn_repos_fs(repos);
 
   /* Prepare a txn to receive the greek tree. */
@@ -1643,7 +1623,7 @@ commit_continue_txn(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-commit-continue",
-                                 opts->fs_type, subpool));
+                                 opts, subpool));
   fs = svn_repos_fs(repos);
 
   /* Prepare a txn to receive the greek tree. */
@@ -1822,9 +1802,14 @@ node_location_segments(const char **msg,
   if (msg_only)
     return SVN_NO_ERROR;
 
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "bdb") == 0)
+      && (opts->server_minor_version == 4))
+    return SVN_NO_ERROR;
+
   /* Create the repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-node-location-segments",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Revision 1: Create the Greek tree.  */
@@ -2010,14 +1995,14 @@ reporter_depth_exclude(const char **msg,
   const svn_delta_editor_t *editor;
   void *edit_baton, *report_baton;
   svn_error_t *err;
-  
+
   *msg = "test reporter and svn_depth_exclude";
 
   if (msg_only)
     return SVN_NO_ERROR;
 
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-reporter-depth-exclude",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Prepare a txn to receive the greek tree. */
@@ -2130,11 +2115,11 @@ reporter_depth_exclude(const char **msg,
                                     entries,
                                     sizeof(entries)/sizeof(entries[0]),
                                     subpool));
-    svn_pool_clear(subpool);
   }
 
   /* Clean up after ourselves. */
   svn_error_clear(svn_fs_abort_txn(txn, subpool));
+  svn_pool_clear(subpool);
 
   /* Expect an error on an illegal report for r1 to r2.  The illegal
      sequence is that we exclude A/D, then set_path() below A/D. */
@@ -2193,6 +2178,155 @@ reporter_depth_exclude(const char **msg,
 
 
 
+/* Test if prop values received by the server are validated.
+ * These tests "send" property values to the server and diagnose the
+ * behaviour.
+ */
+
+/* Helper function that makes an arbitrary change to a given repository
+ * REPOS and runs a commit with a specific revision property set to a
+ * certain value. The property name, type and value are given in PROP_KEY,
+ * PROP_KLEN and PROP_VAL, as in apr_hash_set(), using a const char* key.
+ *
+ * The FILENAME argument names a file in the test repository to add in
+ * this commit, e.g. "/A/should_fail_1".
+ *
+ * On success, the given file is added to the repository. So, using
+ * the same name multiple times on the same repository might fail. Thus,
+ * use different FILENAME arguments for every call to this function
+ * (e.g. "/A/f1", "/A/f2", "/A/f3" etc).
+ */
+static svn_error_t *
+prop_validation_commit_with_revprop(const char *filename,
+                                    const char *prop_key,
+                                    apr_ssize_t prop_klen,
+                                    const svn_string_t *prop_val,
+                                    svn_repos_t *repos,
+                                    apr_pool_t *pool)
+{
+  const svn_delta_editor_t *editor;
+  void *edit_baton;
+  void *root_baton;
+  void *file_baton;
+
+  /* Prepare revision properties */
+  apr_hash_t *revprop_table = apr_hash_make(pool);
+
+  /* Add the requested property */
+  apr_hash_set(revprop_table, prop_key, prop_klen, prop_val);
+
+  /* Set usual author and log props, if not set already */
+  if (strcmp(prop_key, SVN_PROP_REVISION_AUTHOR) != 0)
+    {
+      apr_hash_set(revprop_table, SVN_PROP_REVISION_AUTHOR,
+                   APR_HASH_KEY_STRING,
+                   svn_string_create("plato", pool));
+    }
+  else
+    if (strcmp(prop_key, SVN_PROP_REVISION_LOG) != 0)
+      {
+        apr_hash_set(revprop_table, SVN_PROP_REVISION_LOG,
+                     APR_HASH_KEY_STRING,
+                     svn_string_create("revision log", pool));
+      }
+
+  /* Make an arbitrary change and commit using above values... */
+
+  SVN_ERR(svn_repos_get_commit_editor5(&editor, &edit_baton, repos,
+                                       NULL, "file://test", "/",
+                                       revprop_table,
+                                       NULL, NULL, NULL, NULL, pool));
+
+  SVN_ERR(editor->open_root(edit_baton, 0, pool, &root_baton));
+
+  SVN_ERR(editor->add_file(filename, root_baton, NULL,
+                           SVN_INVALID_REVNUM, pool,
+                           &file_baton));
+
+  SVN_ERR(editor->close_file(file_baton, NULL, pool));
+
+  SVN_ERR(editor->close_directory(root_baton, pool));
+
+  SVN_ERR(editor->close_edit(edit_baton, pool));
+
+  return SVN_NO_ERROR;
+}
+
+
+/* Expect failure of invalid commit in these cases:
+ *  - log message contains invalid UTF-8 octet (issue 1796)
+ *  - log message contains invalid linefeed style (non-LF) (issue 1796)
+ */
+static svn_error_t *
+prop_validation(const char **msg,
+                svn_boolean_t msg_only,
+                svn_test_opts_t *opts,
+                apr_pool_t *pool)
+{
+  svn_error_t *err;
+  svn_repos_t *repos;
+  const char non_utf8_string[5] = { 'a', 0xff, 'b', '\n', 0 };
+  const char *non_lf_string = "a\r\nb\n\rc\rd\n";
+  apr_pool_t *subpool = svn_pool_create(pool);
+
+  *msg = "test if revprops are validated by repos";
+
+  if (msg_only)
+    return SVN_NO_ERROR;
+
+  /* Create a filesystem and repository. */
+  SVN_ERR(svn_test__create_repos(&repos, "test-repo-prop-validation",
+                                 opts, subpool));
+
+
+  /* Test an invalid commit log message: UTF-8 */
+  err = prop_validation_commit_with_revprop
+            ("/non_utf8_log_msg",
+             SVN_PROP_REVISION_LOG, APR_HASH_KEY_STRING,
+             svn_string_create(non_utf8_string, subpool),
+             repos, subpool);
+
+  if (err == SVN_NO_ERROR)
+    return svn_error_create(SVN_ERR_TEST_FAILED, err,
+                            "Failed to reject a log with invalid "
+                            "UTF-8");
+  else
+    if (err->apr_err != SVN_ERR_BAD_PROPERTY_VALUE)
+      return svn_error_create(SVN_ERR_TEST_FAILED, err,
+                              "Expected SVN_ERR_BAD_PROPERTY_VALUE for "
+                              "a log with invalid UTF-8, "
+                              "got another error.");
+  svn_error_clear(err);
+
+
+  /* Test an invalid commit log message: LF */
+  err = prop_validation_commit_with_revprop
+            ("/non_lf_log_msg",
+             SVN_PROP_REVISION_LOG, APR_HASH_KEY_STRING,
+             svn_string_create(non_lf_string, subpool),
+             repos, subpool);
+
+  if (err == SVN_NO_ERROR)
+    return svn_error_create(SVN_ERR_TEST_FAILED, err,
+                            "Failed to reject a log with inconsistent "
+                            "line ending style");
+  else
+    if (err->apr_err != SVN_ERR_BAD_PROPERTY_VALUE)
+      return svn_error_create(SVN_ERR_TEST_FAILED, err,
+                              "Expected SVN_ERR_BAD_PROPERTY_VALUE for "
+                              "a log with inconsistent line ending style, "
+                              "got another error.");
+  svn_error_clear(err);
+
+
+  /* Done. */
+  svn_pool_destroy(subpool);
+
+  return SVN_NO_ERROR;
+}
+
+
+
 /* Tests for svn_repos_get_logsN() */
 
 /* Log receiver which simple increments a counter. */
@@ -2219,7 +2353,7 @@ get_logs(const char **msg,
   svn_fs_root_t *txn_root;
   svn_revnum_t start, end, youngest_rev = 0;
   apr_pool_t *subpool = svn_pool_create(pool);
-  
+
   *msg = "test svn_repos_get_logs ranges and limits";
 
   if (msg_only)
@@ -2227,7 +2361,7 @@ get_logs(const char **msg,
 
   /* Create a filesystem and repository. */
   SVN_ERR(svn_test__create_repos(&repos, "test-repo-get-logs",
-                                 opts->fs_type, pool));
+                                 opts, pool));
   fs = svn_repos_fs(repos);
 
   /* Revision 1:  Add the Greek tree. */
@@ -2239,22 +2373,22 @@ get_logs(const char **msg,
   /* Revision 2:  Tweak A/mu and A/B/E/alpha. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
-  SVN_ERR(svn_test__set_file_contents(txn_root, "A/mu", 
+  SVN_ERR(svn_test__set_file_contents(txn_root, "A/mu",
                                       "Revision 2", subpool));
-  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/alpha", 
+  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/alpha",
                                       "Revision 2", subpool));
   SVN_ERR(svn_repos_fs_commit_txn(NULL, repos, &youngest_rev, txn, subpool));
 
   /* Revision 3:  Tweak A/B/E/alpha and A/B/E/beta. */
   SVN_ERR(svn_fs_begin_txn(&txn, fs, youngest_rev, subpool));
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
-  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/alpha", 
+  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/alpha",
                                       "Revision 3", subpool));
-  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/beta", 
+  SVN_ERR(svn_test__set_file_contents(txn_root, "A/B/E/beta",
                                       "Revision 3", subpool));
   SVN_ERR(svn_repos_fs_commit_txn(NULL, repos, &youngest_rev, txn, subpool));
 
-  
+
   for (start = 0; start <= youngest_rev; start++)
     {
       for (end = 0; end <= youngest_rev; end++)
@@ -2273,15 +2407,15 @@ get_logs(const char **msg,
 
               svn_pool_clear(subpool);
               num_logs = 0;
-              SVN_ERR(svn_repos_get_logs4(repos, NULL, start_arg, end_arg, 
+              SVN_ERR(svn_repos_get_logs4(repos, NULL, start_arg, end_arg,
                                           limit, FALSE, FALSE, FALSE, NULL,
                                           NULL, NULL, log_receiver, &num_logs,
                                           subpool));
               if (num_logs != num_expected)
                 return svn_error_createf(SVN_ERR_TEST_FAILED, NULL,
                                          "Log with start=%ld,end=%ld,limit=%d "
-                                         "returned %d entries (expected %d)", 
-                                         start_arg, end_arg, limit, 
+                                         "returned %d entries (expected %d)",
+                                         start_arg, end_arg, limit,
                                          num_logs, max_logs);
             }
         }
@@ -2308,6 +2442,7 @@ struct svn_test_descriptor_t test_funcs[] =
     SVN_TEST_PASS(commit_continue_txn),
     SVN_TEST_PASS(node_location_segments),
     SVN_TEST_PASS(reporter_depth_exclude),
+    SVN_TEST_PASS(prop_validation),
     SVN_TEST_PASS(get_logs),
     SVN_TEST_NULL
   };

@@ -23,6 +23,7 @@
 
 /* Structure definitions */
 #ifdef SWIGPYTHON
+%proxy(svn_cmdline_prompt_baton2_t);
 %proxy(svn_cmdline_prompt_baton_t);
 #endif
 

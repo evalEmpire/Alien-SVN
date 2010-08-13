@@ -6,16 +6,17 @@
 '''usage: python run_tests.py [--url=<base-url>] [--fs-type=<fs-type>]
                     [--verbose] [--cleanup] [--enable-sasl] [--parallel]
                     [--http-library=<http-library>]
+                    [--config-file=<file>]
                     [--server-minor-version=<version>] <abs_srcdir> <abs_builddir>
                     <prog ...>
 
-The optional base-url, fs-type, http-library, server-minor-version,
-verbose, parallel, enable-sasl, and cleanup options, and the first two
-parameters are passed unchanged to the TestHarness constructor.  All
-other parameters are names of test programs.
+The optional flags and the first two parameters are passed unchanged
+to the TestHarness constructor.  All other parameters are names of
+test programs.
 '''
 
 import os, sys
+import time
 
 import getopt
 try:
@@ -30,8 +31,9 @@ class TestHarness:
   def __init__(self, abs_srcdir, abs_builddir, logfile,
                base_url=None, fs_type=None, http_library=None,
                server_minor_version=None, verbose=None,
-               cleanup=None, enable_sasl=None, parallel=None, list_tests=None,
-               svn_bin=None):
+               cleanup=None, enable_sasl=None, parallel=None, config_file=None,
+               fsfs_sharding=None, fsfs_packing=None,
+               list_tests=None, svn_bin=None):
     '''Construct a TestHarness instance.
 
     ABS_SRCDIR and ABS_BUILDDIR are the source and build directories.
@@ -53,6 +55,13 @@ class TestHarness:
     self.cleanup = cleanup
     self.enable_sasl = enable_sasl
     self.parallel = parallel
+    self.fsfs_sharding = fsfs_sharding
+    self.fsfs_packing = fsfs_packing
+    if fsfs_packing is not None and fsfs_sharding is None:
+      raise Exception('--fsfs-packing requires --fsfs-sharding')
+    self.config_file = None
+    if config_file is not None:
+      self.config_file = os.path.abspath(config_file)
     self.list_tests = list_tests
     self.svn_bin = svn_bin
     self.log = None
@@ -61,20 +70,42 @@ class TestHarness:
     'Run all test programs given in LIST.'
     self._open_log('w')
     failed = 0
-    cnt = 0
-    for prog in list:
+    for cnt, prog in enumerate(list):
       failed = self._run_test(prog, cnt, len(list)) or failed
-      cnt += 1
     self._open_log('r')
     log_lines = self.log.readlines()
-    skipped = filter(lambda x: x[:6] == 'SKIP: ', log_lines)
+    # Print summaries from least interesting to most interesting.
+    skipped = [x for x in log_lines if x[:6] == 'SKIP: ']
     if skipped:
-      print 'At least one test was SKIPPED, checking ' + self.logfile
-      map(sys.stdout.write, skipped)
-    if failed:
-      print 'At least one test FAILED, checking ' + self.logfile
-      map(sys.stdout.write, filter(lambda x: x[:6] in ('FAIL: ', 'XPASS:'),
-                                   log_lines))
+      print('At least one test was SKIPPED, checking ' + self.logfile)
+      for x in skipped:
+        sys.stdout.write(x)
+    xfailed = [x for x in log_lines if x[:6] == 'XFAIL:']
+    if xfailed:
+      print('At least one test XFAILED, checking ' + self.logfile)
+      for x in xfailed:
+        sys.stdout.write(x)
+    failed_list = [x for x in log_lines if x[:6] == 'FAIL: ']
+    if failed_list:
+      print('At least one test FAILED, checking ' + self.logfile)
+      for x in failed_list:
+        sys.stdout.write(x)
+    xpassed = [x for x in log_lines if x[:6] == 'XPASS:']
+    if xpassed:
+      print('At least one test XPASSED, checking ' + self.logfile)
+      for x in xpassed:
+        sys.stdout.write(x)
+    if skipped or xfailed or failed_list or xpassed:
+      print('Summary of test results:')
+      if skipped:
+        print('  %d test%s SKIPPED' % (len(skipped), 's'*min(len(skipped), 1)))
+      if xfailed:
+        print('  %d test%s XFAILED' % (len(xfailed), 's'*min(len(xfailed), 1)))
+      if failed_list:
+        print('  %d test%s FAILED' % (len(failed_list),
+                                      's'*min(len(failed_list), 1)))
+      if xpassed:
+        print('  %d test%s XPASSED' % (len(xpassed), 's'*min(len(xpassed), 1)))
     self._close_log()
     return failed
 
@@ -90,7 +121,7 @@ class TestHarness:
       self.log = None
 
   def _run_test(self, prog, test_nr, total_tests):
-    'Run a single test.'
+    "Run a single test. Return the test's exit code."
 
     def quote(arg):
       if sys.platform == 'win32':
@@ -102,8 +133,10 @@ class TestHarness:
     # Using write here because we don't want even a trailing space
     sys.stdout.write('Running all tests in %s [%d/%d]...' % (
       progbase, test_nr + 1, total_tests))
-    print >> self.log, 'START: ' + progbase
+    self.log.write('START: %s\n' % progbase)
+    self.log.flush()
 
+    start_time = time.time()
     if progbase[-3:] == '.py':
       progname = sys.executable
       cmdline = [quote(progname),
@@ -114,12 +147,16 @@ class TestHarness:
         cmdline.append('--enable-sasl')
       if self.parallel is not None:
         cmdline.append('--parallel')
+      if self.config_file is not None:
+        cmdline.append(quote('--config-file=' + self.config_file))
     elif os.access(prog, os.X_OK):
       progname = './' + progbase
       cmdline = [quote(progname),
                  quote('--srcdir=' + os.path.join(self.srcdir, progdir))]
+      if self.config_file is not None:
+        cmdline.append(quote('--config-file=' + self.config_file))
     else:
-      print 'Don\'t know what to do about ' + progbase
+      print('Don\'t know what to do about ' + progbase)
       sys.exit(1)
 
     if self.verbose is not None:
@@ -136,6 +173,10 @@ class TestHarness:
       cmdline.append('--list')
     if self.svn_bin is not None:
       cmdline.append(quote('--bin=' + self.svn_bin))
+    if self.fsfs_sharding is not None:
+      cmdline.append('--fsfs-sharding=%d' % self.fsfs_sharding)
+    if self.fsfs_packing is not None:
+      cmdline.append('--fsfs-packing')
 
     old_cwd = os.getcwd()
     try:
@@ -151,17 +192,27 @@ class TestHarness:
     # probably means the test didn't run at all and probably didn't
     # output any failure info.
     if failed == 1:
-      print 'FAILURE'
+      print('FAILURE')
     elif failed:
-      print >> self.log, 'FAIL:  ' + progbase + ': Unknown test failure see tests.log.\n'
-      print 'FAILURE'
+      self.log.write('FAIL:  %s: Unknown test failure see tests.log.\n\n' % progbase)
+      self.log.flush()
+      print('FAILURE')
     else:
-      print 'success'
-    print >> self.log, 'END: ' + progbase + '\n'
+      print('success')
+    elapsed_time = time.strftime('%H:%M:%S', 
+                   time.gmtime(time.time() - start_time))
+    if self.log:
+      self.log.write('END: %s\n' % progbase)
+      self.log.write('ELAPSED: %s %s\n\n' % (progbase, elapsed_time))
+    else:
+      print('END: %s\n' % progbase)
+      print('ELAPSED: %s %s\n' % (progbase, elapsed_time))
     return failed
 
-  def _run_prog(self, progname, cmdline):
-    'Execute COMMAND, redirecting standard output and error to the log file.'
+  def _run_prog(self, progname, arglist):
+    '''Execute the file PROGNAME in a subprocess, with ARGLIST as its
+    arguments (a list/tuple of arg0..argN), redirecting standard output and
+    error to the log file. Return the command's exit code.'''
     def restore_streams(stdout, stderr):
       os.dup2(stdout, 1)
       os.dup2(stderr, 2)
@@ -176,7 +227,7 @@ class TestHarness:
     try:
       os.dup2(self.log.fileno(), 1)
       os.dup2(self.log.fileno(), 2)
-      rv = os.spawnv(os.P_WAIT, progname, cmdline)
+      rv = os.spawnv(os.P_WAIT, progname, arglist)
     except:
       restore_streams(old_stdout, old_stderr)
       raise
@@ -190,17 +241,19 @@ def main():
     opts, args = my_getopt(sys.argv[1:], 'u:f:vc',
                            ['url=', 'fs-type=', 'verbose', 'cleanup',
                             'http-library=', 'server-minor-version=',
-                            'enable-sasl', 'parallel'])
+                            'fsfs-packing', 'fsfs-sharding=',
+                            'enable-sasl', 'parallel', 'config-file='])
   except getopt.GetoptError:
     args = []
 
   if len(args) < 3:
-    print __doc__
+    print(__doc__)
     sys.exit(2)
 
   base_url, fs_type, verbose, cleanup, enable_sasl, http_library, \
-    server_minor_version, parallel = \
-            None, None, None, None, None, None, None, None
+    server_minor_version, fsfs_sharding, fsfs_packing, parallel, \
+    config_file = \
+            None, None, None, None, None, None, None, None, None, None, None
   for opt, val in opts:
     if opt in ['-u', '--url']:
       base_url = val
@@ -208,6 +261,10 @@ def main():
       fs_type = val
     elif opt in ['--http-library']:
       http_library = val
+    elif opt in ['--fsfs-sharding']:
+      fsfs_sharding = int(val)
+    elif opt in ['--fsfs-packing']:
+      fsfs_packing = 1
     elif opt in ['--server-minor-version']:
       server_minor_version = val
     elif opt in ['-v', '--verbose']:
@@ -218,13 +275,16 @@ def main():
       enable_sasl = 1
     elif opt in ['--parallel']:
       parallel = 1
+    elif opt in ['--config-file']:
+      config_file = val
     else:
       raise getopt.GetoptError
 
   th = TestHarness(args[0], args[1],
                    os.path.abspath('tests.log'),
                    base_url, fs_type, http_library, server_minor_version,
-                   verbose, cleanup, enable_sasl, parallel)
+                   verbose, cleanup, enable_sasl, parallel, config_file,
+                   fsfs_sharding, fsfs_packing)
 
   failed = th.run(args[2:])
   if failed:

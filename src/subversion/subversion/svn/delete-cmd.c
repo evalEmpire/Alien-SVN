@@ -27,6 +27,10 @@
 #include "svn_path.h"
 #include "cl.h"
 
+/* We shouldn't be including a private header here, but it is
+ * necessary for fixing issue #3416 */
+#include "private/svn_opt_private.h"
+
 #include "svn_private_config.h"
 
 
@@ -45,8 +49,8 @@ svn_cl__delete(apr_getopt_t *os,
   svn_error_t *err;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   if (! targets->nelts)
     return svn_error_create(SVN_ERR_CL_INSUFFICIENT_ARGS, 0, NULL);
@@ -72,6 +76,8 @@ svn_cl__delete(apr_getopt_t *os,
                                          NULL, ctx->config, pool));
     }
 
+  SVN_ERR(svn_opt__eat_peg_revisions(&targets, targets, pool));
+
   err = svn_client_delete3(&commit_info, targets, opt_state->force,
                            opt_state->keep_local, opt_state->revprop_table,
                            ctx, pool);
@@ -79,7 +85,7 @@ svn_cl__delete(apr_getopt_t *os,
     err = svn_cl__may_need_force(err);
 
   if (ctx->log_msg_func3)
-    SVN_ERR(svn_cl__cleanup_log_msg(ctx->log_msg_baton3, err));
+    SVN_ERR(svn_cl__cleanup_log_msg(ctx->log_msg_baton3, err, pool));
   else if (err)
     return err;
 

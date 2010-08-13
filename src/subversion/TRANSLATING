@@ -7,7 +7,7 @@ please read this first.
                    Guide to translating Subversion
                    ===============================
 
-$LastChangedDate: 2006-08-31 21:34:31 +0000 (Thu, 31 Aug 2006) $
+$LastChangedDate: 2008-05-26 21:09:19 +0000 (Mon, 26 May 2008) $
 
 * Introduction
 * Software version requirements
@@ -104,11 +104,6 @@ Please replace those with these two lines:
 * Windows
 
   See issue #1977 in the subversion issue tracker
-
-For the time being, hourly updated subversion.pot files are posted at:
-
-http://hix.nu/subversion/trunk/subversion.pot (for trunk)
-http://hix.nu/subversion/1.1.x/subversion.pot (for 1.1.x)
 
 
 

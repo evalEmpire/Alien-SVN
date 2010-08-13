@@ -70,7 +70,7 @@ public class SVNClientSynchronized implements SVNClientInterface
      * @return The name of the working copy's administrative
      * directory, which is usually <code>.svn</code>.
      * @see <a
-     * href="http://svn.collab.net/repos/svn/trunk/notes/asp-dot-net-hack.txt">
+     * href="http://svn.apache.org/repos/asf/subversion/trunk/notes/asp-dot-net-hack.txt">
      * Instructions on changing this as a work-around for the behavior of
      * ASP.Net on Windows.</a>
      * @since 1.3
@@ -339,6 +339,9 @@ public class SVNClientSynchronized implements SVNClientInterface
     }
 
     /**
+     * @deprecated Use {@link #logMessages(String, Revision, RevisionRange[],
+     *                                     boolean, boolean, boolean, String[],
+     *                                     long, LogMessageCallback)} instead.
      * @since 1.5
      */
     public void logMessages(String path, Revision pegRevision,
@@ -356,6 +359,25 @@ public class SVNClientSynchronized implements SVNClientInterface
                                revisionEnd, stopOnCopy, discoverPath,
                                includeMergedRevisions, revProps,
                                limit, callback);
+        }
+    }
+
+    /**
+     * @since 1.6
+     */
+    public void logMessages(String path, Revision pegRevision,
+                            RevisionRange[] revisionRanges, boolean stopOnCopy,
+                            boolean discoverPath,
+                            boolean includeMergedRevisions,
+                            String[] revProps, long limit,
+                            LogMessageCallback callback)
+            throws ClientException
+    {
+        synchronized (clazz)
+        {
+            worker.logMessages(path, pegRevision, revisionRanges,
+                               stopOnCopy, discoverPath, includeMergedRevisions,
+                               revProps, limit, callback);
         }
     }
 
@@ -988,7 +1010,7 @@ public class SVNClientSynchronized implements SVNClientInterface
     public void merge(String path, Revision pegRevision,
                       RevisionRange[] revisions, String localPath,
                       boolean force, int depth, boolean ignoreAncestry,
-                      boolean dryRun, boolean recordOnly) 
+                      boolean dryRun, boolean recordOnly)
             throws ClientException
     {
         synchronized(clazz)
@@ -1434,6 +1456,20 @@ public class SVNClientSynchronized implements SVNClientInterface
         synchronized(clazz)
         {
             worker.setRevProperty(path, name, rev, value, force);
+        }
+    }
+
+    /**
+     * @since 1.6
+     */
+    public void setRevProperty(String path, String name, Revision rev,
+                               String value, String originalValue,
+                               boolean force)
+            throws ClientException
+    {
+        synchronized(clazz)
+        {
+            worker.setRevProperty(path, name, rev, value, originalValue, force);
         }
     }
 

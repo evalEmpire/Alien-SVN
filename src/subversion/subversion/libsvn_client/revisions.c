@@ -85,7 +85,7 @@ svn_client__get_revision_number(svn_revnum_t *revnum,
         SVN_ERR(svn_wc_adm_probe_open3(&adm_access, NULL, path, FALSE,
                                        0, NULL, NULL, pool));
         SVN_ERR(svn_wc__entry_versioned(&ent, path, adm_access, FALSE, pool));
-        SVN_ERR(svn_wc_adm_close(adm_access));
+        SVN_ERR(svn_wc_adm_close2(adm_access, pool));
 
         if ((revision->kind == svn_opt_revision_base)
             || (revision->kind == svn_opt_revision_working))
@@ -129,9 +129,12 @@ svn_client__get_revision_number(svn_revnum_t *revnum,
     }
 
   /* Final check -- if our caller provided a youngest revision, and
-  the number we wound up with is younger than that revision, we need
-  to stick to our caller's idea of "youngest". */
+     the number we wound up with (after talking to the server) is younger
+     than that revision, we need to stick to our caller's idea of "youngest".
+   */
   if (youngest_rev
+      && (revision->kind == svn_opt_revision_head
+          || revision->kind == svn_opt_revision_date)
       && SVN_IS_VALID_REVNUM(*youngest_rev)
       && SVN_IS_VALID_REVNUM(*revnum)
       && (*revnum > *youngest_rev))
@@ -139,33 +142,3 @@ svn_client__get_revision_number(svn_revnum_t *revnum,
 
   return SVN_NO_ERROR;
 }
-
-
-svn_boolean_t
-svn_client__compare_revisions(svn_opt_revision_t *revision1,
-                              svn_opt_revision_t *revision2)
-{
-  if ((revision1->kind != revision2->kind)
-      || ((revision1->kind == svn_opt_revision_number)
-          && (revision1->value.number != revision2->value.number))
-      || ((revision1->kind == svn_opt_revision_date)
-          && (revision1->value.date != revision2->value.date)))
-    return FALSE;
-
-  /* Else. */
-  return TRUE;
-}
-
-
-svn_boolean_t
-svn_client__revision_is_local(const svn_opt_revision_t *revision)
-{
-  if ((revision->kind == svn_opt_revision_unspecified)
-      || (revision->kind == svn_opt_revision_head)
-      || (revision->kind == svn_opt_revision_number)
-      || (revision->kind == svn_opt_revision_date))
-    return FALSE;
-  else
-    return TRUE;
-}
-

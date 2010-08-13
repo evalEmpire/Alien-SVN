@@ -17,12 +17,13 @@ AC_DEFUN(SVN_LIB_SERF,
     else
       AC_MSG_NOTICE([serf library configuration])
       serf_prefix=$withval
-      save_cppflags="$CPPFLAGS $SVN_APR_INCLUDES $SVN_APRUTIL_INCLUDES"
+      save_cppflags="$CPPFLAGS"
       CPPFLAGS="$CPPFLAGS $SVN_APR_INCLUDES $SVN_APRUTIL_INCLUDES -I$serf_prefix/include/serf-0"
       AC_CHECK_HEADERS(serf.h,[
         save_ldflags="$LDFLAGS"
         LDFLAGS="$LDFLAGS -L$serf_prefix/lib"
-        AC_CHECK_LIB(serf-0, serf_context_create,[serf_found="yes"])
+        AC_CHECK_LIB(serf-0, serf_context_create,[serf_found="yes"], ,
+          $SVN_APRUTIL_EXPORT_LIBS $SVN_APR_EXPORT_LIBS -lz)
         LDFLAGS="$save_ldflags"])
       CPPFLAGS="$save_cppflags"
     fi
@@ -45,7 +46,12 @@ AC_DEFUN(SVN_LIB_SERF,
   if test $serf_found = "yes"; then
     SVN_SERF_PREFIX="$serf_prefix"
     SVN_SERF_INCLUDES="-I$serf_prefix/include/serf-0"
-    SVN_SERF_LIBS="$serf_prefix/lib/libserf-0.la"
+    if test -e "$serf_prefix/lib/libserf-0.la"; then
+      SVN_SERF_LIBS="$serf_prefix/lib/libserf-0.la"
+    else
+      SVN_SERF_LIBS="-lserf-0"
+      LDFLAGS="$LDFLAGS -L$serf_prefix/lib"
+    fi
     SVN_SERF_EXPORT_LIBS="-L$serf_prefix/lib -lserf-0"
   elif test $serf_found = "reconfig"; then
     serf_found=yes

@@ -41,6 +41,7 @@
 #include "svn_props.h"
 #include "mod_dav_svn.h"
 #include "svn_ra.h"  /* for SVN_RA_CAPABILITY_* */
+#include "private/svn_log.h"
 
 #include "dav_svn.h"
 
@@ -592,8 +593,8 @@ prep_regular(dav_resource_combined *comb)
   if (derr != NULL)
     return derr;
 
-  comb->res.exists = (kind == svn_node_none) ? FALSE : TRUE;
-  comb->res.collection = (kind == svn_node_dir) ? TRUE : FALSE;
+  comb->res.exists = (kind != svn_node_none);
+  comb->res.collection = (kind == svn_node_dir);
 
   /* HACK:  dav_get_resource_state() is making shortcut assumptions
      about how to distinguish a null resource from a lock-null
@@ -783,8 +784,8 @@ prep_working(dav_resource_combined *comb)
   if (derr != NULL)
     return derr;
 
-  comb->res.exists = (kind == svn_node_none) ? FALSE : TRUE;
-  comb->res.collection = (kind == svn_node_dir) ? TRUE : FALSE;
+  comb->res.exists = (kind != svn_node_none);
+  comb->res.collection = (kind == svn_node_dir);
 
   return NULL;
 }
@@ -1230,7 +1231,7 @@ get_parentpath_resource(request_rec *r,
   repos->base_url = ap_construct_url(r->pool, "", r);
   repos->special_uri = dav_svn__get_special_uri(r);
   repos->username = r->user;
-  repos->capabilities = apr_hash_make(repos->pool);
+  repos->client_capabilities = apr_hash_make(repos->pool);
 
   /* Make sure this type of resource always has a trailing slash; if
      not, redirect to a URI that does. */
@@ -1459,6 +1460,154 @@ capabilities_as_list(apr_hash_t *capabilities, apr_pool_t *pool)
 }
 
 
+/* Given a non-NULL QUERY string of the form "key1=val1&key2=val2&...",
+ * parse the keys and values into an apr table.  Allocate the table in
+ * POOL;  dup all keys and values into POOL as well.
+ *
+ * Note that repeating the same key will cause table overwrites
+ * (e.g. "r=3&r=5"), and that a lack of value ("p=") is legal, but
+ * equivalent to not specifying the key at all.
+ */
+static apr_table_t *
+querystring_to_table(const char *query, apr_pool_t *pool)
+{
+  apr_table_t *table = apr_table_make(pool, 2);
+  apr_array_header_t *array = svn_cstring_split(query, "&", TRUE, pool);
+  int i;
+  for (i = 0; i < array->nelts; i++)
+    {
+      char *keyval = APR_ARRAY_IDX(array, i, char *);
+      char *equals = strchr(keyval, '=');
+      if (equals != NULL)
+        {
+          *equals = '\0';
+          apr_table_set(table, keyval, equals + 1);
+        }
+    }
+  return table;
+}
+
+
+/* Helper for get_resource().
+ *
+ * Given a fully fleshed out COMB object which has already been parsed
+ * via parse_uri(), parse the querystring in QUERY.
+ *
+ * Specifically, look for optional 'p=PEGREV' and 'r=WORKINGREV'
+ * values in the querystring, and modify COMB so that prep_regular()
+ * opens the correct revision and path.
+ */
+static dav_error *
+parse_querystring(request_rec *r, const char *query,
+                  dav_resource_combined *comb, apr_pool_t *pool)
+{
+  svn_error_t *serr;
+  svn_revnum_t working_rev, peg_rev;
+  apr_table_t *pairs = querystring_to_table(query, pool);
+  const char *prevstr = apr_table_get(pairs, "p");
+  const char *wrevstr;
+
+  if (prevstr)
+    {
+      peg_rev = SVN_STR_TO_REV(prevstr);
+      if (!SVN_IS_VALID_REVNUM(peg_rev))
+        return dav_new_error(pool, HTTP_BAD_REQUEST, 0,
+                             "invalid peg rev in query string");
+    }
+  else
+    {
+      /* No peg-rev?  Default to HEAD, just like the cmdline client. */
+      serr = svn_fs_youngest_rev(&peg_rev, comb->priv.repos->fs, pool);
+      if (serr != NULL)
+        return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
+                                    "Couldn't fetch youngest rev.", pool);
+    }
+
+  wrevstr = apr_table_get(pairs, "r");
+  if (wrevstr)
+    {
+      working_rev = SVN_STR_TO_REV(wrevstr);
+      if (!SVN_IS_VALID_REVNUM(working_rev))
+        return dav_new_error(pool, HTTP_BAD_REQUEST, 0,
+                             "invalid working rev in query string");
+    }
+  else
+    {
+      /* No working-rev?  Assume it's equal to the peg-rev, just
+         like the cmdline client does. */
+      working_rev = peg_rev;
+    }
+
+  /* If WORKING_REV is younger than PEG_REV, we have a problem.
+     Our node-tracing algorithms can't handle that scenario, so we'll
+     disallow it here. */
+  if (working_rev > peg_rev)
+    return dav_new_error(pool, HTTP_BAD_REQUEST, 0,
+                         "working rev greater than peg rev.");
+
+  /* If WORKING_REV and PEG_REV are equivalent, we want to return the
+     resource at the revision.  Otherwise, WORKING_REV is older than
+     PEG_REV, so we need to crawl back through the history of
+     REPOS_PATH@PEG_REV until we hit WORKING_REV.  We'll then redirect
+     the client to the new location/revision pair found by that crawl. */
+  if (working_rev == peg_rev)
+    {
+      comb->priv.root.rev = peg_rev;
+
+      /* Did we have a peg revision?  Remember this little fact (in
+         case deliver() needs to know it). */
+      if (prevstr)
+        comb->priv.pegged = TRUE;
+    }
+  else
+    {
+      const char *newpath;
+      apr_hash_t *locations;
+      apr_array_header_t *loc_revs = apr_array_make(pool, 1,
+                                                    sizeof(svn_revnum_t));
+
+      dav_svn__authz_read_baton *arb = apr_pcalloc(pool, sizeof(*arb));
+      arb->r = comb->priv.r;
+      arb->repos = comb->priv.repos;
+
+      APR_ARRAY_PUSH(loc_revs, svn_revnum_t) = working_rev;
+      if ((serr = svn_repos_trace_node_locations(comb->priv.repos->fs,
+                                                 &locations,
+                                                 comb->priv.repos_path,
+                                                 peg_rev,
+                                                 loc_revs,
+                                                 dav_svn__authz_read_func(arb),
+                                                 arb,
+                                                 pool)))
+        return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
+                                    "Couldn't trace history.", pool);
+
+      newpath = apr_hash_get(locations, &working_rev, sizeof(svn_revnum_t));
+      if (! newpath)
+        return dav_new_error(pool, HTTP_NOT_FOUND, 0,
+                             "path doesn't exist in that revision.");
+
+      /* Redirect folks to a canonical, peg-revision-only location.
+         If they used a peg revision in this request, we can use a
+         permanent redirect.  If they didn't (peg-rev is HEAD), we can
+         only use a temporary redirect. */
+      apr_table_setn(r->headers_out, "Location",
+                     ap_construct_url(r->pool,
+                                      apr_psprintf(r->pool, "%s%s?p=%ld",
+                                                   comb->priv.repos->root_path,
+                                                   newpath, working_rev),
+                                      r));
+      return dav_new_error(r->pool,
+                           prevstr ? HTTP_MOVED_PERMANENTLY
+                                   : HTTP_MOVED_TEMPORARILY,
+                           0, "redirecting to canonical location");
+    }
+
+  return NULL;
+}
+
+
+
 static dav_error *
 get_resource(request_rec *r,
              const char *root_path,
@@ -1637,7 +1786,7 @@ get_resource(request_rec *r,
 
   /* Allocate room for capabilities, but don't search for any until
      we know that this is a Subversion client. */
-  repos->capabilities = apr_hash_make(repos->pool);
+  repos->client_capabilities = apr_hash_make(repos->pool);
 
   /* Remember if the requesting client is a Subversion client, and if
      so, what its capabilities are. */
@@ -1656,7 +1805,7 @@ get_resource(request_rec *r,
            more than that). */
 
         /* Start out assuming no capabilities. */
-        apr_hash_set(repos->capabilities, SVN_RA_CAPABILITY_MERGEINFO,
+        apr_hash_set(repos->client_capabilities, SVN_RA_CAPABILITY_MERGEINFO,
                      APR_HASH_KEY_STRING, capability_no);
 
         /* Then see what we can find. */
@@ -1669,7 +1818,8 @@ get_resource(request_rec *r,
             if (svn_cstring_match_glob_list(SVN_DAV_NS_DAV_SVN_MERGEINFO,
                                             vals))
               {
-                apr_hash_set(repos->capabilities, SVN_RA_CAPABILITY_MERGEINFO,
+                apr_hash_set(repos->client_capabilities,
+                             SVN_RA_CAPABILITY_MERGEINFO,
                              APR_HASH_KEY_STRING, capability_yes);
               }
           }
@@ -1702,7 +1852,7 @@ get_resource(request_rec *r,
       /* Store the capabilities of the current connection, making sure
          to use the same pool repos->repos itself was created in. */
       serr = svn_repos_remember_client_capabilities
-        (repos->repos, capabilities_as_list(repos->capabilities,
+        (repos->repos, capabilities_as_list(repos->client_capabilities,
                                             r->connection->pool));
       if (serr != NULL)
         {
@@ -1781,8 +1931,14 @@ get_resource(request_rec *r,
         }
 
       do {
-        serr = svn_fs_access_add_lock_token(access_ctx,
-                                            list->locktoken->uuid_str);
+        /* Note the path/lock pairs are only for lock token checking
+           in access, and the relative path is not actually accurate
+           as it contains the !svn bits.  However, we're using only
+           the tokens anyway (for access control). */
+
+        serr = svn_fs_access_add_lock_token2(access_ctx, relative,
+                                             list->locktoken->uuid_str);
+
         if (serr)
           return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
                                       "Error pushing token into filesystem.",
@@ -1801,6 +1957,14 @@ get_resource(request_rec *r,
   /* skip over the leading "/" in the relative URI */
   if (parse_uri(comb, relative + 1, label, use_checked_in))
     goto malformed_URI;
+
+  /* Check for a query string on a regular-type resource; this allows
+     us to discover and parse  a "universal" rev-path URI of the form
+     "path?[r=REV][&p=PEGREV]" */
+  if ((comb->res.type == DAV_RESOURCE_TYPE_REGULAR)
+      && (r->parsed_uri.query != NULL)
+      && ((err = parse_querystring(r, r->parsed_uri.query, comb, r->pool))))
+    return err;
 
 #ifdef SVN_DEBUG
   if (comb->res.type == DAV_RESOURCE_TYPE_UNKNOWN)
@@ -1821,10 +1985,11 @@ get_resource(request_rec *r,
   if (comb->res.collection && comb->res.type == DAV_RESOURCE_TYPE_REGULAR
       && !had_slash && r->method_number == M_GET)
     {
-      /* note that we drop r->args. we don't deal with them anyways */
       const char *new_path = apr_pstrcat(r->pool,
                                          ap_escape_uri(r->pool, r->uri),
                                          "/",
+                                         r->args ? "?" : "",
+                                         r->args ? r->args : "",
                                          NULL);
       apr_table_setn(r->headers_out, "Location",
                      ap_construct_url(r->pool, new_path, r));
@@ -2556,20 +2721,31 @@ set_headers(request_rec *r, const dav_resource *resource)
       else if ((! resource->info->repos->is_svn_client)
                && r->content_type)
         mimetype = r->content_type;
-      else
-        mimetype = ap_default_type(r);
 
-      serr = svn_mime_type_validate(mimetype, resource->pool);
-      if (serr)
+      /* If we found a MIME type, we'll make sure it's Subversion-friendly. */
+      if (mimetype)
         {
-          /* Probably serr->apr == SVN_ERR_BAD_MIME_TYPE, but
-             there's no point even checking.  No matter what the
-             error is, we can't derive the mime type from the
-             svn:mime-type property.  So we resort to the infamous
-             "mime type of last resort." */
-          svn_error_clear(serr);
-          mimetype = "application/octet-stream";
+          if ((serr = svn_mime_type_validate(mimetype, resource->pool)))
+            {
+              /* Probably serr->apr == SVN_ERR_BAD_MIME_TYPE, but there's
+                 no point even checking.  No matter what the error is, we
+                 can't use this MIME type.  */
+              svn_error_clear(serr);
+              mimetype = NULL;
+            }
         }
+
+      /* We've found/calculated/validated no usable MIME type.  We
+         could fall back to "application/octet-stream" (aka "bag o'
+         bytes"), but many browsers have grown to expect "text/plain"
+         to mean "*shrug*", and kick off their own MIME type detection
+         routines when they see it.  So we'll use "text/plain".
+      
+         ### Why not just avoid sending a Content-type at all?  Is
+         ### that just bad form for HTTP?  */
+      if (! mimetype)
+        mimetype = "text/plain";
+
 
       /* if we aren't sending a diff, then we know the length of the file,
          so set up the Content-Length header */
@@ -2813,9 +2989,23 @@ deliver(const dav_resource *resource, ap_filter_t *output)
           && (resource->info->restype != DAV_SVN_RESTYPE_PARENTPATH_COLLECTION))
         {
           if (gen_html)
-            ap_fprintf(output, bb, "  <li><a href=\"../\">..</a></li>\n");
+            {
+              if (resource->info->pegged)
+                {
+                  ap_fprintf(output, bb,
+                             "  <li><a href=\"../?p=%ld\">..</a></li>\n",
+                             resource->info->root.rev);
+                }
+              else
+                {
+                  ap_fprintf(output, bb,
+                             "  <li><a href=\"../\">..</a></li>\n");
+                }
+            }
           else
-            ap_fprintf(output, bb, "    <updir />\n");
+            {
+              ap_fprintf(output, bb, "    <updir />\n");
+            }
         }
 
       /* get a sorted list of the entries */
@@ -2861,9 +3051,21 @@ deliver(const dav_resource *resource, ap_filter_t *output)
 
           if (gen_html)
             {
-              ap_fprintf(output, bb,
-                         "  <li><a href=\"%s\">%s</a></li>\n",
-                         href, name);
+              /* If our directory was access using the public peg-rev
+                 CGI query interface, we'll let its dirents carry that
+                 peg-rev, too. */
+              if (resource->info->pegged)
+                {
+                  ap_fprintf(output, bb,
+                             "  <li><a href=\"%s?p=%ld\">%s</a></li>\n",
+                             href, resource->info->root.rev, name);
+                }
+              else
+                {
+                  ap_fprintf(output, bb,
+                             "  <li><a href=\"%s\">%s</a></li>\n",
+                             href, name);
+                }
             }
           else
             {
@@ -2871,20 +3073,48 @@ deliver(const dav_resource *resource, ap_filter_t *output)
 
               /* This is where we could search for props */
 
-              ap_fprintf(output, bb,
-                         "    <%s name=\"%s\" href=\"%s\" />\n",
-                         tag, name, href);
+              /* If our directory was access using the public peg-rev
+                 CGI query interface, we'll let its dirents carry that
+                 peg-rev, too. */
+              if (resource->info->pegged)
+                {
+                  ap_fprintf(output, bb,
+                             "    <%s name=\"%s\" href=\"%s?p=%ld\" />\n",
+                             tag, name, href, resource->info->root.rev);
+                }
+              else
+                {
+                  ap_fprintf(output, bb,
+                             "    <%s name=\"%s\" href=\"%s\" />\n",
+                             tag, name, href);
+                }
             }
         }
 
       svn_pool_destroy(entry_pool);
 
       if (gen_html)
-        ap_fputs(output, bb,
-                 " </ul>\n <hr noshade><em>Powered by "
-                 "<a href=\"http://subversion.tigris.org/\">Subversion</a> "
-                 "version " SVN_VERSION "."
-                 "</em>\n</body></html>");
+        {
+          if (strcmp(ap_psignature("FOO", resource->info->r), "") != 0)
+            {
+              /* Apache's signature generation code didn't eat our prefix.
+                 ServerSignature must be enabled.  Print our version info.
+
+                 WARNING: This is a kludge!! ap_psignature() doesn't promise
+                 to return the empty string when ServerSignature is off.  We
+                 know it does by code inspection, but this behavior is subject
+                 to change. (Perhaps we should try to get the Apache folks to
+                 make this promise, though.  Seems harmless/useful enough...)
+              */
+              ap_fputs(output, bb,
+                       " </ul>\n <hr noshade><em>Powered by "
+                       "<a href=\"http://subversion.tigris.org/\">Subversion"
+                       "</a> version " SVN_VERSION "."
+                       "</em>\n</body></html>");
+            }
+          else
+            ap_fputs(output, bb, " </ul>\n</body></html>");
+        }
       else
         ap_fputs(output, bb, "  </index>\n</svn>\n");
 
@@ -3466,11 +3696,10 @@ do_walk(walker_ctx_t *ctx, int depth)
      header and distinguish an svn client ('svn ls') from a generic
      DAV client.  */
   dav_svn__operational_log(&ctx->info,
-                           apr_psprintf(params->pool,
-                             "get-dir %s r%ld text",
-                             svn_path_uri_encode(ctx->info.repos_path,
-                                                 params->pool),
-                             ctx->info.root.rev));
+                           svn_log__get_dir(ctx->info.repos_path,
+                                            ctx->info.root.rev,
+                                            TRUE, FALSE, SVN_DIRENT_ALL,
+                                            params->pool));
 
   /* fetch this collection's children */
   serr = svn_fs_dir_entries(&children, ctx->info.root.root,

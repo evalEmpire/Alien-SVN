@@ -46,7 +46,7 @@ SVN::Client - Subversion client functions
               SVN::Client::get_username_provider()]
               );
 
-    $ctx->cat (\*STDOUT, 'http://svn.collab.net/repos/svn/trunk/README',
+    $ctx->cat (\*STDOUT, 'http://svn.apache.org/repos/asf/subversion/trunk/README',
                'HEAD');
 
     sub simple_prompt {
@@ -403,6 +403,23 @@ files.
 $diff_options is a reference to an array of additional arguments to pass to
 diff process invoked to compare files.  You'll usually just want to use [] to
 pass an empty array to return a unified context diff (like `diff -u`).
+
+Has no return.
+
+=item $ctx-E<gt>diff_summarize($target1, $revision1, $target2, $revision2, $recursive, $ignore_ancestry, \&summarize_func, $pool);
+
+Produce a diff summary which lists the changed items between $target1
+at $revision1 and $target2 at $revision2 without creating text deltas.
+$target1 and $target2 can be either working-copy paths or URLs.
+
+The function may report false positives if $ignore_ancestry is false,
+since a file might have been modified between two revisions, but still
+have the same contents.
+
+Calls \&summarize_func with with a svn_client_diff_summarize_t structure
+describing the difference.
+
+See diff() for a description of the other parameters.
 
 Has no return.
 
@@ -1198,12 +1215,12 @@ $SVN::Auth::SSL::OTHER
 You reply by setting the accepted_failures of the cred object with an integer
 of the values for what you want to accept bitwise AND'd together.
 
-=item SVN::Client::get_ssl_cert_file_provider
+=item SVN::Client::get_ssl_client_cert_file_provider
 
 Returns a client certificate provider that returns information from previously
 cached sessions.  Takes no parameters or optionally a pool parameter.
 
-=item SVN::Client::get_ssl_cert_prompt_provider
+=item SVN::Client::get_ssl_client_cert_prompt_provider
 
 Returns a client certificate provider that prompts the user via a callback.
 Takes two or three parameters: the first is the callback subroutine, the 2nd is
@@ -1213,13 +1230,13 @@ svn_auth_cred_ssl_client_cert object, a realm string, may_save, and a pool.
 The svn_auth_cred_ssl_client_cert the following members: cert_file and
 may_save.
 
-=item SVN::Client::get_ssl_cert_pw_file_provider
+=item SVN::Client::get_ssl_client_cert_pw_file_provider
 
 Returns a client certificate password provider that returns information from
 previously cached sessions.  Takes no parameters or optionally a pool
 parameter.
 
-=item SVN::Client::get_ssl_cert_pw_prompt_provider
+=item SVN::Client::get_ssl_client_cert_pw_prompt_provider
 
 Returns a client certificate password provider that prompts the user via a
 callback. Takes two or three parameters, the first is the callback subroutine,
@@ -1416,6 +1433,48 @@ The name of the node on which these properties are set.
 =item $proplist-E<gt>prop_hash()
 
 A reference to a hash of property names and values.
+
+=back
+
+=cut
+
+package SVN::Client::Summarize;
+use SVN::Base qw(Client svn_client_diff_summarize_kind_);
+
+=head2 svn_client_diff_summarize_kind_t - SVN::Summarize
+
+An enum of the following constants:
+
+$SVN::Client::Summarize::normal, $SVN::Client::Summarize::added,
+$SVN::Client::Summarize::modified, $SVN::Client::Summarize::deleted.
+
+=back
+
+=cut
+
+package _p_svn_client_diff_summarize_t;
+use SVN::Base qw(Client svn_client_diff_summarize_t_);
+
+=head2 svn_client_diff_summarize_t
+
+=over 8
+
+=item $diff_summarize-E<gt>path()
+
+Path relative to the target.  If the target is a file, path is the
+empty string.
+
+=item $diff_summarize-E<gt>summarize_kind()
+
+Change kind.
+
+=item $diff_summarize-E<gt>prop_changed()
+
+Properties changed?
+
+=item $diff_summarize-E<gt>node_kind()
+
+File or dir?
 
 =back
 

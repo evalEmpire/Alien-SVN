@@ -25,11 +25,11 @@
 #include "svn_string.h"
 #include "svn_path.h"
 #include "svn_time.h"
-#include "svn_md5.h"
+#include "svn_checksum.h"
 #include "svn_props.h"
 
 
-#define ARE_VALID_COPY_ARGS(p,r) ((p && SVN_IS_VALID_REVNUM(r)) ? 1 : 0)
+#define ARE_VALID_COPY_ARGS(p,r) ((p) && SVN_IS_VALID_REVNUM(r))
 
 /*----------------------------------------------------------------------*/
 
@@ -131,19 +131,18 @@ store_delta(apr_file_t **tempfile, svn_filesize_t *len,
             svn_fs_root_t *oldroot, const char *oldpath,
             svn_fs_root_t *newroot, const char *newpath, apr_pool_t *pool)
 {
-  const char *tempdir;
   svn_stream_t *temp_stream;
   apr_off_t offset = 0;
   svn_txdelta_stream_t *delta_stream;
   svn_txdelta_window_handler_t wh;
   void *whb;
 
-  /* Create a temporary file and open a stream to it. */
-  SVN_ERR(svn_io_temp_dir(&tempdir, pool));
-  SVN_ERR(svn_io_open_unique_file2(tempfile, NULL,
-                                   apr_psprintf(pool, "%s/dump", tempdir),
-                                   ".tmp", svn_io_file_del_on_close, pool));
-  temp_stream = svn_stream_from_aprfile(*tempfile, pool);
+  /* Create a temporary file and open a stream to it. Note that we need
+     the file handle in order to rewind it. */
+  SVN_ERR(svn_io_open_unique_file3(tempfile, NULL, NULL,
+                                   svn_io_file_del_on_pool_cleanup,
+                                   pool, pool));
+  temp_stream = svn_stream_from_aprfile2(*tempfile, TRUE, pool);
 
   /* Compute the delta and send it to the temporary file. */
   SVN_ERR(svn_fs_get_file_delta_stream(&delta_stream, oldroot, oldpath,
@@ -155,8 +154,7 @@ store_delta(apr_file_t **tempfile, svn_filesize_t *len,
   SVN_ERR(svn_io_file_seek(*tempfile, APR_CUR, &offset, pool));
   *len = offset;
   offset = 0;
-  SVN_ERR(svn_io_file_seek(*tempfile, APR_SET, &offset, pool));
-  return SVN_NO_ERROR;
+  return svn_io_file_seek(*tempfile, APR_SET, &offset, pool);
 }
 
 
@@ -255,8 +253,7 @@ make_dir_baton(const char *path,
   const char *full_path;
 
   /* A path relative to nothing?  I don't think so. */
-  if (path && (! pb))
-    abort();
+  SVN_ERR_ASSERT_NO_RETURN(!path || pb);
 
   /* Construct the full path of this node. */
   if (pb)
@@ -416,10 +413,11 @@ dump_node(struct edit_baton *eb,
           if (!eb->verify && cmp_rev < eb->oldest_dumped_rev)
             SVN_ERR(svn_stream_printf
                     (eb->feedback_stream, pool,
-                     _("WARNING: Referencing data in revision %ld"
-                       ", which is older than the oldest\nWARNING: dumped revision "
-                       "(%ld).  Loading this dump into an empty "
-                       "repository\nWARNING: will fail.\n"),
+                     _("WARNING: Referencing data in revision %ld,"
+                       " which is older than the oldest\n"
+                       "WARNING: dumped revision (%ld).  Loading this dump"
+                       " into an empty repository\n"
+                       "WARNING: will fail.\n"),
                      cmp_rev, eb->oldest_dumped_rev));
 
           SVN_ERR(svn_stream_printf(eb->stream, pool,
@@ -440,19 +438,29 @@ dump_node(struct edit_baton *eb,
                                        eb->fs_root, path, pool));
           if (kind == svn_node_file)
             {
-              unsigned char md5_digest[APR_MD5_DIGESTSIZE];
+              svn_checksum_t *checksum;
               const char *hex_digest;
               SVN_ERR(svn_fs_contents_changed(&must_dump_text,
                                               compare_root, compare_path,
                                               eb->fs_root, path, pool));
 
-              SVN_ERR(svn_fs_file_md5_checksum(md5_digest, compare_root,
-                                               compare_path, pool));
-              hex_digest = svn_md5_digest_to_cstring(md5_digest, pool);
+              SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_md5,
+                                           compare_root, compare_path,
+                                           TRUE, pool));
+              hex_digest = svn_checksum_to_cstring(checksum, pool);
               if (hex_digest)
                 SVN_ERR(svn_stream_printf(eb->stream, pool,
-                                          SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_CHECKSUM
-                                          ": %s\n", hex_digest));
+                                      SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_MD5
+                                      ": %s\n", hex_digest));
+
+              SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_sha1,
+                                           compare_root, compare_path,
+                                           TRUE, pool));
+              hex_digest = svn_checksum_to_cstring(checksum, pool);
+              if (hex_digest)
+                SVN_ERR(svn_stream_printf(eb->stream, pool,
+                                      SVN_REPOS_DUMPFILE_TEXT_COPY_SOURCE_SHA1
+                                      ": %s\n", hex_digest));
             }
         }
     }
@@ -501,7 +509,7 @@ dump_node(struct edit_baton *eb,
      here, and an MD5 checksum (if available). */
   if (must_dump_text && (kind == svn_node_file))
     {
-      unsigned char md5_digest[APR_MD5_DIGESTSIZE];
+      svn_checksum_t *checksum;
       const char *hex_digest;
       svn_filesize_t textlen;
 
@@ -518,13 +526,23 @@ dump_node(struct edit_baton *eb,
 
           if (compare_root)
             {
-              SVN_ERR(svn_fs_file_md5_checksum(md5_digest, compare_root,
-                                               compare_path, pool));
-              hex_digest = svn_md5_digest_to_cstring(md5_digest, pool);
+              SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_md5,
+                                           compare_root, compare_path,
+                                           TRUE, pool));
+              hex_digest = svn_checksum_to_cstring(checksum, pool);
               if (hex_digest)
                 SVN_ERR(svn_stream_printf(eb->stream, pool,
-                                          SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_CHECKSUM
+                                          SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_MD5
                                           ": %s\n", hex_digest));
+
+              SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_sha1,
+                                           compare_root, compare_path,
+                                           TRUE, pool));
+              hex_digest = svn_checksum_to_cstring(checksum, pool);
+              if (hex_digest)
+                SVN_ERR(svn_stream_printf(eb->stream, pool,
+                                      SVN_REPOS_DUMPFILE_TEXT_DELTA_BASE_SHA1
+                                      ": %s\n", hex_digest));
             }
         }
       else
@@ -538,11 +556,20 @@ dump_node(struct edit_baton *eb,
                                 SVN_REPOS_DUMPFILE_TEXT_CONTENT_LENGTH
                                 ": %" SVN_FILESIZE_T_FMT "\n", textlen));
 
-      SVN_ERR(svn_fs_file_md5_checksum(md5_digest, eb->fs_root, path, pool));
-      hex_digest = svn_md5_digest_to_cstring(md5_digest, pool);
+      SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_md5,
+                                   eb->fs_root, path, TRUE, pool));
+      hex_digest = svn_checksum_to_cstring(checksum, pool);
       if (hex_digest)
         SVN_ERR(svn_stream_printf(eb->stream, pool,
-                                  SVN_REPOS_DUMPFILE_TEXT_CONTENT_CHECKSUM
+                                  SVN_REPOS_DUMPFILE_TEXT_CONTENT_MD5
+                                  ": %s\n", hex_digest));
+
+      SVN_ERR(svn_fs_file_checksum(&checksum, svn_checksum_sha1,
+                                   eb->fs_root, path, TRUE, pool));
+      hex_digest = svn_checksum_to_cstring(checksum, pool);
+      if (hex_digest)
+        SVN_ERR(svn_stream_printf(eb->stream, pool,
+                                  SVN_REPOS_DUMPFILE_TEXT_CONTENT_SHA1
                                   ": %s\n", hex_digest));
     }
 
@@ -567,17 +594,20 @@ dump_node(struct edit_baton *eb,
       svn_stream_t *contents;
 
       if (delta_file)
-        contents = svn_stream_from_aprfile(delta_file, pool);
+        {
+          /* Make sure to close the underlying file when the stream is
+             closed. */
+          contents = svn_stream_from_aprfile2(delta_file, FALSE, pool);
+        }
       else
         SVN_ERR(svn_fs_file_contents(&contents, eb->fs_root, path, pool));
 
-      SVN_ERR(svn_stream_copy(contents, eb->stream, pool));
+      SVN_ERR(svn_stream_copy3(contents, svn_stream_disown(eb->stream, pool),
+                               NULL, NULL, pool));
     }
 
   len = 2;
-  SVN_ERR(svn_stream_write(eb->stream, "\n\n", &len)); /* ### needed? */
-
-  return SVN_NO_ERROR;
+  return svn_stream_write(eb->stream, "\n\n", &len); /* ### needed? */
 }
 
 
@@ -628,7 +658,7 @@ add_directory(const char *path,
   val = apr_hash_get(pb->deleted_entries, path, APR_HASH_KEY_STRING);
 
   /* Detect an add-with-history. */
-  is_copy = ARE_VALID_COPY_ARGS(copyfrom_path, copyfrom_rev) ? TRUE : FALSE;
+  is_copy = ARE_VALID_COPY_ARGS(copyfrom_path, copyfrom_rev);
 
   /* Dump the node. */
   SVN_ERR(dump_node(eb, path,
@@ -728,7 +758,7 @@ add_file(const char *path,
   val = apr_hash_get(pb->deleted_entries, path, APR_HASH_KEY_STRING);
 
   /* Detect add-with-history. */
-  is_copy = ARE_VALID_COPY_ARGS(copyfrom_path, copyfrom_rev) ? TRUE : FALSE;
+  is_copy = ARE_VALID_COPY_ARGS(copyfrom_path, copyfrom_rev);
 
   /* Dump the node. */
   SVN_ERR(dump_node(eb, path,
@@ -910,9 +940,7 @@ write_revision_record(svn_stream_t *stream,
   SVN_ERR(svn_stream_write(stream, encoded_prophash->data, &len));
 
   len = 1;
-  SVN_ERR(svn_stream_write(stream, "\n", &len));
-
-  return SVN_NO_ERROR;
+  return svn_stream_write(stream, "\n", &len);
 }
 
 
@@ -1078,22 +1106,6 @@ svn_repos_dump_fs2(svn_repos_t *repos,
   return SVN_NO_ERROR;
 }
 
-svn_error_t *
-svn_repos_dump_fs(svn_repos_t *repos,
-                  svn_stream_t *stream,
-                  svn_stream_t *feedback_stream,
-                  svn_revnum_t start_rev,
-                  svn_revnum_t end_rev,
-                  svn_boolean_t incremental,
-                  svn_cancel_func_t cancel_func,
-                  void *cancel_baton,
-                  apr_pool_t *pool)
-{
-  return svn_repos_dump_fs2(repos, stream, feedback_stream, start_rev,
-                            end_rev, incremental, FALSE, cancel_func,
-                            cancel_baton, pool);
-}
-
 
 /*----------------------------------------------------------------------*/
 
@@ -1201,6 +1213,7 @@ svn_repos_verify_fs(svn_repos_t *repos,
       const svn_delta_editor_t *cancel_editor;
       void *cancel_edit_baton;
       svn_fs_root_t *to_root;
+      apr_hash_t *props;
 
       svn_pool_clear(iterpool);
 
@@ -1222,6 +1235,7 @@ svn_repos_verify_fs(svn_repos_t *repos,
       SVN_ERR(svn_repos_replay2(to_root, "", SVN_INVALID_REVNUM, FALSE,
                                 cancel_editor, cancel_edit_baton,
                                 NULL, NULL, iterpool));
+      SVN_ERR(svn_fs_revision_proplist(&props, fs, rev, iterpool));
       SVN_ERR(svn_stream_printf(feedback_stream, iterpool,
                                 _("* Verified revision %ld.\n"),
                                 rev));

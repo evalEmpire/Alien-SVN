@@ -42,9 +42,8 @@ add_lock_and_token(svn_lock_t *lock,
 {
   SVN_ERR(svn_fs_bdb__lock_add(trail->fs, lock_token, lock,
                                trail, trail->pool));
-  SVN_ERR(svn_fs_bdb__lock_token_add(trail->fs, path, lock_token,
-                                     trail, trail->pool));
-  return SVN_NO_ERROR;
+  return svn_fs_bdb__lock_token_add(trail->fs, path, lock_token,
+                                    trail, trail->pool);
 }
 
 
@@ -57,9 +56,8 @@ delete_lock_and_token(const char *lock_token,
 {
   SVN_ERR(svn_fs_bdb__lock_delete(trail->fs, lock_token,
                                   trail, trail->pool));
-  SVN_ERR(svn_fs_bdb__lock_token_delete(trail->fs, path,
-                                        trail, trail->pool));
-  return SVN_NO_ERROR;
+  return svn_fs_bdb__lock_token_delete(trail->fs, path,
+                                       trail, trail->pool);
 }
 
 
@@ -226,8 +224,7 @@ svn_fs_base__lock(svn_lock_t **lock,
   args.expiration_date = expiration_date;
   args.current_rev = current_rev;
 
-  return svn_fs_base__retry_txn(fs, txn_body_lock, &args, pool);
-
+  return svn_fs_base__retry_txn(fs, txn_body_lock, &args, FALSE, pool);
 }
 
 
@@ -290,8 +287,7 @@ txn_body_unlock(void *baton, trail_t *trail)
     }
 
   /* Remove a row from each of the locking tables. */
-  SVN_ERR(delete_lock_and_token(lock_token, args->path, trail));
-  return SVN_NO_ERROR;
+  return delete_lock_and_token(lock_token, args->path, trail);
 }
 
 
@@ -309,7 +305,7 @@ svn_fs_base__unlock(svn_fs_t *fs,
   args.path = svn_fs__canonicalize_abspath(path, pool);
   args.token = token;
   args.break_lock = break_lock;
-  return svn_fs_base__retry_txn(fs, txn_body_unlock, &args, pool);
+  return svn_fs_base__retry_txn(fs, txn_body_unlock, &args, TRUE, pool);
 }
 
 
@@ -382,7 +378,7 @@ svn_fs_base__get_lock(svn_lock_t **lock,
 
   args.path = svn_fs__canonicalize_abspath(path, pool);
   args.lock_p = lock;
-  return svn_fs_base__retry_txn(fs, txn_body_get_lock, &args, pool);
+  return svn_fs_base__retry_txn(fs, txn_body_get_lock, &args, FALSE, pool);
 }
 
 
@@ -417,7 +413,7 @@ svn_fs_base__get_locks(svn_fs_t *fs,
   args.path = svn_fs__canonicalize_abspath(path, pool);
   args.get_locks_func = get_locks_func;
   args.get_locks_baton = get_locks_baton;
-  return svn_fs_base__retry_txn(fs, txn_body_get_locks, &args, pool);
+  return svn_fs_base__retry_txn(fs, txn_body_get_locks, &args, FALSE, pool);
 }
 
 

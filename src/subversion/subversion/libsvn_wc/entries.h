@@ -2,7 +2,7 @@
  * entries.h :  manipulating entries
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -49,7 +49,6 @@ extern "C" {
 #define SVN_WC__ENTRY_ATTR_REPOS              "repos"
 #define SVN_WC__ENTRY_ATTR_KIND               "kind"
 #define SVN_WC__ENTRY_ATTR_TEXT_TIME          "text-time"
-#define SVN_WC__ENTRY_ATTR_PROP_TIME          "prop-time"
 #define SVN_WC__ENTRY_ATTR_CHECKSUM           "checksum"
 #define SVN_WC__ENTRY_ATTR_SCHEDULE           "schedule"
 #define SVN_WC__ENTRY_ATTR_COPIED             "copied"
@@ -77,6 +76,8 @@ extern "C" {
 #define SVN_WC__ENTRY_ATTR_CHANGELIST         "changelist"
 #define SVN_WC__ENTRY_ATTR_KEEP_LOCAL         "keep-local"
 #define SVN_WC__ENTRY_ATTR_WORKING_SIZE       "working-size"
+#define SVN_WC__ENTRY_ATTR_TREE_CONFLICT_DATA "tree-conflicts"
+#define SVN_WC__ENTRY_ATTR_FILE_EXTERNAL      "file-external"
 
 /* Attribute values for 'schedule' */
 #define SVN_WC__ENTRY_VALUE_ADD        "add"
@@ -131,7 +132,7 @@ svn_error_t *svn_wc__atts_to_entry(svn_wc_entry_t **new_entry,
 #define SVN_WC__ENTRY_MODIFY_REPOS              APR_INT64_C(0x0000000000000004)
 #define SVN_WC__ENTRY_MODIFY_KIND               APR_INT64_C(0x0000000000000008)
 #define SVN_WC__ENTRY_MODIFY_TEXT_TIME          APR_INT64_C(0x0000000000000010)
-#define SVN_WC__ENTRY_MODIFY_PROP_TIME          APR_INT64_C(0x0000000000000020)
+/* OPEN                                      APR_INT64_C(0x0000000000000020) */
 #define SVN_WC__ENTRY_MODIFY_CHECKSUM           APR_INT64_C(0x0000000000000040)
 #define SVN_WC__ENTRY_MODIFY_SCHEDULE           APR_INT64_C(0x0000000000000080)
 #define SVN_WC__ENTRY_MODIFY_COPIED             APR_INT64_C(0x0000000000000100)
@@ -159,18 +160,22 @@ svn_error_t *svn_wc__atts_to_entry(svn_wc_entry_t **new_entry,
 #define SVN_WC__ENTRY_MODIFY_CHANGELIST         APR_INT64_C(0x0000000040000000)
 #define SVN_WC__ENTRY_MODIFY_KEEP_LOCAL         APR_INT64_C(0x0000000080000000)
 #define SVN_WC__ENTRY_MODIFY_WORKING_SIZE       APR_INT64_C(0x0000000100000000)
+#define SVN_WC__ENTRY_MODIFY_TREE_CONFLICT_DATA APR_INT64_C(0x0000000200000000)
+#define SVN_WC__ENTRY_MODIFY_FILE_EXTERNAL      APR_INT64_C(0x0000000400000000)
 /* No #define for DEPTH, because it's only meaningful on this-dir anyway. */
 
-/* ...ORed together with this to mean "I really mean this, don't be
-   trying to protect me from myself on this one." */
+/* ...ORed together with this to mean: just set the schedule to the new
+   value, instead of treating the new value as a change of state to be
+   merged with the current schedule. */
 #define SVN_WC__ENTRY_MODIFY_FORCE              APR_INT64_C(0x4000000000000000)
 
 
 /* Modify an entry for NAME in access baton ADM_ACCESS by folding in
    ("merging") changes, and sync those changes to disk.  New values
    for the entry are pulled from their respective fields in ENTRY, and
-   MODIFY_FLAGS is a bitmask to specify which of those field to pay
-   attention to.  ADM_ACCESS must hold a write lock.
+   MODIFY_FLAGS is a bitmask to specify which of those fields to pay
+   attention to, formed from the values SVN_WC__ENTRY_MODIFY_....
+   ADM_ACCESS must hold a write lock.
 
    NAME can be NULL to specify that the caller wishes to modify the
    "this dir" entry in ADM_ACCESS.
@@ -180,6 +185,15 @@ svn_error_t *svn_wc__atts_to_entry(svn_wc_entry_t **new_entry,
    the entries file.  Be careful when setting DO_SYNC to FALSE: if there
    is no subsequent svn_wc__entries_write call the modifications will be
    lost when the access baton is closed.
+
+   "Folding in" a change means, in most cases, simply replacing the field
+   with the new value. However, for the "schedule" field, unless
+   MODIFY_FLAGS includes SVN_WC__ENTRY_MODIFY_FORCE (in which case just take
+   the new schedule from ENTRY), it means to determine the schedule that the
+   entry should end up with if the "schedule" value from ENTRY represents a
+   change/add/delete/replace being made to the
+     ### base / working / base and working version(s) ?
+   of the node.
 
    Perform all allocations in POOL.
 

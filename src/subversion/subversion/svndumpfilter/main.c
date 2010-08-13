@@ -2,7 +2,7 @@
  * main.c: Subversion dump stream filtering tool.
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2006, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -65,7 +65,7 @@ create_stdio_stream(svn_stream_t **stream,
   if (apr_err)
     return svn_error_wrap_apr(apr_err, _("Can't open stdio file"));
 
-  *stream = svn_stream_from_aprfile(stdio_file, pool);
+  *stream = svn_stream_from_aprfile2(stdio_file, TRUE, pool);
   return SVN_NO_ERROR;
 }
 
@@ -753,7 +753,7 @@ set_node_property(void *node_baton,
 
   if (strcmp(name, SVN_PROP_MERGEINFO) == 0)
     {
-      svn_string_t *filtered_mergeinfo;  /* Avoid compiler warning. */ 
+      svn_string_t *filtered_mergeinfo;  /* Avoid compiler warning. */
       apr_pool_t *pool = apr_hash_pool_get(rb->props);
       SVN_ERR(adjust_mergeinfo(&filtered_mergeinfo, value, rb, pool));
       value = filtered_mergeinfo;
@@ -833,7 +833,7 @@ close_revision(void *revision_baton)
 
 
 /* Filtering vtable */
-svn_repos_parser_fns2_t filtering_vtable =
+svn_repos_parse_fns2_t filtering_vtable =
   {
     new_revision_record,
     uuid_record,
@@ -863,6 +863,7 @@ enum
     svndumpfilter__renumber_revs,
     svndumpfilter__preserve_revprops,
     svndumpfilter__skip_missing_merge_sources,
+    svndumpfilter__targets,
     svndumpfilter__quiet,
     svndumpfilter__version
   };
@@ -892,6 +893,8 @@ static const apr_getopt_option_t options_table[] =
      N_("Skip missing merge sources.") },
     {"preserve-revprops",  svndumpfilter__preserve_revprops, 0,
      N_("Don't filter revision properties.") },
+    {"targets", svndumpfilter__targets, 1,
+     N_("Pass contents of file ARG as additional args")},
     {NULL}
   };
 
@@ -899,20 +902,20 @@ static const apr_getopt_option_t options_table[] =
 /* Array of available subcommands.
  * The entire list must be terminated with an entry of nulls.
  */
-static const svn_opt_subcommand_desc_t cmd_table[] =
+static const svn_opt_subcommand_desc2_t cmd_table[] =
   {
     {"exclude", subcommand_exclude, {0},
      N_("Filter out nodes with given prefixes from dumpstream.\n"
         "usage: svndumpfilter exclude PATH_PREFIX...\n"),
      {svndumpfilter__drop_empty_revs, svndumpfilter__renumber_revs,
-      svndumpfilter__skip_missing_merge_sources,
+      svndumpfilter__skip_missing_merge_sources, svndumpfilter__targets,
       svndumpfilter__preserve_revprops, svndumpfilter__quiet} },
 
     {"include", subcommand_include, {0},
      N_("Filter out nodes without given prefixes from dumpstream.\n"
         "usage: svndumpfilter include PATH_PREFIX...\n"),
      {svndumpfilter__drop_empty_revs, svndumpfilter__renumber_revs,
-      svndumpfilter__skip_missing_merge_sources,
+      svndumpfilter__skip_missing_merge_sources, svndumpfilter__targets,
       svndumpfilter__preserve_revprops, svndumpfilter__quiet} },
 
     {"help", subcommand_help, {"?", "h"},
@@ -937,6 +940,7 @@ struct svndumpfilter_opt_state
   svn_boolean_t preserve_revprops;       /* --preserve-revprops */
   svn_boolean_t skip_missing_merge_sources;
                                          /* --skip-missing-merge-sources */
+  const char *targets_file;              /* --targets-file       */
   apr_array_header_t *prefixes;          /* mainargs.           */
 };
 
@@ -997,11 +1001,11 @@ subcommand_help(apr_getopt_t *os, void *baton, apr_pool_t *pool)
       "\n"
       "Available subcommands:\n");
 
-  SVN_ERR(svn_opt_print_help(os, "svndumpfilter",
-                             opt_state ? opt_state->version : FALSE,
-                             FALSE, NULL,
-                             header, cmd_table, options_table, NULL,
-                             pool));
+  SVN_ERR(svn_opt_print_help3(os, "svndumpfilter",
+                              opt_state ? opt_state->version : FALSE,
+                              FALSE, NULL,
+                              header, cmd_table, options_table, NULL,
+                              NULL, pool));
 
   return SVN_NO_ERROR;
 }
@@ -1078,7 +1082,9 @@ do_filter(apr_getopt_t *os,
 
   if (pb->rev_drop_count)
     SVN_ERR(svn_cmdline_fprintf(stderr, pool,
-                                _("Dropped %d revision(s).\n\n"),
+                                Q_("Dropped %d revision.\n\n",
+                                   "Dropped %d revisions.\n\n",
+                                   pb->rev_drop_count),
                                 pb->rev_drop_count));
 
   if (pb->do_renumber_revs)
@@ -1122,16 +1128,17 @@ do_filter(apr_getopt_t *os,
       svn_pool_destroy(subpool);
     }
 
-  if (apr_hash_count(pb->dropped_nodes))
+  if ((num_keys = apr_hash_count(pb->dropped_nodes)))
     {
       apr_pool_t *subpool = svn_pool_create(pool);
       SVN_ERR(svn_cmdline_fprintf(stderr, subpool,
-                                  _("Dropped %d node(s):\n"),
-                                  apr_hash_count(pb->dropped_nodes)));
+                                  Q_("Dropped %d node:\n",
+                                     "Dropped %d nodes:\n",
+                                     num_keys),
+                                  num_keys));
 
       /* Get the keys of the hash, sort them, then print the hash keys
          and values, sorted by keys. */
-      num_keys = apr_hash_count(pb->dropped_nodes);
       keys = apr_array_make(pool, num_keys + 1, sizeof(const char *));
       for (hi = apr_hash_first(pool, pb->dropped_nodes);
            hi;
@@ -1182,7 +1189,7 @@ main(int argc, const char *argv[])
   apr_allocator_t *allocator;
   apr_pool_t *pool;
 
-  const svn_opt_subcommand_desc_t *subcommand = NULL;
+  const svn_opt_subcommand_desc2_t *subcommand = NULL;
   struct svndumpfilter_opt_state opt_state;
   apr_getopt_t *os;
   int opt_id;
@@ -1194,7 +1201,7 @@ main(int argc, const char *argv[])
   if (svn_cmdline_init("svndumpfilter", stderr) != EXIT_SUCCESS)
     return EXIT_FAILURE;
 
-  /* Create our top-level pool.  Use a seperate mutexless allocator,
+  /* Create our top-level pool.  Use a separate mutexless allocator,
    * given this application is single threaded.
    */
   if (apr_allocator_create(&allocator))
@@ -1276,6 +1283,9 @@ main(int argc, const char *argv[])
         case svndumpfilter__skip_missing_merge_sources:
           opt_state.skip_missing_merge_sources = TRUE;
           break;
+        case svndumpfilter__targets:
+          opt_state.targets_file = opt_arg;
+          break;
         default:
           {
             subcommand_help(NULL, NULL, pool);
@@ -1290,7 +1300,7 @@ main(int argc, const char *argv[])
      just typos/mistakes.  Whatever the case, the subcommand to
      actually run is subcommand_help(). */
   if (opt_state.help)
-    subcommand = svn_opt_get_canonical_subcommand(cmd_table, "help");
+    subcommand = svn_opt_get_canonical_subcommand2(cmd_table, "help");
 
   /* If we're not running the `help' subcommand, then look for a
      subcommand in the first argument. */
@@ -1301,7 +1311,7 @@ main(int argc, const char *argv[])
           if (opt_state.version)
             {
               /* Use the "help" subcommand to handle the "--version" option. */
-              static const svn_opt_subcommand_desc_t pseudo_cmd =
+              static const svn_opt_subcommand_desc2_t pseudo_cmd =
                 { "--version", subcommand_help, {0}, "",
                   {svndumpfilter__version,  /* must accept its own option */
                   } };
@@ -1321,7 +1331,7 @@ main(int argc, const char *argv[])
       else
         {
           const char *first_arg = os->argv[os->ind++];
-          subcommand = svn_opt_get_canonical_subcommand(cmd_table, first_arg);
+          subcommand = svn_opt_get_canonical_subcommand2(cmd_table, first_arg);
           if (subcommand == NULL)
             {
               const char* first_arg_utf8;
@@ -1346,14 +1356,6 @@ main(int argc, const char *argv[])
 
   if (subcommand->cmd_func != subcommand_help)
     {
-      if (os->ind >= os->argc)
-        {
-          svn_error_clear(svn_cmdline_fprintf
-                          (stderr, pool,
-                           _("\nError: no prefixes supplied.\n")));
-          svn_pool_destroy(pool);
-          return EXIT_FAILURE;
-        }
 
       opt_state.prefixes = apr_array_make(pool, os->argc - os->ind,
                                           sizeof(const char *));
@@ -1367,6 +1369,37 @@ main(int argc, const char *argv[])
           prefix = svn_path_internal_style(prefix, pool);
           prefix = svn_path_join("/", prefix, pool);
           APR_ARRAY_PUSH(opt_state.prefixes, const char *) = prefix;
+        }
+
+      if (opt_state.targets_file)
+        {
+          svn_stringbuf_t *buffer, *buffer_utf8;
+          const char *utf8_targets_file;
+
+          /* We need to convert to UTF-8 now, even before we divide
+             the targets into an array, because otherwise we wouldn't
+             know what delimiter to use for svn_cstring_split().  */
+
+          SVN_INT_ERR(svn_utf_cstring_to_utf8(&utf8_targets_file,
+                                              opt_state.targets_file, pool));
+
+          SVN_INT_ERR(svn_stringbuf_from_file2(&buffer, utf8_targets_file,
+                                               pool));
+          SVN_INT_ERR(svn_utf_stringbuf_to_utf8(&buffer_utf8, buffer, pool));
+
+          opt_state.prefixes = apr_array_append(pool,
+                                    svn_cstring_split(buffer_utf8->data, "\n\r",
+                                                      TRUE, pool),
+                                    opt_state.prefixes);
+        }
+
+      if (apr_is_empty_array(opt_state.prefixes))
+        {
+          svn_error_clear(svn_cmdline_fprintf
+                          (stderr, pool,
+                           _("\nError: no prefixes supplied.\n")));
+          svn_pool_destroy(pool);
+          return EXIT_FAILURE;
         }
     }
 
@@ -1383,11 +1416,12 @@ main(int argc, const char *argv[])
       if (opt_id == 'h' || opt_id == '?')
         continue;
 
-      if (! svn_opt_subcommand_takes_option(subcommand, opt_id))
+      if (! svn_opt_subcommand_takes_option3(subcommand, opt_id, NULL))
         {
           const char *optstr;
           const apr_getopt_option_t *badopt =
-            svn_opt_get_option_from_code(opt_id, options_table);
+            svn_opt_get_option_from_code2(opt_id, options_table, subcommand,
+                                          pool);
           svn_opt_format_option(&optstr, badopt, FALSE, pool);
           if (subcommand->name[0] == '-')
             subcommand_help(NULL, NULL, pool);

@@ -19,9 +19,14 @@ import tempfile
 import unittest
 from urllib import pathname2url
 
-try:
+if sys.version_info[0] >= 3:
+  # Python >=3.0
+  from io import StringIO
+else:
+  # Python <3.0
+  try:
     from cStringIO import StringIO
-except ImportError:
+  except ImportError:
     from StringIO import StringIO
 
 from svn import core, repos
@@ -54,7 +59,7 @@ class SubversionRepositoryTestSetup(TestSetup):
 
         r = repos.svn_repos_create(REPOS_PATH, '', '', None, None)
         repos.svn_repos_load_fs2(r, dumpfile, StringIO(),
-                                repos.svn_repos_load_uuid_default, '',
+                                repos.svn_repos_load_uuid_ignore, '',
                                 0, 0, None)
 
     def tearDown(self):

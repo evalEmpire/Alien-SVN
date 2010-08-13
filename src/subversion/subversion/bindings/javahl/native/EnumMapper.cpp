@@ -27,6 +27,7 @@
 #include "../include/org_tigris_subversion_javahl_NotifyAction.h"
 #include "../include/org_tigris_subversion_javahl_NotifyStatus.h"
 #include "../include/org_tigris_subversion_javahl_NodeKind.h"
+#include "../include/org_tigris_subversion_javahl_Operation.h"
 #include "../include/org_tigris_subversion_javahl_LockStatus.h"
 #include "../include/org_tigris_subversion_javahl_StatusKind.h"
 #include "../include/org_tigris_subversion_javahl_Revision.h"
@@ -34,6 +35,7 @@
 #include "../include/org_tigris_subversion_javahl_ConflictDescriptor_Kind.h"
 #include "../include/org_tigris_subversion_javahl_ConflictDescriptor_Action.h"
 #include "../include/org_tigris_subversion_javahl_ConflictDescriptor_Reason.h"
+#include "../include/org_tigris_subversion_javahl_Depth.h"
 
 /**
  * Map a C commit state flag constant to the Java constant.
@@ -235,6 +237,38 @@ jint EnumMapper::mapNotifyAction(svn_wc_notify_action_t action)
       /* A merge operation from a foreign repository has begun. */
       return org_tigris_subversion_javahl_NotifyAction_foreign_merge_begin;
 
+    case svn_wc_notify_property_added:
+      /* Property added */
+      return org_tigris_subversion_javahl_NotifyAction_property_added;
+
+    case svn_wc_notify_property_modified:
+      /* Property modified */
+      return org_tigris_subversion_javahl_NotifyAction_property_modified;
+
+    case svn_wc_notify_property_deleted:
+      /* Property deleted */
+      return org_tigris_subversion_javahl_NotifyAction_property_deleted;
+
+    case svn_wc_notify_property_deleted_nonexistent:
+      /* Property deleted nonexistent */
+      return org_tigris_subversion_javahl_NotifyAction_property_deleted_nonexistent;
+
+    case svn_wc_notify_revprop_set:
+      /* Revision property set */
+      return org_tigris_subversion_javahl_NotifyAction_revprop_set;
+
+    case svn_wc_notify_revprop_deleted:
+      /* Revision property deleted */
+      return org_tigris_subversion_javahl_NotifyAction_revprop_deleted;
+
+    case svn_wc_notify_merge_completed:
+      /* Final notification in a merge */
+      return org_tigris_subversion_javahl_NotifyAction_merge_completed;
+
+    case svn_wc_notify_tree_conflict:
+      /* The path is a tree-conflict victim of the intended action */
+      return org_tigris_subversion_javahl_NotifyAction_tree_conflict;
+
     default:
       return -1;
     }
@@ -427,5 +461,48 @@ jint EnumMapper::mapConflictReason(svn_wc_conflict_reason_t reason)
 
     case svn_wc_conflict_reason_unversioned:
       return org_tigris_subversion_javahl_ConflictDescriptor_Reason_unversioned;
+
+    case svn_wc_conflict_reason_added:
+      return org_tigris_subversion_javahl_ConflictDescriptor_Reason_added;
+    }
+}
+
+jint EnumMapper::mapDepth(svn_depth_t depth)
+{
+  switch (depth)
+    {
+    case svn_depth_unknown:
+    default:
+      return org_tigris_subversion_javahl_Depth_unknown;
+
+    case svn_depth_exclude:
+      return org_tigris_subversion_javahl_Depth_exclude;
+
+    case svn_depth_empty:
+      return org_tigris_subversion_javahl_Depth_empty;
+
+    case svn_depth_files:
+      return org_tigris_subversion_javahl_Depth_files;
+
+    case svn_depth_immediates:
+      return org_tigris_subversion_javahl_Depth_immediates;
+
+    case svn_depth_infinity:
+      return org_tigris_subversion_javahl_Depth_infinity;
+    }
+}
+
+jint EnumMapper::mapOperation(svn_wc_operation_t operation)
+{
+  switch (operation)
+    {
+    case svn_wc_operation_none:
+      return org_tigris_subversion_javahl_Operation_none;
+    case svn_wc_operation_update:
+      return org_tigris_subversion_javahl_Operation_update;
+    case svn_wc_operation_switch:
+      return org_tigris_subversion_javahl_Operation_switched;
+    case svn_wc_operation_merge:
+      return org_tigris_subversion_javahl_Operation_merge;
     }
 }

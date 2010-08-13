@@ -2,7 +2,7 @@
  * main.c :  Main control function for svnserve
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -136,38 +136,72 @@ void winservice_notify_stop(void)
 #define SVNSERVE_OPT_PID_FILE    261
 #define SVNSERVE_OPT_SERVICE     262
 #define SVNSERVE_OPT_CONFIG_FILE 263
+#define SVNSERVE_OPT_LOG_FILE 264
 
 static const apr_getopt_option_t svnserve__options[] =
   {
     {"daemon",           'd', 0, N_("daemon mode")},
-    {"listen-port",       SVNSERVE_OPT_LISTEN_PORT, 1,
-     N_("listen port (for daemon mode)")},
-    {"listen-host",       SVNSERVE_OPT_LISTEN_HOST, 1,
-     N_("listen hostname or IP address (for daemon mode)")},
-    {"foreground",        SVNSERVE_OPT_FOREGROUND, 0,
-     N_("run in foreground (useful for debugging)")},
-    {"help",             'h', 0, N_("display this help")},
-    {"version",           SVNSERVE_OPT_VERSION, 0,
-     N_("show program version information")},
     {"inetd",            'i', 0, N_("inetd mode")},
+    {"tunnel",           't', 0, N_("tunnel mode")},
+    {"listen-once",      'X', 0, N_("listen-once mode (useful for debugging)")},
+#ifdef WIN32
+    {"service",          SVNSERVE_OPT_SERVICE, 0,
+     N_("Windows service mode (Service Control Manager)")},
+#endif
     {"root",             'r', 1, N_("root of directory to serve")},
     {"read-only",        'R', 0,
      N_("force read only, overriding repository config file")},
-    {"tunnel",           't', 0, N_("tunnel mode")},
-    {"tunnel-user",      SVNSERVE_OPT_TUNNEL_USER, 1,
-     N_("tunnel username (default is current uid's name)")},
-#ifdef CONNECTION_HAVE_THREAD_OPTION
-    {"threads",          'T', 0, N_("use threads instead of fork")},
-#endif
-    {"listen-once",      'X', 0, N_("listen once (useful for debugging)")},
     {"config-file",      SVNSERVE_OPT_CONFIG_FILE, 1,
      N_("read configuration from file ARG")},
-    {"pid-file",         SVNSERVE_OPT_PID_FILE, 1,
-     N_("write server process ID to file ARG")},
+    {"listen-port",       SVNSERVE_OPT_LISTEN_PORT, 1,
 #ifdef WIN32
-    {"service",          SVNSERVE_OPT_SERVICE, 0,
-     N_("run as a windows service (SCM only)")},
+     N_("listen port\n"
+        "                             "
+        "[mode: daemon, service, listen-once]")},
+#else
+     N_("listen port\n"
+        "                             "
+        "[mode: daemon, listen-once]")},
 #endif
+    {"listen-host",       SVNSERVE_OPT_LISTEN_HOST, 1,
+#ifdef WIN32
+     N_("listen hostname or IP address\n"
+        "                             "
+        "[mode: daemon, service, listen-once]")},
+#else
+     N_("listen hostname or IP address\n"
+        "                             "
+        "[mode: daemon, listen-once]")},
+#endif
+#ifdef CONNECTION_HAVE_THREAD_OPTION
+    /* ### Making the assumption here that WIN32 never has fork and so
+     * ### this option never exists when --service exists. */
+    {"threads",          'T', 0, N_("use threads instead of fork "
+                                    "[mode: daemon]")},
+#endif
+    {"foreground",        SVNSERVE_OPT_FOREGROUND, 0,
+     N_("run in foreground (useful for debugging)\n"
+        "                             "
+        "[mode: daemon]")},
+    {"log-file",         SVNSERVE_OPT_LOG_FILE, 1,
+     N_("svnserve log file")},
+    {"pid-file",         SVNSERVE_OPT_PID_FILE, 1,
+#ifdef WIN32
+     N_("write server process ID to file ARG\n"
+        "                             "
+        "[mode: daemon, listen-once, service]")},
+#else
+     N_("write server process ID to file ARG\n"
+        "                             "
+        "[mode: daemon, listen-once]")},
+#endif
+    {"tunnel-user",      SVNSERVE_OPT_TUNNEL_USER, 1,
+     N_("tunnel username (default is current uid's name)\n"
+        "                             "
+        "[mode: tunnel]")},
+    {"help",             'h', 0, N_("display this help")},
+    {"version",           SVNSERVE_OPT_VERSION, 0,
+     N_("show program version information")},
     {0,                  0,   0, 0}
   };
 
@@ -187,10 +221,19 @@ static void help(apr_pool_t *pool)
 {
   apr_size_t i;
 
-  svn_error_clear(svn_cmdline_fputs(_("usage: svnserve [options]\n"
+#ifdef WIN32
+  svn_error_clear(svn_cmdline_fputs(_("usage: svnserve [-d | -i | -t | -X "
+                                      "| --service] [options]\n"
                                       "\n"
                                       "Valid options:\n"),
                                     stdout, pool));
+#else
+  svn_error_clear(svn_cmdline_fputs(_("usage: svnserve [-d | -i | -t | -X] "
+                                      "[options]\n"
+                                      "\n"
+                                      "Valid options:\n"),
+                                    stdout, pool));
+#endif
   for (i = 0; svnserve__options[i].name && svnserve__options[i].optch; i++)
     {
       const char *optstr;
@@ -216,8 +259,8 @@ static svn_error_t * version(apr_pool_t *pool)
                            _("\nCyrus SASL authentication is available.\n"));
 #endif
 
-  return svn_opt_print_help(NULL, "svnserve", TRUE, FALSE, version_footer->data,
-                            NULL, NULL, NULL, NULL, pool);
+  return svn_opt_print_help3(NULL, "svnserve", TRUE, FALSE, version_footer->data,
+                             NULL, NULL, NULL, NULL, NULL, pool);
 }
 
 
@@ -334,6 +377,7 @@ int main(int argc, const char *argv[])
   int mode_opt_count = 0;
   const char *config_filename = NULL;
   const char *pid_filename = NULL;
+  const char *log_filename = NULL;
   svn_node_kind_t kind;
 
   /* Initialize the app. */
@@ -368,6 +412,7 @@ int main(int argc, const char *argv[])
   params.cfg = NULL;
   params.pwdb = NULL;
   params.authzdb = NULL;
+  params.log_file = NULL;
 
   while (1)
     {
@@ -487,6 +532,13 @@ int main(int argc, const char *argv[])
                                             pool));
           break;
 
+        case SVNSERVE_OPT_LOG_FILE:
+          SVN_INT_ERR(svn_utf_cstring_to_utf8(&log_filename, arg, pool));
+          log_filename = svn_path_internal_style(log_filename, pool);
+          SVN_INT_ERR(svn_path_get_absolute(&log_filename, log_filename,
+                                            pool));
+          break;
+
         }
     }
   if (os->ind != argc)
@@ -494,8 +546,13 @@ int main(int argc, const char *argv[])
 
   if (mode_opt_count != 1)
     {
-      svn_error_clear(svn_cmdline_fputs
-                      (_("You must specify exactly one of -d, -i, -t or -X.\n"),
+      svn_error_clear(svn_cmdline_fputs(
+#ifdef WIN32
+                      _("You must specify exactly one of -d, -i, -t, "
+                        "--service or -X.\n"),
+#else
+                      _("You must specify exactly one of -d, -i, -t or -X.\n"),
+#endif
                        stderr, pool));
       usage(argv[0], pool);
     }
@@ -506,7 +563,13 @@ int main(int argc, const char *argv[])
       SVN_INT_ERR(load_configs(&params.cfg, &params.pwdb, &params.authzdb,
                                config_filename, TRUE,
                                svn_path_dirname(config_filename, pool),
+                               NULL, NULL, /* server baton, conn */
                                pool));
+
+  if (log_filename)
+    SVN_INT_ERR(svn_io_file_open(&params.log_file, log_filename,
+                                 APR_WRITE | APR_CREATE | APR_APPEND,
+                                 APR_OS_DEFAULT, pool));
 
   if (params.tunnel_user && run_mode != run_mode_tunnel)
     {
@@ -709,13 +772,27 @@ int main(int argc, const char *argv[])
           return svn_cmdline_handle_exit_error(err, pool, "svnserve: ");
         }
 
+      /* Enable TCP keep-alives on the socket so we time out when
+       * the connection breaks due to network-layer problems.
+       * If the peer has dropped the connection due to a network partition
+       * or a crash, or if the peer no longer considers the connection
+       * valid because we are behind a NAT and our public IP has changed,
+       * it will respond to the keep-alive probe with a RST instead of an
+       * acknowledgment segment, which will cause svn to abort the session
+       * even while it is currently blocked waiting for data from the peer. */
+      status = apr_socket_opt_set(usock, APR_SO_KEEPALIVE, 1);
+      if (status)
+        {
+          /* It's not a fatal error if we cannot enable keep-alives. */
+        }
+
       conn = svn_ra_svn_create_conn(usock, NULL, NULL, connection_pool);
 
       if (run_mode == run_mode_listen_once)
         {
           err = serve(conn, &params, connection_pool);
 
-          if (err && err->apr_err != SVN_ERR_RA_SVN_CONNECTION_CLOSED)
+          if (err)
             svn_handle_error2(err, stdout, FALSE, "svnserve: ");
           svn_error_clear(err);
 
@@ -732,7 +809,12 @@ int main(int argc, const char *argv[])
           if (status == APR_INCHILD)
             {
               apr_socket_close(sock);
-              svn_error_clear(serve(conn, &params, connection_pool));
+              err = serve(conn, &params, connection_pool);
+              log_error(err, params.log_file,
+                        svn_ra_svn_conn_remote_host(conn),
+                        NULL, NULL, /* user, repos */
+                        connection_pool);
+              svn_error_clear(err);
               apr_socket_close(usock);
               exit(0);
             }
@@ -742,7 +824,12 @@ int main(int argc, const char *argv[])
             }
           else
             {
-              /* Log an error, when we support logging. */
+              err = svn_error_wrap_apr(status, "apr_proc_fork");
+              log_error(err, params.log_file,
+                        svn_ra_svn_conn_remote_host(conn),
+                        NULL, NULL, /* user, repos */
+                        connection_pool);
+              svn_error_clear(err);
               apr_socket_close(usock);
             }
           svn_pool_destroy(connection_pool);

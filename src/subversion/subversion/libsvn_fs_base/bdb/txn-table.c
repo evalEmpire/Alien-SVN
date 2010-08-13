@@ -17,14 +17,16 @@
 
 #include <string.h>
 #include <assert.h>
+
 #include "bdb_compat.h"
 
 #include "svn_pools.h"
+#include "private/svn_skel.h"
+
 #include "dbt.h"
 #include "../err.h"
 #include "../fs.h"
 #include "../key-gen.h"
-#include "../util/skel.h"
 #include "../util/fs_skels.h"
 #include "../trail.h"
 #include "../../libsvn_fs/fs-loader.h"
@@ -37,7 +39,7 @@
 static svn_boolean_t
 is_committed(transaction_t *txn)
 {
-  return (txn->kind == transaction_kind_committed) ? TRUE : FALSE;
+  return (txn->kind == transaction_kind_committed);
 }
 
 
@@ -78,7 +80,7 @@ svn_fs_bdb__put_txn(svn_fs_t *fs,
                     apr_pool_t *pool)
 {
   base_fs_data_t *bfd = fs->fsap_data;
-  skel_t *txn_skel;
+  svn_skel_t *txn_skel;
   DBT key, value;
 
   /* Convert native type to skel. */
@@ -89,11 +91,9 @@ svn_fs_bdb__put_txn(svn_fs_t *fs,
   svn_fs_base__str_to_dbt(&key, txn_name);
   svn_fs_base__skel_to_dbt(&value, txn_skel, pool);
   svn_fs_base__trail_debug(trail, "transactions", "put");
-  SVN_ERR(BDB_WRAP(fs, _("storing transaction record"),
-                   bfd->transactions->put(bfd->transactions, trail->db_txn,
-                                          &key, &value, 0)));
-
-  return SVN_NO_ERROR;
+  return BDB_WRAP(fs, _("storing transaction record"),
+                  bfd->transactions->put(bfd->transactions, trail->db_txn,
+                                         &key, &value, 0));
 }
 
 
@@ -134,8 +134,7 @@ allocate_txn_id(const char **id_p,
   db_err = bfd->transactions->put(bfd->transactions, trail->db_txn,
                                   &query, &result, 0);
 
-  SVN_ERR(BDB_WRAP(fs, "bumping next transaction key", db_err));
-  return SVN_NO_ERROR;
+  return BDB_WRAP(fs, "bumping next transaction key", db_err);
 }
 
 
@@ -181,11 +180,9 @@ svn_fs_bdb__delete_txn(svn_fs_t *fs,
   /* Delete the transaction from the `transactions' table. */
   svn_fs_base__str_to_dbt(&key, txn_name);
   svn_fs_base__trail_debug(trail, "transactions", "del");
-  SVN_ERR(BDB_WRAP(fs, "deleting entry from 'transactions' table",
-                   bfd->transactions->del(bfd->transactions,
-                                          trail->db_txn, &key, 0)));
-
-  return SVN_NO_ERROR;
+  return BDB_WRAP(fs, "deleting entry from 'transactions' table",
+                  bfd->transactions->del(bfd->transactions,
+                                         trail->db_txn, &key, 0));
 }
 
 
@@ -199,7 +196,7 @@ svn_fs_bdb__get_txn(transaction_t **txn_p,
   base_fs_data_t *bfd = fs->fsap_data;
   DBT key, value;
   int db_err;
-  skel_t *skel;
+  svn_skel_t *skel;
   transaction_t *transaction;
 
   /* Only in the context of this function do we know that the DB call
@@ -216,7 +213,7 @@ svn_fs_bdb__get_txn(transaction_t **txn_p,
   SVN_ERR(BDB_WRAP(fs, "reading transaction", db_err));
 
   /* Parse TRANSACTION skel */
-  skel = svn_fs_base__parse_skel(value.data, value.size, pool);
+  skel = svn_skel__parse(value.data, value.size, pool);
   if (! skel)
     return svn_fs_base__err_corrupt_txn(fs, txn_name);
 
@@ -262,7 +259,7 @@ svn_fs_bdb__get_txn_list(apr_array_header_t **names_p,
                                 DB_NEXT))
     {
       transaction_t *txn;
-      skel_t *txn_skel;
+      svn_skel_t *txn_skel;
       svn_error_t *err;
 
       /* Clear the per-iteration subpool */
@@ -280,7 +277,7 @@ svn_fs_bdb__get_txn_list(apr_array_header_t **names_p,
         continue;
 
       /* Parse TRANSACTION skel */
-      txn_skel = svn_fs_base__parse_skel(value.data, value.size, subpool);
+      txn_skel = svn_skel__parse(value.data, value.size, subpool);
       if (! txn_skel)
         {
           svn_bdb_dbc_close(cursor);

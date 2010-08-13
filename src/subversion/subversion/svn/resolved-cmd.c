@@ -29,6 +29,10 @@
 #include "svn_pools.h"
 #include "cl.h"
 
+/* We shouldn't be including a private header here, but it is
+ * necessary for fixing issue #3416 */
+#include "private/svn_opt_private.h"
+
 #include "svn_private_config.h"
 
 
@@ -49,8 +53,8 @@ svn_cl__resolved(apr_getopt_t *os,
   apr_pool_t *subpool;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
   if (! targets->nelts)
     return svn_error_create(SVN_ERR_CL_INSUFFICIENT_ARGS, 0, NULL);
 
@@ -62,19 +66,21 @@ svn_cl__resolved(apr_getopt_t *os,
   if (opt_state->depth == svn_depth_unknown)
     opt_state->depth = svn_depth_empty;
 
+  SVN_ERR(svn_opt__eat_peg_revisions(&targets, targets, pool));
+
   for (i = 0; i < targets->nelts; i++)
     {
       const char *target = APR_ARRAY_IDX(targets, i, const char *);
       svn_pool_clear(subpool);
       SVN_ERR(svn_cl__check_cancel(ctx->cancel_baton));
       err = svn_client_resolve(target,
-                               opt_state->depth, 
+                               opt_state->depth,
                                svn_wc_conflict_choose_merged,
                                ctx,
                                subpool);
       if (err)
         {
-          svn_handle_warning(stderr, err);
+          svn_handle_warning2(stderr, err, "svn: ");
           svn_error_clear(err);
         }
     }

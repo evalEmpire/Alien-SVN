@@ -29,6 +29,9 @@
 %import svn_delta.i
 %import svn_wc.i
 
+/* Ignore platform-specific auth functions */
+%ignore svn_client_get_windows_simple_provider;
+
 /* -----------------------------------------------------------------------
    %apply-ing of typemaps defined elsewhere
 */
@@ -60,9 +63,12 @@
 %apply apr_array_header_t *SOURCES {
   apr_array_header_t *sources
 }
+#endif
 
+#if defined(SWIGRUBY) || defined(SWIGPYTHON)
 %apply apr_array_header_t *REVISION_RANGE_LIST {
-  apr_array_header_t *ranges_to_merge
+  const apr_array_header_t *ranges_to_merge,
+  const apr_array_header_t *revision_ranges
 }
 #endif
 
@@ -190,6 +196,28 @@
                   svn_swig_py_changelist_receiver_func,
                   ,
                   )
+#endif
+
+/* -----------------------------------------------------------------------
+Callback: svn_client_diff_summarize_func_t
+        svn_client_diff_summarize2()
+        svn_client_diff_summarize()
+        svn_client_diff_summarize_peg2()
+        svn_client_diff_summarize_peg()
+*/
+
+#ifdef SWIGPYTHON
+#endif
+
+#ifdef SWIGPERL
+    %typemap(in) (svn_client_diff_summarize_func_t summarize_func,
+                  void *summarize_baton) {
+        $1 = svn_swig_pl_thunk_client_diff_summarize_func;
+        $2 = (void *)$input;
+    }
+#endif
+
+#ifdef SWIGRUBY
 #endif
 
 #ifdef SWIGRUBY

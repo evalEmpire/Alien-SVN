@@ -2,7 +2,7 @@
  * translate-test.c -- test the eol and keyword translation subroutine
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -32,10 +32,12 @@
 #include <string.h>
 #include <apr_general.h>
 #include <apr_file_io.h>
+
+#include "../svn_test.h"
+
 #include "svn_pools.h"
 #include "svn_subst.h"
 
-#include "../svn_test.h"
 
 
 /*** Helpers ***/
@@ -230,7 +232,7 @@ create_file(const char *fname, const char *eol_str, apr_pool_t *pool)
     {
       const char *this_eol_str = eol_str ? eol_str : random_eol_marker();
 
-      apr_err = apr_file_printf(f, lines[i]);
+      apr_err = apr_file_printf(f, "%s", lines[i]);
 
       /* Is it overly paranoid to use putc(), because of worry about
          fprintf() doing a newline conversion? */

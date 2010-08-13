@@ -32,6 +32,7 @@
 #include "svn_string.h"
 #include "svn_utf.h"
 #include "svn_xml.h"
+#include "svn_props.h"
 
 #include "svn_private_config.h"
 
@@ -510,8 +511,10 @@ svn_ra_neon__copy_href(svn_stringbuf_t *dst, const char *src,
   */
 
   apr_uri_t uri;
-  apr_status_t apr_status
-    = apr_uri_parse(pool, src, &uri);
+  apr_status_t apr_status;
+  /* SRC can have trailing '/' */
+  src = svn_path_canonicalize(src, pool);
+  apr_status = apr_uri_parse(pool, src, &uri);
 
   if (apr_status != APR_SUCCESS)
     return svn_error_wrap_apr(apr_status,
@@ -566,7 +569,16 @@ generate_error(svn_ra_neon__request_t *req, apr_pool_t *pool)
         }
     case NE_AUTH:
       errcode = SVN_ERR_RA_NOT_AUTHORIZED;
+#ifdef SVN_NEON_0_27
+      /* neon >= 0.27 gives a descriptive error message after auth
+       * failure; expose this since it's a useful diagnostic e.g. for
+       * an unsupported challenge scheme, or a local GSSAPI error due
+       * to an expired ticket. */
+      SVN_ERR(svn_utf_cstring_to_utf8(&msg, ne_get_error(req->ne_sess), pool));
+      msg = apr_psprintf(pool, _("authorization failed: %s"), msg);
+#else
       msg = _("authorization failed");
+#endif
       break;
 
     case NE_CONNECT:
@@ -912,8 +924,18 @@ svn_error_t *svn_ra_neon__set_neon_body_provider(svn_ra_neon__request_t *req,
   b->body_file = body_file;
   b->req = req;
 
+#if defined(SVN_NEON_0_27)
+  ne_set_request_body_provider(req->ne_req, (ne_off_t)finfo.size,
+                               ra_neon_body_provider, b);
+#elif defined(NE_LFS)
+  ne_set_request_body_provider64(req->ne_req, finfo.size,
+                                 ra_neon_body_provider, b);
+#else
+  /* Cut size to 32 bit */
   ne_set_request_body_provider(req->ne_req, (size_t) finfo.size,
                                ra_neon_body_provider, b);
+#endif
+
   return SVN_NO_ERROR;
 }
 
@@ -948,14 +970,11 @@ parse_spool_file(svn_ra_neon__session_t *ras,
                  ne_xml_parser *success_parser,
                  apr_pool_t *pool)
 {
-  apr_file_t *spool_file;
   svn_stream_t *spool_stream;
   char *buf = apr_palloc(pool, SVN__STREAM_CHUNK_SIZE);
   apr_size_t len;
 
-  SVN_ERR(svn_io_file_open(&spool_file, spool_file_name,
-                           (APR_READ | APR_BUFFERED), APR_OS_DEFAULT, pool));
-  spool_stream = svn_stream_from_aprfile(spool_file, pool);
+  SVN_ERR(svn_stream_open_readonly(&spool_stream, spool_file_name, pool, pool));
   while (1)
     {
       if (ras->callbacks &&
@@ -973,7 +992,7 @@ parse_spool_file(svn_ra_neon__session_t *ras,
       if (len != SVN__STREAM_CHUNK_SIZE)
         break;
     }
-  return SVN_NO_ERROR;
+  return svn_stream_close(spool_stream);
 }
 
 
@@ -1190,16 +1209,12 @@ parsed_request(svn_ra_neon__request_t *req,
      the response to disk first, we use our custom spool reader.  */
   if (spool_response)
     {
-      const char *tmpfile_path;
-      SVN_ERR(svn_io_temp_dir(&tmpfile_path, pool));
-
-      tmpfile_path = svn_path_join(tmpfile_path, "dav-spool", pool);
       /* Blow the temp-file away as soon as we eliminate the entire request */
-      SVN_ERR(svn_io_open_unique_file2(&spool_reader_baton.spool_file,
+      SVN_ERR(svn_io_open_unique_file3(&spool_reader_baton.spool_file,
                                        &spool_reader_baton.spool_file_name,
-                                       tmpfile_path, "",
+                                       NULL,
                                        svn_io_file_del_on_pool_cleanup,
-                                       req->pool));
+                                       req->pool, pool));
       spool_reader_baton.req = req;
 
       svn_ra_neon__add_response_body_reader(req, ne_accept_2xx, spool_reader,
@@ -1355,10 +1370,7 @@ svn_ra_neon__maybe_store_auth_info(svn_ra_neon__session_t *ras,
     return SVN_NO_ERROR;
 
   /* If we ever got credentials, ask the iter_baton to save them.  */
-  SVN_ERR(svn_auth_save_credentials(ras->auth_iterstate,
-                                    pool));
-
-  return SVN_NO_ERROR;
+  return svn_auth_save_credentials(ras->auth_iterstate, pool);
 }
 
 

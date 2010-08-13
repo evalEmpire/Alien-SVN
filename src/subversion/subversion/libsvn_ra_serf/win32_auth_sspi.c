@@ -16,7 +16,7 @@
  * ====================================================================
  */
 
-/* TODO: 
+/* TODO:
    - remove NTLM dependency so we can reuse SSPI for Kerberos later. */
 
 /*
@@ -48,21 +48,14 @@
  *
  * Note: Step 1 of the handshake will only happen on the first connection, once
  * we know the server requires NTLM authentication, the initial requests on the
- * other connections will include the NTLM Type 1 message, so we start at 
+ * other connections will include the NTLM Type 1 message, so we start at
  * step 2 in the handshake.
  */
 
 /*** Includes ***/
-#ifdef WIN32
-#ifdef APR_HAVE_IPV6
-#include <winsock2.h>
-#include <Ws2tcpip.h>
-#include <Wspiapi.h>
-#endif
-#include <windows.h>
-#endif
 #include <string.h>
 
+#include <apr.h>
 #include <apr_base64.h>
 
 #include "svn_error.h"
@@ -70,41 +63,25 @@
 #include "ra_serf.h"
 #include "win32_auth_sspi.h"
 
+#include "private/svn_atomic.h"
+
 #ifdef SVN_RA_SERF_SSPI_ENABLED
 
 /*** Global variables ***/
-HANDLE security_dll = INVALID_HANDLE_VALUE;
-INIT_SECURITY_INTERFACE InitSecurityInterface_;
+static svn_atomic_t sspi_initialized = 0;
 static PSecurityFunctionTable sspi = NULL;
 static unsigned int ntlm_maxtokensize = 0;
 
-#define SECURITY_DLL "security.dll"
-
-/* Loads security.dll in memory on the first call. Afterwards the 
-   function table SSPI is loaded which we can use it to call SSPI's 
-   public functions. */
+/* Loads the SSPI function table we can use to call SSPI's public functions.
+ * Accepted by svn_atomic__init_once()
+ */
 static svn_error_t *
-load_security_dll()
+initialize_sspi(void *baton, apr_pool_t* pool)
 {
-  if (security_dll != INVALID_HANDLE_VALUE)
+  sspi = InitSecurityInterface();
+
+  if (sspi)
     return SVN_NO_ERROR;
-
-  security_dll = LoadLibrary(SECURITY_DLL);
-  if (security_dll != INVALID_HANDLE_VALUE)
-    {
-      /* Load the function(s) */
-      InitSecurityInterface_ = 
-        (INIT_SECURITY_INTERFACE)GetProcAddress(security_dll, 
-                                                "InitSecurityInterfaceA");
-      sspi = InitSecurityInterface_();
-
-      if (sspi)
-        return SVN_NO_ERROR;
-    }
-
-  /* Initialization failed, clean up and raise error */
-  if (security_dll)
-    FreeLibrary(security_dll);
 
   return svn_error_createf
           (SVN_ERR_RA_SERF_SSPI_INITIALISATION_FAILED, NULL,
@@ -118,9 +95,9 @@ sspi_maxtokensize(char *auth_pkg, unsigned int *maxtokensize)
   SECURITY_STATUS status;
   SecPkgInfo *sec_pkg_info = NULL;
 
-  status = sspi->QuerySecurityPackageInfo(auth_pkg, 
+  status = sspi->QuerySecurityPackageInfo(auth_pkg,
                                           &sec_pkg_info);
-  if (status == SEC_E_OK) 
+  if (status == SEC_E_OK)
     {
       *maxtokensize = sec_pkg_info->cbMaxToken;
       sspi->FreeContextBuffer(sec_pkg_info);
@@ -141,7 +118,8 @@ init_sspi_connection(svn_ra_serf__session_t *session,
   const char *tmp;
   apr_size_t tmp_len;
 
-  SVN_ERR(load_security_dll());
+  SVN_ERR(svn_atomic__init_once(&sspi_initialized,
+                                initialize_sspi, NULL, pool));
 
   conn->sspi_context = (serf_sspi_context_t*)
     apr_palloc(pool, sizeof(serf_sspi_context_t));
@@ -220,7 +198,7 @@ setup_request_sspi_auth(svn_ra_serf__connection_t *conn,
 }
 
 svn_error_t *
-sspi_get_credentials(char *token, apr_size_t token_len, const char **buf, 
+sspi_get_credentials(char *token, apr_size_t token_len, const char **buf,
                      apr_size_t *buf_len, serf_sspi_context_t *sspi_ctx)
 {
   SecBuffer in_buf, out_buf;
@@ -265,8 +243,8 @@ sspi_get_credentials(char *token, apr_size_t token_len, const char **buf,
              "SSPI Initialization failed.");
 
   status = sspi->InitializeSecurityContext(&creds,
-                                           ctx != NULL && ctx->dwLower != 0 
-                                             ? ctx 
+                                           ctx != NULL && ctx->dwLower != 0
+                                             ? ctx
                                              : NULL,
                                            target,
                                            ISC_REQ_REPLAY_DETECT |
@@ -308,6 +286,97 @@ sspi_get_credentials(char *token, apr_size_t token_len, const char **buf,
       default:
           return svn_error_createf(SVN_ERR_AUTHN_FAILED, NULL,
                 "Authentication failed with error 0x%x.", status);
+    }
+
+  return SVN_NO_ERROR;
+}
+
+/* Proxy authentication */
+
+svn_error_t *
+init_proxy_sspi_connection(svn_ra_serf__session_t *session,
+                           svn_ra_serf__connection_t *conn,
+                           apr_pool_t *pool)
+{
+  const char *tmp;
+  apr_size_t tmp_len;
+
+  SVN_ERR(svn_atomic__init_once(&sspi_initialized,
+                                initialize_sspi, NULL, pool));
+
+  conn->proxy_sspi_context = (serf_sspi_context_t*)
+    apr_palloc(pool, sizeof(serf_sspi_context_t));
+  conn->proxy_sspi_context->ctx.dwLower = 0;
+  conn->proxy_sspi_context->ctx.dwUpper = 0;
+  conn->proxy_sspi_context->state = sspi_auth_not_started;
+
+  /* Setup the initial request to the server with an SSPI header */
+  SVN_ERR(sspi_get_credentials(NULL, 0, &tmp, &tmp_len,
+                               conn->proxy_sspi_context));
+  svn_ra_serf__encode_auth_header("NTLM", &conn->proxy_auth_value, tmp,
+                                  tmp_len,
+                                  pool);
+  conn->proxy_auth_header = "Proxy-Authorization";
+
+  /* Make serf send the initial requests one by one */
+  serf_connection_set_max_outstanding_requests(conn->conn, 1);
+
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+handle_proxy_sspi_auth(svn_ra_serf__session_t *session,
+                       svn_ra_serf__connection_t *conn,
+                       serf_request_t *request,
+                       serf_bucket_t *response,
+                       char *auth_hdr,
+                       char *auth_attr,
+                       apr_pool_t *pool)
+{
+  const char *tmp;
+  char *base64_token, *token = NULL, *last;
+  apr_size_t tmp_len, token_len = 0;
+
+  base64_token = apr_strtok(auth_attr, " ", &last);
+  if (base64_token)
+    {
+      token_len = apr_base64_decode_len(base64_token);
+      token = apr_palloc(pool, token_len);
+      apr_base64_decode(token, base64_token);
+    }
+
+  /* We can get a whole batch of 401 responses from the server, but we should
+     only start the authentication phase once, so if we started authentication
+     ignore all responses with initial NTLM authentication header. */
+  if (!token && conn->proxy_sspi_context->state != sspi_auth_not_started)
+    return SVN_NO_ERROR;
+
+  SVN_ERR(sspi_get_credentials(token, token_len, &tmp, &tmp_len,
+                               conn->proxy_sspi_context));
+
+  svn_ra_serf__encode_auth_header(session->proxy_auth_protocol->auth_name,
+                                  &conn->proxy_auth_value, tmp, tmp_len, pool);
+  conn->proxy_auth_header = "Proxy-Authorization";
+
+  /* If the handshake is finished tell serf it can send as much requests as it
+     likes. */
+  if (conn->proxy_sspi_context->state == sspi_auth_completed)
+    serf_connection_set_max_outstanding_requests(conn->conn, 0);
+
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+setup_request_proxy_sspi_auth(svn_ra_serf__connection_t *conn,
+                              serf_bucket_t *hdrs_bkt)
+{
+  /* Take the default authentication header for this connection, if any. */
+  if (conn->proxy_auth_header && conn->proxy_auth_value)
+    {
+      serf_bucket_headers_setn(hdrs_bkt, conn->proxy_auth_header,
+                               conn->proxy_auth_value);
+      conn->proxy_auth_header = NULL;
+      conn->proxy_auth_value = NULL;
     }
 
   return SVN_NO_ERROR;

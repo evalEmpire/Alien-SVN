@@ -28,6 +28,7 @@
 %apply void *PY_AS_VOID {
   void *baton,
   void *start_callback_baton,
+  void *notify_baton,
   void *cancel_baton,
   void *edit_baton,
   void *authz_read_baton,

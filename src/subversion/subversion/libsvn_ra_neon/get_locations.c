@@ -2,7 +2,7 @@
  * get_locations.c :  RA get-locations API implementation
  *
  * ====================================================================
- * Copyright (c) 2004-2007 CollabNet.  All rights reserved.
+ * Copyright (c) 2004-2009 CollabNet.  All rights reserved.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution.  The terms
@@ -24,7 +24,6 @@
 #include <apr_pools.h>
 #include <apr_tables.h>
 #include <apr_strings.h>
-#include <apr_md5.h>
 #include <apr_xml.h>
 
 #include <ne_basic.h>
@@ -51,7 +50,7 @@
  *     ...
  * </S:get-locations-report>
  *
- * We extract what we want at the start of <S:location>. 
+ * We extract what we want at the start of <S:location>.
 */
 
 /* Elements used in a get-locations response */
@@ -186,8 +185,8 @@ svn_ra_neon__get_locations(svn_ra_session_t *session,
   /* Map status 501: Method Not Implemented to our not implemented error.
      1.0.x servers and older don't support this report. */
   if (status_code == 501)
-    return svn_error_create(SVN_ERR_RA_NOT_IMPLEMENTED, err,
-                            _("'get-locations' REPORT not implemented"));
+    return svn_error_createf(SVN_ERR_RA_NOT_IMPLEMENTED, err,
+                             _("'%s' REPORT not implemented"), "get-locations");
 
   return err;
 }

@@ -74,8 +74,8 @@ svn_cl__import(apr_getopt_t *os,
    */
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
-                                                      opt_state->targets, 
-                                                      pool));
+                                                      opt_state->targets,
+                                                      ctx, pool));
 
   if (targets->nelts < 1)
     return svn_error_create
@@ -121,7 +121,7 @@ svn_cl__import(apr_getopt_t *os,
                               opt_state->force,
                               opt_state->revprop_table,
                               ctx,
-                              pool)));
+                              pool), pool));
 
   if (commit_info && ! opt_state->quiet)
     SVN_ERR(svn_cl__print_commit_info(commit_info, pool));
