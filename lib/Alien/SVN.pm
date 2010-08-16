@@ -1,6 +1,6 @@
 package Alien::SVN;
 
-use version;  our $VERSION = qw(1.6.12);
+use version;  our $VERSION = qw(1.6.12.0);
 
 =head1 NAME
 
@@ -36,7 +36,7 @@ It is licensed under the same terms as Perl itself.
 See L<http://www.perl.com/perl/misc/Artistic.html> for licensing.
 
 This product includes software developed by CollabNet (L<http://www.Collab.Net/>).
-Subversion and SVN::Core are copyright (c) 2000-2007 CollabNet L<http://www.colabnet.net>.
+Subversion and SVN::Core are copyright (c) 2000-2009 CollabNet L<http://www.colabnet.net>.
 All rights reserved.  See L<http://subversion.tigris.org/license-1.html> for licensing.
 
 =cut

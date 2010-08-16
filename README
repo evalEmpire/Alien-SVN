@@ -7,7 +7,7 @@ DESCRIPTION
     Alien::SVN instead and then the CPAN shell can handle automatic
     installation. This is particularly useful for programs like SVK.
 
-    It comes with a copy of Subversion 1.5.5 which it will compile but only
+    It comes with a copy of Subversion 1.6.12 which it will compile but only
     installs the Perl and Subversion libraries. The subversion binaries will
     not be installed.
 
@@ -27,6 +27,6 @@ LICENSE
 
     This product includes software developed by CollabNet
     (<http://www.Collab.Net/>). Subversion and SVN::Core are copyright (c)
-    2000-2007 CollabNet <http://www.colabnet.net>. All rights reserved. See
+    2000-2009 CollabNet <http://www.colabnet.net>. All rights reserved. See
     <http://subversion.tigris.org/license-1.html> for licensing.
 
