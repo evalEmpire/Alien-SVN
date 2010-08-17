@@ -1,3 +1,11 @@
+1.6.12.0
+    Features
+    * Upgraded to Subversion 1.6.12
+
+    Bug Fixes
+    * Pass options through to svn's configure properly
+
+
 1.4.6.0  Wed Dec 26 21:16:33 PST 2007
     Features
     * Upgraded to subversion 1.4.6.
