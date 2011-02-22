@@ -1,4 +1,13 @@
-1.6.12.0
+1.6.12.1
+    Misc
+    * Update the repository URL to point at the real github repo.
+    * Make Matt the author in the metadata.
+
+    Docs
+    * Clarify who to report SVN::Core issues to.
+
+
+1.6.12.0  Wed Aug 18 00:45:00 GMT 2010
     Features
     * Upgraded to Subversion 1.6.12
 
