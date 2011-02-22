@@ -29,7 +29,7 @@ E<lt>rt.cpan.orgE<gt>.  Or use the web interface at
 L<http://rt.cpan.org>.
 
 Issues and improvements to SVN::Core should go to the Subversion
-project directly.  L<http://subversion.tigris.org/issue-tracker.html>
+project directly.  L<http://subversion.apache.org/issue-tracker.html>
 
 If you're not sure who to report to, you can always report to us and
 we'll point you in the right direction.
