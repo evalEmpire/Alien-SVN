@@ -1,6 +1,6 @@
 package Alien::SVN;
 
-use version;  our $VERSION = qw(1.6.12.0);
+use version;  our $VERSION = qw(1.6.12.1);
 
 =head1 NAME
 
@@ -21,9 +21,18 @@ binaries will not be installed>.
 
 =head1 BUGS and FEEDBACK
 
-Please send bug reports, problems and feedback to
-E<lt>bug-Alien-SVNE<gt> at E<lt>rt.cpan.orgE<gt>.  Or use the web
-interface at L<http://rt.cpan.org>.
+Alien::SVN only wraps SVN::Core.  We don't work on it.
+
+Bug reports, problems and feedback about Alien::SVN and building
+SVN::Core should come to us at E<lt>bug-Alien-SVNE<gt> at
+E<lt>rt.cpan.orgE<gt>.  Or use the web interface at
+L<http://rt.cpan.org>.
+
+Issues and improvements to SVN::Core should go to the Subversion
+project directly.  L<http://subversion.tigris.org/issue-tracker.html>
+
+If you're not sure who to report to, you can always report to us and
+we'll point you in the right direction.
 
 Report early, report often.
 
