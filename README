@@ -12,8 +12,17 @@ DESCRIPTION
     not be installed.
 
 BUGS and FEEDBACK
-    Please send bug reports, problems and feedback to <bug-Alien-SVN> at
-    <rt.cpan.org>. Or use the web interface at <http://rt.cpan.org>.
+    Alien::SVN only wraps SVN::Core. We don't work on it.
+
+    Bug reports, problems and feedback about Alien::SVN and building
+    SVN::Core should come to us at <bug-Alien-SVN> at <rt.cpan.org>. Or use
+    the web interface at <http://rt.cpan.org>.
+
+    Issues and improvements to SVN::Core should go to the Subversion project
+    directly. <http://subversion.apache.org/issue-tracker.html>
+
+    If you're not sure who to report to, you can always report to us and
+    we'll point you in the right direction.
 
     Report early, report often.
 
