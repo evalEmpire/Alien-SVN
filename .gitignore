@@ -10,7 +10,7 @@ cover_db/
 nytprof*
 *.patch
 .DS_Store
-MYMETA.yml
+MYMETA.*
 *.o
 
 # Subversion specific build and test files
