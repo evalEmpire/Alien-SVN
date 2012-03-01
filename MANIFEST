@@ -104,9 +104,6 @@ src/subversion/build/win32/svn.rc
 src/subversion/build/win32/vc6-build.bat.in
 src/subversion/CHANGES
 src/subversion/COMMITTERS
-src/subversion/config.log
-src/subversion/config.nice
-src/subversion/config.status
 src/subversion/configure
 src/subversion/configure.ac
 src/subversion/doc/doxygen.conf
@@ -119,10 +116,8 @@ src/subversion/gen-make.opts
 src/subversion/gen-make.py
 src/subversion/get-deps.sh
 src/subversion/INSTALL
-src/subversion/libtool
 src/subversion/LICENSE
 src/subversion/Makefile.in
-src/subversion/mkmf.log
 src/subversion/NOTICE
 src/subversion/README
 src/subversion/subversion/bindings/com/README
@@ -387,9 +382,7 @@ src/subversion/subversion/bindings/swig/perl/native/core.c
 src/subversion/subversion/bindings/swig/perl/native/Core.pm
 src/subversion/subversion/bindings/swig/perl/native/Delta.pm
 src/subversion/subversion/bindings/swig/perl/native/Fs.pm
-src/subversion/subversion/bindings/swig/perl/native/Makefile.PL
 src/subversion/subversion/bindings/swig/perl/native/Makefile.PL.in
-src/subversion/subversion/bindings/swig/perl/native/modules
 src/subversion/subversion/bindings/swig/perl/native/Ra.pm
 src/subversion/subversion/bindings/swig/perl/native/Repos.pm
 src/subversion/subversion/bindings/swig/perl/native/scripts/compile_all.pl
@@ -790,7 +783,6 @@ src/subversion/subversion/libsvn_fs_fs/key-gen.c
 src/subversion/subversion/libsvn_fs_fs/key-gen.h
 src/subversion/subversion/libsvn_fs_fs/lock.c
 src/subversion/subversion/libsvn_fs_fs/lock.h
-src/subversion/subversion/libsvn_fs_fs/rep-cache-db.h
 src/subversion/subversion/libsvn_fs_fs/rep-cache-db.sql
 src/subversion/subversion/libsvn_fs_fs/rep-cache.c
 src/subversion/subversion/libsvn_fs_fs/rep-cache.h
@@ -1102,7 +1094,6 @@ src/subversion/subversion/svn/unlock-cmd.c
 src/subversion/subversion/svn/update-cmd.c
 src/subversion/subversion/svn/upgrade-cmd.c
 src/subversion/subversion/svn/util.c
-src/subversion/subversion/svn_private_config.h
 src/subversion/subversion/svn_private_config.h.in
 src/subversion/subversion/svn_private_config.hw
 src/subversion/subversion/svnadmin/main.c
@@ -1392,7 +1383,6 @@ src/subversion/subversion/tests/svn_test_fs.c
 src/subversion/subversion/tests/svn_test_fs.h
 src/subversion/subversion/tests/svn_test_main.c
 src/subversion/subversion/tests/tests.conf
-src/subversion/tools/backup/hot-backup.py
 src/subversion/tools/backup/hot-backup.py.in
 src/subversion/tools/bdb/erase-all-text-data.py
 src/subversion/tools/bdb/skel.py
@@ -1560,7 +1550,6 @@ src/subversion/tools/examples/svnshell.py
 src/subversion/tools/examples/svnshell.rb
 src/subversion/tools/examples/testwrite.c
 src/subversion/tools/hook-scripts/commit-access-control.cfg.example
-src/subversion/tools/hook-scripts/commit-access-control.pl
 src/subversion/tools/hook-scripts/commit-access-control.pl.in
 src/subversion/tools/hook-scripts/commit-email.rb
 src/subversion/tools/hook-scripts/log-police.py
