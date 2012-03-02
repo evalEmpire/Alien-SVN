@@ -4,6 +4,7 @@ inc/My/SVN/Builder.pm
 lib/Alien/SVN.pm
 MANIFEST			This list of files
 MANIFEST.SKIP
+META.json
 META.yml
 README
 src/subversion/aclocal.m4
