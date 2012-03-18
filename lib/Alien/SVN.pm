@@ -1,6 +1,6 @@
 package Alien::SVN;
 
-use version;  our $VERSION = qw(1.7.3.0);
+use version;  our $VERSION = qw(1.7.3.1);
 
 =head1 NAME
 

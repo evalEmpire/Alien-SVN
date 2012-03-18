@@ -1,0 +1,93 @@
+{
+   "abstract" : "A wrapper for installing the SVN Perl bindings",
+   "author" : [
+      "unknown"
+   ],
+   "dynamic_config" : 1,
+   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.112621",
+   "license" : [
+      "open_source"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : "2"
+   },
+   "name" : "Alien-SVN",
+   "no_index" : {
+      "directory" : [
+         "inc",
+         "src"
+      ]
+   },
+   "prereqs" : {
+      "build" : {
+         "requires" : {
+            "ExtUtils::MakeMaker" : "6.31",
+            "Module::Build" : "0.28",
+            "Test::More" : "0.40"
+         }
+      },
+      "configure" : {
+         "requires" : {
+            "Module::Build" : "0.28"
+         }
+      },
+      "runtime" : {
+         "requires" : {
+            "perl" : "v5.8.0",
+            "version" : "0.70"
+         }
+      }
+   },
+   "provides" : {
+      "Alien::SVN" : {
+         "file" : "lib/Alien/SVN.pm",
+         "version" : "v1.7.3.1"
+      },
+      "SVN::Base" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm",
+         "version" : 0
+      },
+      "SVN::Client" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Client.pm",
+         "version" : 0
+      },
+      "SVN::Core" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Core.pm",
+         "version" : "v1.7.3"
+      },
+      "SVN::Delta" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Delta.pm",
+         "version" : 0
+      },
+      "SVN::Fs" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Fs.pm",
+         "version" : 0
+      },
+      "SVN::Ra" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Ra.pm",
+         "version" : 0
+      },
+      "SVN::Repos" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Repos.pm",
+         "version" : 0
+      },
+      "SVN::Wc" : {
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Wc.pm",
+         "version" : 0
+      }
+   },
+   "release_status" : "stable",
+   "resources" : {
+      "bugtracker" : {
+         "web" : "http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN"
+      },
+      "license" : [
+         "http://dev.perl.org/licenses/"
+      ],
+      "repository" : {
+         "url" : "http://github.com/schwern/alien-svn"
+      }
+   },
+   "version" : "v1.7.3.1"
+}
