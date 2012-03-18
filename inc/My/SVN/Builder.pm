@@ -105,10 +105,14 @@ sub _run_svn_configure {
     
     _chdir_to_svn;
     
-    $self->_run("sh configure @{[$self->notes('configure_args')]}")
-        or do { warn "configuring SVN failed";      return 0 };
-    
+    my $ok = $self->_run("sh configure @{[$self->notes('configure_args')]}");
+
     _chdir_back;
+
+    return 1 if $ok;
+    
+    warn "configuring SVN failed";
+    return 0;
 }
 
 sub ACTION_code {

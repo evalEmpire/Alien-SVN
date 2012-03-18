@@ -90,9 +90,9 @@ if( $run_configure =~ /^y/i ) {
         print "\n\nYou should now run ./Build.\n";
     }
     else {
-        print <<'END';
+        die <<'END';
     Something went wrong with the Subversion configuration.
-    You should correct it and re-run Build.PL.
+    Please attempt to correct it and re-run Build.PL.
 END
     }
 }
