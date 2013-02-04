@@ -49,7 +49,7 @@ $build->create_build_script;
 print <<'END';
 
 ---------------------------------------------------------------------
-This module will build Subversion and install it's libraries and Perl
+This module will build Subversion and install its libraries and Perl
 bindings for you.
 
 It requires a C compiler and make.
