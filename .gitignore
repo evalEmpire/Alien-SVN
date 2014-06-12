@@ -1,7 +1,7 @@
 *.bak
 *~
 *.old
-/Makefile
+Makefile
 blib/
 pm_to_blib
 /Build
@@ -57,3 +57,7 @@ MYMETA.*
 
 # Always allow .in generation files
 !*.in
+
+
+# Always allow the pre-built Windows Makefile
+!/src/subversion/tools/dev/windows-build/Makefile
