@@ -45,7 +45,7 @@ sub _svn_provides {
     
     $provides{"SVN::Core"}{version}  = '1.7.17';
     $provides{"Alien::SVN"} = {
-        version => '1.7.17.0',
+        version => '1.7.17.1',
         file    => 'lib/Alien/SVN.pm'
     };
 

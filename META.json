@@ -40,7 +40,7 @@
    "provides" : {
       "Alien::SVN" : {
          "file" : "lib/Alien/SVN.pm",
-         "version" : "1.7.17.0"
+         "version" : "1.7.17.1"
       },
       "SVN::Base" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm"
@@ -80,5 +80,5 @@
          "url" : "http://github.com/schwern/alien-svn"
       }
    },
-   "version" : "v1.7.17.0"
+   "version" : "v1.7.17.1"
 }
