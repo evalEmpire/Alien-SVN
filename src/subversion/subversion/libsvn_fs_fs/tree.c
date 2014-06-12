@@ -44,6 +44,7 @@
 #include "svn_private_config.h"
 #include "svn_pools.h"
 #include "svn_error.h"
+#include "svn_ctype.h"
 #include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_mergeinfo.h"
@@ -1142,30 +1143,6 @@ get_root(dag_node_t **node, svn_fs_root_t *root, apr_pool_t *pool)
 }
 
 
-static svn_error_t *
-update_ancestry(svn_fs_t *fs,
-                const svn_fs_id_t *source_id,
-                const svn_fs_id_t *target_id,
-                const char *target_path,
-                int source_pred_count,
-                apr_pool_t *pool)
-{
-  node_revision_t *noderev;
-
-  if (svn_fs_fs__id_txn_id(target_id) == NULL)
-    return svn_error_createf
-      (SVN_ERR_FS_NOT_MUTABLE, NULL,
-       _("Unexpected immutable node at '%s'"), target_path);
-
-  SVN_ERR(svn_fs_fs__get_node_revision(&noderev, fs, target_id, pool));
-  noderev->predecessor_id = source_id;
-  noderev->predecessor_count = source_pred_count;
-  if (noderev->predecessor_count != -1)
-    noderev->predecessor_count++;
-  return svn_fs_fs__put_node_revision(fs, target_id, noderev, FALSE, pool);
-}
-
-
 /* Set the contents of CONFLICT_PATH to PATH, and return an
    SVN_ERR_FS_CONFLICT error that indicates that there was a conflict
    at PATH.  Perform all allocations in POOL (except the allocation of
@@ -1217,7 +1194,6 @@ merge(svn_stringbuf_t *conflict_p,
   apr_hash_index_t *hi;
   svn_fs_t *fs;
   apr_pool_t *iterpool;
-  int pred_count;
   apr_int64_t mergeinfo_increment = 0;
 
   /* Make sure everyone comes from the same filesystem. */
@@ -1541,9 +1517,7 @@ merge(svn_stringbuf_t *conflict_p,
     }
   svn_pool_destroy(iterpool);
 
-  SVN_ERR(svn_fs_fs__dag_get_predecessor_count(&pred_count, source, pool));
-  SVN_ERR(update_ancestry(fs, source_id, target_id, target_path,
-                          pred_count, pool));
+  SVN_ERR(svn_fs_fs__dag_update_ancestry(target, source, pool));
 
   if (svn_fs_fs__fs_supports_mergeinfo(fs))
     SVN_ERR(svn_fs_fs__dag_increment_mergeinfo_count(target,
@@ -1833,6 +1807,78 @@ fs_dir_entries(apr_hash_t **table_p,
   return svn_fs_fs__dag_dir_entries(table_p, node, pool, pool);
 }
 
+/* Return a copy of PATH, allocated from POOL, for which control
+   characters have been escaped using the form \NNN (where NNN is the
+   octal representation of the byte's ordinal value).  */
+static const char *
+illegal_path_escape(const char *path, apr_pool_t *pool)
+{
+  svn_stringbuf_t *retstr;
+  apr_size_t i, copied = 0;
+  int c;
+
+  /* At least one control character:
+      strlen - 1 (control) + \ + N + N + N + null . */
+  retstr = svn_stringbuf_create_ensure(strlen(path) + 4, pool);
+  for (i = 0; path[i]; i++)
+    {
+      c = (unsigned char)path[i];
+      if (! svn_ctype_iscntrl(c))
+        continue;
+
+      /* If we got here, we're looking at a character that isn't
+         supported by the (or at least, our) URI encoding scheme.  We
+         need to escape this character.  */
+
+      /* First things first, copy all the good stuff that we haven't
+         yet copied into our output buffer. */
+      if (i - copied)
+        svn_stringbuf_appendbytes(retstr, path + copied,
+                                  i - copied);
+
+      /* Make sure buffer is big enough for '\' 'N' 'N' 'N' (and NUL) */
+      svn_stringbuf_ensure(retstr, retstr->len + 5);
+      /*### The backslash separator doesn't work too great with Windows,
+         but it's what we'll use for consistency with invalid utf8
+         formatting (until someone has a better idea) */
+      apr_snprintf(retstr->data + retstr->len, 5, "\\%03o", (unsigned char)c);
+      retstr->len += 4;
+
+      /* Finally, update our copy counter. */
+      copied = i + 1;
+    }
+
+  /* If we didn't encode anything, we don't need to duplicate the string. */
+  if (retstr->len == 0)
+    return path;
+
+  /* Anything left to copy? */
+  if (i - copied)
+    svn_stringbuf_appendbytes(retstr, path + copied, i - copied);
+
+  /* retstr is null-terminated either by apr_snprintf or the svn_stringbuf
+     functions. */
+
+  return retstr->data;
+}
+
+/* Raise an error if PATH contains a newline because FSFS cannot handle
+ * such paths. See issue #4340. */
+static svn_error_t *
+check_newline(const char *path, apr_pool_t *pool)
+{
+  const char *c;
+
+  for (c = path; *c; c++)
+    {
+      if (*c == '\n')
+        return svn_error_createf(SVN_ERR_FS_PATH_SYNTAX, NULL,
+           _("Invalid control character '0x%02x' in path '%s'"),
+           (unsigned char)*c, illegal_path_escape(path, pool));
+    }
+
+  return SVN_NO_ERROR;
+}
 
 /* Create a new directory named PATH in ROOT.  The new directory has
    no entries, and no properties.  ROOT must be the root of a
@@ -1846,6 +1892,8 @@ fs_make_dir(svn_fs_root_t *root,
   parent_path_t *parent_path;
   dag_node_t *sub_dir;
   const char *txn_id = root->txn;
+
+  SVN_ERR(check_newline(path, pool));
 
   SVN_ERR(open_path(&parent_path, root, path, open_path_last_optional,
                     txn_id, pool));
@@ -2109,6 +2157,8 @@ fs_copy(svn_fs_root_t *from_root,
         const char *to_path,
         apr_pool_t *pool)
 {
+  SVN_ERR(check_newline(to_path, pool));
+
   return svn_error_trace(copy_helper(from_root, from_path, to_root, to_path,
                                      TRUE, pool));
 }
@@ -2200,6 +2250,8 @@ fs_make_file(svn_fs_root_t *root,
   parent_path_t *parent_path;
   dag_node_t *child;
   const char *txn_id = root->txn;
+
+  SVN_ERR(check_newline(path, pool));
 
   SVN_ERR(open_path(&parent_path, root, path, open_path_last_optional,
                     txn_id, pool));

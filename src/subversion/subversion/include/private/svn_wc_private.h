@@ -205,6 +205,15 @@ svn_wc__externals_gather_definitions(apr_hash_t **externals,
                                      apr_pool_t *result_pool,
                                      apr_pool_t *scratch_pool);
 
+/* Close the DB for LOCAL_ABSPATH.  Perform temporary allocations in
+   SCRATCH_POOL.
+
+   Wraps svn_wc__db_drop_root(). */
+svn_error_t *
+svn_wc__close_db(const char *external_abspath,
+                 svn_wc_context_t *wc_ctx,
+                 apr_pool_t *scratch_pool);
+
 /** Set @a *tree_conflict to a newly allocated @c
  * svn_wc_conflict_description_t structure describing the tree
  * conflict state of @a victim_abspath, or to @c NULL if @a victim_abspath
@@ -1102,6 +1111,21 @@ svn_wc__get_info(svn_wc_context_t *wc_ctx,
                  svn_cancel_func_t cancel_func,
                  void *cancel_baton,
                  apr_pool_t *scratch_pool);
+
+/* During an upgrade to wc-ng, supply known details about an existing
+ * external.  The working copy will suck in and store the information supplied
+ * about the existing external at @a local_abspath. */
+svn_error_t *
+svn_wc__upgrade_add_external_info(svn_wc_context_t *wc_ctx,
+                                  const char *local_abspath,
+                                  svn_node_kind_t kind,
+                                  const char *def_local_abspath,
+                                  const char *repos_relpath,
+                                  const char *repos_root_url,
+                                  const char *repos_uuid,
+                                  svn_revnum_t def_peg_revision,
+                                  svn_revnum_t def_revision,
+                                  apr_pool_t *scratch_pool);
 
 #ifdef __cplusplus
 }

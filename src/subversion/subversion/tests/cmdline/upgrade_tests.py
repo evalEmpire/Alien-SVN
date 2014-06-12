@@ -426,7 +426,10 @@ def basic_upgrade_1_0(sbox):
 
   url = sbox.repo_url
 
-  xml_entries_relocate(sbox.wc_dir, 'file:///1.0.0/repos', url)
+  # This is non-canonical by the rules of svn_uri_canonicalize, it gets
+  # written into the entries file and upgrade has to canonicalize.
+  non_canonical_url = url[:-1] + '%%%02x' % ord(url[-1])
+  xml_entries_relocate(sbox.wc_dir, 'file:///1.0.0/repos', non_canonical_url)
 
   # Attempt to use the working copy, this should give an error
   expected_stderr = wc_is_too_old_regex
@@ -1079,7 +1082,7 @@ def upgrade_with_missing_subdir(sbox):
   svntest.main.safe_rmtree(sbox.ospath('A/B'))
 
   # Now upgrade the working copy and expect a missing subdir
-  expected_output = [
+  expected_output = svntest.verify.UnorderedOutput([
     "Upgraded '%s'\n" % sbox.wc_dir,
     "Upgraded '%s'\n" % sbox.ospath('A'),
     "Skipped '%s'\n" % sbox.ospath('A/B'),
@@ -1087,7 +1090,7 @@ def upgrade_with_missing_subdir(sbox):
     "Upgraded '%s'\n" % sbox.ospath('A/D'),
     "Upgraded '%s'\n" % sbox.ospath('A/D/G'),
     "Upgraded '%s'\n" % sbox.ospath('A/D/H'),
-  ]
+  ])
   svntest.actions.run_and_verify_svn(None, expected_output, [],
                                      'upgrade', sbox.wc_dir)
 

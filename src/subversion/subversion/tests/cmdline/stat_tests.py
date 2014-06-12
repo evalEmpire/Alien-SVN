@@ -924,38 +924,13 @@ def status_in_xml(sbox):
   else:
     raise svntest.Failure
 
-  template = ['<?xml version="1.0" encoding="UTF-8"?>\n',
-              "<status>\n",
-              "<target\n",
-              "   path=\"%s\">\n" % (file_path),
-              "<entry\n",
-              "   path=\"%s\">\n" % (file_path),
-              "<wc-status\n",
-              "   props=\"none\"\n",
-              "   item=\"modified\"\n",
-              "   revision=\"1\">\n",
-              "<commit\n",
-              "   revision=\"1\">\n",
-              "<author>%s</author>\n" % svntest.main.wc_author,
-              time_str,
-              "</commit>\n",
-              "</wc-status>\n",
-              "</entry>\n",
-              "<against\n",
-              "   revision=\"1\"/>\n",
-              "</target>\n",
-              "</status>\n",
-             ]
+  expected_entries = {file_path : {'wcprops' : 'none',
+                                   'wcitem' : 'modified',
+                                   'wcrev' : '1',
+                                   'crev' : '1',
+                                   'author' : svntest.main.wc_author}}
 
-  exit_code, output, error = svntest.actions.run_and_verify_svn(None, None, [],
-                                                                'status',
-                                                                file_path,
-                                                                '--xml', '-u')
-
-  for i in range(0, len(output)):
-    if output[i] != template[i]:
-      print("ERROR: expected: %s actual: %s" % (template[i], output[i]))
-      raise svntest.Failure
+  svntest.actions.run_and_verify_status_xml(expected_entries, file_path, '-u')
 
   svntest.actions.run_and_verify_svn(None, None, [],
                                      'cp', '-m', 'repo-to-repo copy',
@@ -964,36 +939,28 @@ def status_in_xml(sbox):
   
   file_path = sbox.ospath('iota2')
 
-  template = ['<?xml version="1.0" encoding="UTF-8"?>\n',
-              "<status>\n",
-              "<target\n",
-              "   path=\"%s\">\n" % (file_path),
-              "<entry\n",
-              "   path=\"%s\">\n" % (file_path),
-              "<wc-status\n",
-              "   props=\"none\"\n",
-              "   item=\"none\">\n",
-              "</wc-status>\n",
-              "<repos-status\n",
-              "   props=\"none\"\n",
-              "   item=\"added\">\n",
-              "</repos-status>\n",
-              "</entry>\n",
-              "<against\n",
-              "   revision=\"2\"/>\n",
-              "</target>\n",
-              "</status>\n",
-             ]
+  expected_entries = {file_path : {'wcprops' : 'none',
+                                   'wcitem' : 'none',
+                                   'rprops' : 'none',
+                                   'ritem' : 'added'}}
 
-  exit_code, output, error = svntest.actions.run_and_verify_svn(None, None, [],
-                                                                'status',
-                                                                file_path,
-                                                                '--xml', '-u')
+  svntest.actions.run_and_verify_status_xml(expected_entries, file_path, '-u')
 
-  for i in range(0, len(output)):
-    if output[i] != template[i]:
-      print("ERROR: expected: %s actual: %s" % (template[i], output[i]))
-      raise svntest.Failure
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'rm', '-m', 'repo delete',
+                                     sbox.repo_url + '/A/B/E/alpha')
+
+  expected_entries = {sbox.ospath('A/B/E/alpha')
+                      : {'wcprops' : 'none',
+                         'wcitem' : 'normal',
+                         'wcrev' : '1',
+                         'crev' : '1',
+                         'author' : svntest.main.wc_author,
+                         'rprops' : 'none',
+                         'ritem' : 'deleted'}}
+
+  svntest.actions.run_and_verify_status_xml(expected_entries,
+                                            sbox.ospath('A/B/E/alpha'), '-u')
 
 #----------------------------------------------------------------------
 
@@ -1023,11 +990,16 @@ def status_ignored_dir(sbox):
 def status_unversioned_dir(sbox):
   "status on unversioned dir"
   sbox.build(read_only = True)
-  dir = sbox.repo_dir
-  expected_err = "svn: warning: W155007: '.*(/|\\\\)" + os.path.basename(dir) + \
+
+  # Create two unversioned directories within the test working copy
+  path = sbox.ospath('1/2')
+  os.makedirs(path)
+
+  expected_err = "svn: warning: W1550(07|10): .*'.*(/|\\\\)" + \
+                 os.path.basename(path) + \
                  "' is not a working copy"
   svntest.actions.run_and_verify_svn2(None, [], expected_err, 0,
-                                      "status", dir, dir)
+                                      "status", path)
 
 #----------------------------------------------------------------------
 
@@ -1269,53 +1241,23 @@ def status_update_with_incoming_props(sbox):
   else:
     raise svntest.Failure
 
-  xout = ['<?xml version="1.0" encoding="UTF-8"?>\n',
-          "<status>\n",
-          "<target\n",
-          "   path=\"%s\">\n" % (wc_dir),
-          "<entry\n",
-          "   path=\"%s\">\n" % (A_path),
-          "<wc-status\n",
-          "   props=\"none\"\n",
-          "   item=\"normal\"\n",
-          "   revision=\"1\">\n",
-          "<commit\n",
-          "   revision=\"1\">\n",
-          "<author>%s</author>\n" % svntest.main.wc_author,
-          time_str,
-          "</commit>\n",
-          "</wc-status>\n",
-          "<repos-status\n",
-          "   props=\"modified\"\n",
-          "   item=\"none\">\n",
-          "</repos-status>\n",
-          "</entry>\n",
-          "<entry\n",
-          "   path=\"%s\">\n" % (wc_dir),
-          "<wc-status\n",
-          "   props=\"none\"\n",
-          "   item=\"normal\"\n",
-          "   revision=\"1\">\n",
-          "<commit\n",
-          "   revision=\"1\">\n",
-          "<author>%s</author>\n" % svntest.main.wc_author,
-          time_str,
-          "</commit>\n",
-          "</wc-status>\n",
-          "<repos-status\n",
-          "   props=\"modified\"\n",
-          "   item=\"none\">\n",
-          "</repos-status>\n",
-          "</entry>\n",
-          "<against\n",
-          "   revision=\"2\"/>\n",
-          "</target>\n",
-          "</status>\n",]
+  expected_entries ={wc_dir : {'wcprops' : 'none',
+                               'wcitem' : 'normal',
+                               'wcrev' : '1',
+                               'crev' : '1',
+                               'author' : svntest.main.wc_author,
+                               'rprops' : 'modified',
+                               'ritem' : 'none'},
+                     A_path : {'wcprops' : 'none',
+                               'wcitem' : 'normal',
+                               'wcrev' : '1',
+                               'crev' : '1',
+                               'author' : svntest.main.wc_author,
+                               'rprops' : 'modified',
+                               'ritem' : 'none'},
+                     }
 
-  exit_code, output, error = svntest.actions.run_and_verify_svn(None, xout, [],
-                                                                'status',
-                                                                wc_dir,
-                                                                '--xml', '-uN')
+  svntest.actions.run_and_verify_status_xml(expected_entries, wc_dir, '-uN')
 
 # more incoming prop updates.
 def status_update_verbose_with_incoming_props(sbox):
@@ -1618,6 +1560,82 @@ def status_depth_update(sbox):
                                      "status", "-u", "--depth=infinity",
                                      A_path)
 
+
+#----------------------------------------------------------------------
+def status_depth_update_local_modifications(sbox):
+  "run 'status --depth=X -u' with local changes"
+  
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  A_path = sbox.ospath('A')
+  D_path = os.path.join(A_path, 'D')
+
+  mu_path = os.path.join(A_path, 'mu')
+  gamma_path = os.path.join(D_path, 'gamma')
+
+  svntest.main.run_svn(None, 'propset', 'svn:test', 'value', A_path)
+  svntest.main.run_svn(None, 'propset', 'svn:test', 'value', D_path)
+
+  svntest.main.file_append(mu_path, 'modified')
+  svntest.main.file_append(gamma_path, 'modified')
+
+  # depth=empty
+  expected = svntest.verify.UnorderedOutput(
+                  [" M               1   %s\n" % A_path,
+                   "Status against revision:      1\n"])
+
+  svntest.actions.run_and_verify_svn(None,
+                                     expected,
+                                     [],
+                                     "status", "-u", "--depth=empty", A_path)
+
+  expected = svntest.verify.UnorderedOutput(
+                  ["M                1   %s\n" % mu_path,
+                   "Status against revision:      1\n"])
+
+  svntest.actions.run_and_verify_svn(None,
+                                     expected,
+                                     [],
+                                     "status", "-u", "--depth=empty", mu_path)
+
+  # depth=files
+  expected = svntest.verify.UnorderedOutput(
+                  ["M                1   %s\n" % mu_path,
+                   " M               1   %s\n" % A_path,
+                   "Status against revision:      1\n"])
+
+  svntest.actions.run_and_verify_svn(None,
+                                     expected,
+                                     [],
+                                     "status", "-u", "--depth=files",
+                                     A_path)
+
+  # depth=immediates
+  expected = svntest.verify.UnorderedOutput(
+                  [" M               1   %s\n" % A_path,
+                   " M               1   %s\n" % D_path,
+                   "M                1   %s\n" % mu_path,
+                   "Status against revision:      1\n"])
+
+  svntest.actions.run_and_verify_svn(None,
+                                     expected,
+                                     [],
+                                     "status", "-u", "--depth=immediates",
+                                     A_path)
+
+  # depth=infinity (the default)
+  expected = svntest.verify.UnorderedOutput(
+                  [" M               1   %s\n" % A_path,
+                   " M               1   %s\n" % D_path,
+                   "M                1   %s\n" % mu_path,
+                   "M                1   %s\n" % gamma_path,
+                   "Status against revision:      1\n"])
+
+  svntest.actions.run_and_verify_svn(None,
+                                     expected,
+                                     [],
+                                     "status", "-u", "--depth=infinity",
+                                     A_path)
 
 #----------------------------------------------------------------------
 # Test for issue #2420
@@ -2021,6 +2039,7 @@ test_list = [ None,
               status_dash_u_deleted_directories,
               status_depth_local,
               status_depth_update,
+              status_depth_update_local_modifications,
               status_dash_u_type_change,
               status_with_tree_conflicts,
               status_nested_wc_old_format,

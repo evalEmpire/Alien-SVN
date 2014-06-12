@@ -2822,12 +2822,13 @@ def patch_prop_offset(sbox):
 
   os.chdir(wc_dir)
 
-  expected_output = [
+  # Changing two properties so output order not well defined.
+  expected_output = svntest.verify.UnorderedOutput([
     ' U        iota\n',
     '>         applied hunk ## -6,6 +6,9 ## with offset -1 (prop1)\n',
     '>         applied hunk ## -14,11 +17,8 ## with offset 4 (prop1)\n',
     '>         applied hunk ## -5,6 +5,7 ## with offset -3 (prop2)\n',
-  ]
+  ])
 
   expected_disk = svntest.main.greek_state.copy()
   expected_disk.tweak('iota', props = {'prop1' : prop1_content,
@@ -3865,24 +3866,57 @@ def patch_target_no_eol_at_eof(sbox):
 
   patch_file_path = make_patch_path(sbox)
   iota_path = os.path.join(wc_dir, 'iota')
+  mu_path = sbox.ospath('A/mu')
 
   iota_contents = [
     "This is the file iota."
   ]
 
+  mu_contents = [
+    "context\n",
+    "context\n",
+    "context\n",
+    "context\n",
+    "This is the file mu.\n",
+    "context\n",
+    "context\n",
+    "context\n",
+    "context", # no newline at end of file
+  ]
+
   svntest.main.file_write(iota_path, ''.join(iota_contents))
+  svntest.main.file_write(mu_path, ''.join(mu_contents))
   expected_output = svntest.wc.State(wc_dir, {
     'iota'  : Item(verb='Sending'),
+    'A/mu'  : Item(verb='Sending'),
     })
   expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
   expected_status.tweak('iota', wc_rev=2)
+  expected_status.tweak('A/mu', wc_rev=2)
   svntest.actions.run_and_verify_commit(wc_dir, expected_output,
                                         expected_status, None, wc_dir)
   unidiff_patch = [
-    "--- iota\t(revision 1)\n",
+    "Index: A/mu\n",
+    "===================================================================\n",
+    "--- A/mu\t(revision 2)\n",
+    "+++ A/mu\t(working copy)\n",
+    "@@ -2,8 +2,8 @@ context\n",
+    " context\n",
+    " context\n",
+    " context\n",
+    "-This is the file mu.\n",
+    "+It is really the file mu.\n",
+    " context\n",
+    " context\n",
+    " context\n",
+    " context\n",
+    "\\ No newline at end of file\n",
+    "Index: iota\n",
+    "===================================================================\n",
+    "--- iota\t(revision 2)\n",
     "+++ iota\t(working copy)\n",
-    "@@ -1,7 +1,7 @@\n",
-    "-This is the file iota.\n"
+    "@@ -1 +1 @@\n",
+    "-This is the file iota.\n",
     "\\ No newline at end of file\n",
     "+It is really the file 'iota'.\n",
     "\\ No newline at end of file\n",
@@ -3893,15 +3927,29 @@ def patch_target_no_eol_at_eof(sbox):
   iota_contents = [
     "It is really the file 'iota'."
   ]
+  mu_contents = [
+    "context\n",
+    "context\n",
+    "context\n",
+    "context\n",
+    "It is really the file mu.\n",
+    "context\n",
+    "context\n",
+    "context\n",
+    "context", # no newline at end of file
+  ]
   expected_output = [
+    'U         %s\n' % os.path.join(wc_dir, 'A', 'mu'),
     'U         %s\n' % os.path.join(wc_dir, 'iota'),
   ]
 
   expected_disk = svntest.main.greek_state.copy()
   expected_disk.tweak('iota', contents=''.join(iota_contents))
+  expected_disk.tweak('A/mu', contents=''.join(mu_contents))
 
   expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
   expected_status.tweak('iota', status='M ', wc_rev=2)
+  expected_status.tweak('A/mu', status='M ', wc_rev=2)
 
   expected_skip = wc.State('', { })
 
@@ -3967,6 +4015,61 @@ def patch_add_and_delete(sbox):
                                        1, # check-props
                                        1) # dry-run
 
+
+def patch_git_with_index_line(sbox):
+  "apply git patch with 'index' line"
+
+  sbox.build(read_only = True)
+  wc_dir = sbox.wc_dir
+  patch_file_path = make_patch_path(sbox)
+
+  unidiff_patch = [
+    "diff --git a/src/tools/ConsoleRunner/hi.txt b/src/tools/ConsoleRunner/hi.txt\n",
+    "new file mode 100644\n",
+    "index 0000000..c82a38f\n",
+    "--- /dev/null\n",
+    "+++ b/src/tools/ConsoleRunner/hi.txt\n",
+    "@@ -0,0 +1 @@\n",
+    "+hihihihihihi\n",
+    "\ No newline at end of file\n",
+  ]
+
+  svntest.main.file_write(patch_file_path, ''.join(unidiff_patch))
+
+  expected_output = [
+    'A         %s\n' % sbox.ospath('src'),
+    'A         %s\n' % sbox.ospath('src/tools'),
+    'A         %s\n' % sbox.ospath('src/tools/ConsoleRunner'),
+    'A         %s\n' % sbox.ospath('src/tools/ConsoleRunner/hi.txt'),
+  ]
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.add({
+      'src/'                            : Item(status='A ', wc_rev=0),
+      'src/tools'                       : Item(status='A ', wc_rev=0),
+      'src/tools/ConsoleRunner/'        : Item(status='A ', wc_rev=0),
+      'src/tools/ConsoleRunner/hi.txt'  : Item(status='A ', wc_rev=0),
+  })
+
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.add({'src'                            : Item(),
+                     'src/tools'                      : Item(),
+                     'src/tools/ConsoleRunner'        : Item(),
+                     'src/tools/ConsoleRunner/hi.txt' :
+                        Item(contents="hihihihihihi")
+                   })
+
+  expected_skip = wc.State('', { })
+
+  svntest.actions.run_and_verify_patch(wc_dir, os.path.abspath(patch_file_path),
+                                       expected_output,
+                                       expected_disk,
+                                       expected_status,
+                                       expected_skip,
+                                       None, # expected err
+                                       1, # check-props
+                                       1) # dry-run
+
 ########################################################################
 #Run the tests
 
@@ -4010,6 +4113,7 @@ test_list = [ None,
               patch_lacking_trailing_eol,
               patch_target_no_eol_at_eof,
               patch_add_and_delete,
+              patch_git_with_index_line,
             ]
 
 if __name__ == '__main__':

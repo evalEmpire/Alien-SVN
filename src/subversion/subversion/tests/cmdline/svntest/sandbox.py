@@ -101,6 +101,14 @@ class Sandbox:
     svntest.actions.make_repo_and_wc(self, create_wc, read_only)
     self._is_built = True
 
+  def authz_name(self, repo_dir=None):
+    "return this sandbox's name for use in an authz file"
+    repo_dir = repo_dir or self.repo_dir
+    if self.repo_url.startswith("http"):
+      return os.path.basename(repo_dir)
+    else:
+      return repo_dir.replace('\\', '/')
+
   def add_test_path(self, path, remove=True):
     self.test_paths.append(path)
     if remove:
@@ -254,6 +262,17 @@ class Sandbox:
     targets = self.ospaths(targets)
     svntest.main.run_svn(False, 'propdel', name, *targets)
 
+  def simple_add_symlink(self, dest, target):
+    """Create a symlink TARGET pointing to DEST and add it to subversion"""
+    if svntest.main.is_posix_os():
+      os.symlink(dest, self.ospath(target))
+    else:
+      svntest.main.file_write(self.ospath(target), "link %s" % dest)
+    self.simple_add(target)
+    if not svntest.main.is_posix_os():
+      # '*' is evaluated on Windows
+      self.simple_propset('svn:special', 'X', target)
+
   def simple_copy(self, source, dest):
     """SOURCE and DEST are relpaths relative to the WC."""
     source = self.ospath(source)
@@ -271,6 +290,10 @@ class Sandbox:
     svntest.main.run_svn(False, 'copy', '-m', svntest.main.make_log_msg(),
                          self.repo_url + '/' + source,
                          self.repo_url + '/' + dest)
+
+  def simple_append(self, dest, contents, truncate=False):
+    """Append CONTENTS to file DEST, optionally truncating it first."""
+    open(self.ospath(dest), truncate and 'w' or 'a').write(contents)
 
 
 def is_url(target):

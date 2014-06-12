@@ -168,8 +168,8 @@ SVNClient::status(const char *path, svn_depth_t depth,
     SVN_JNI_ERR(svn_client_status5(&youngest, ctx, checkedPath.c_str(),
                                    &rev,
                                    depth,
-                                   getAll, onServer, noIgnore, FALSE,
-                                   ignoreExternals,
+                                   getAll, onServer, noIgnore, ignoreExternals,
+                                   FALSE,
                                    changelists.array(subPool),
                                    StatusCallback::callback, callback,
                                    subPool.getPool()), );
@@ -1138,7 +1138,7 @@ void SVNClient::streamFileContent(const char *path, Revision &revision,
         return;
 
     SVN_JNI_ERR(svn_client_cat2(outputStream.getStream(subPool),
-                                path, pegRevision.revision(),
+                                intPath.c_str(), pegRevision.revision(),
                                 revision.revision(), ctx, subPool.getPool()),
                 );
 }

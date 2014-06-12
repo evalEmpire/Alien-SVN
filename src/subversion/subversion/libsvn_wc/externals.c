@@ -300,8 +300,13 @@ svn_wc_parse_externals_description3(apr_array_header_t **externals_p,
 
       item->target_dir = svn_dirent_internal_style(item->target_dir, pool);
 
-      if (item->target_dir[0] == '\0' || item->target_dir[0] == '/'
-          || svn_path_is_backpath_present(item->target_dir))
+      if (item->target_dir[0] == '\0'
+          || svn_dirent_is_absolute(item->target_dir)
+          || svn_path_is_backpath_present(item->target_dir)
+          || !svn_dirent_skip_ancestor("dummy",
+                                       svn_dirent_join("dummy",
+                                                       item->target_dir,
+                                                       pool)))
         return svn_error_createf
           (SVN_ERR_CLIENT_INVALID_EXTERNALS_DESCRIPTION, NULL,
            _("Invalid %s property on '%s': "
@@ -1252,4 +1257,14 @@ svn_wc__externals_gather_definitions(apr_hash_t **externals,
 
       return SVN_NO_ERROR;
     }
+}
+
+svn_error_t *
+svn_wc__close_db(const char *external_abspath,
+                 svn_wc_context_t *wc_ctx,
+                 apr_pool_t *scratch_pool)
+{
+  SVN_ERR(svn_wc__db_drop_root(wc_ctx->db, external_abspath,
+                               scratch_pool));
+  return SVN_NO_ERROR;
 }

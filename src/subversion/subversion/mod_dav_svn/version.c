@@ -953,8 +953,11 @@ dav_svn__checkin(dav_resource *resource,
 
           if (serr)
             {
+              int status;
+
               if (serr->apr_err == SVN_ERR_FS_CONFLICT)
                 {
+                  status = HTTP_CONFLICT;
                   msg = apr_psprintf(resource->pool,
                                      "A conflict occurred during the CHECKIN "
                                      "processing. The problem occurred with  "
@@ -962,10 +965,12 @@ dav_svn__checkin(dav_resource *resource,
                                      conflict_msg);
                 }
               else
-                msg = "An error occurred while committing the transaction.";
+                {
+                  status = HTTP_INTERNAL_SERVER_ERROR;
+                  msg = "An error occurred while committing the transaction.";
+                }
 
-              return dav_svn__convert_err(serr, HTTP_CONFLICT, msg,
-                                          resource->pool);
+              return dav_svn__convert_err(serr, status, msg, resource->pool);
             }
           else
             {
@@ -1382,6 +1387,15 @@ merge(dav_resource *target,
                                     SVN_DAV_ERROR_NAMESPACE,
                                     SVN_DAV_ERROR_TAG);
     }
+  if (! source->exists)
+    {
+      return dav_svn__new_error_tag(pool, HTTP_METHOD_NOT_ALLOWED,
+                                    SVN_ERR_INCORRECT_PARAMS,
+                                    "MERGE activity or transaction resource "
+                                    "does not exist.",
+                                    SVN_DAV_ERROR_NAMESPACE,
+                                    SVN_DAV_ERROR_TAG);
+    }
 
   /* Before attempting the final commit, we need to push any incoming
      lock-tokens into the filesystem's access_t.   Normally they come
@@ -1446,8 +1460,11 @@ merge(dav_resource *target,
       if (serr)
         {
           const char *msg;
+          int status;
+
           if (serr->apr_err == SVN_ERR_FS_CONFLICT)
             {
+              status = HTTP_CONFLICT;
               /* ### we need to convert the conflict path into a URI */
               msg = apr_psprintf(pool,
                                  "A conflict occurred during the MERGE "
@@ -1456,9 +1473,12 @@ merge(dav_resource *target,
                                  conflict);
             }
           else
-            msg = "An error occurred while committing the transaction.";
+            {
+              status = HTTP_INTERNAL_SERVER_ERROR;
+              msg = "An error occurred while committing the transaction.";
+            }
 
-          return dav_svn__convert_err(serr, HTTP_CONFLICT, msg, pool);
+          return dav_svn__convert_err(serr, status, msg, pool);
         }
       else
         {

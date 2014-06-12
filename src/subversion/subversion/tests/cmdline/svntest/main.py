@@ -1121,6 +1121,9 @@ def is_os_darwin():
 def is_fs_case_insensitive():
   return (is_os_darwin() or is_os_windows())
 
+def is_threaded_python():
+  return True
+
 def server_has_mergeinfo():
   return options.server_minor_version >= 5
 
@@ -1707,7 +1710,7 @@ def execute_tests(test_list, serial_only = False, test_name = None,
                                         'jsvndumpfilter' + _bat)
     svnversion_binary = os.path.join(options.svn_bin,
                                      'jsvnversion' + _bat)
-    svnversion_binary = os.path.join(options.svn_bin, 'jsvnmucc' + _bat)
+    svnmucc_binary = os.path.join(options.svn_bin, 'jsvnmucc' + _bat)
   else:
     if options.svn_bin:
       svn_binary = os.path.join(options.svn_bin, 'svn' + _exe)

@@ -78,6 +78,13 @@
 #define SVN_FS_FS_DEFAULT_MAX_FILES_PER_DIR 1000
 #endif
 
+/* Finding a deltification base takes operations proportional to the
+   number of changes being skipped. To prevent exploding runtime
+   during commits, limit the deltification range to this value.
+   Should be a power of 2 minus one.
+   Values < 1 disable deltification. */
+#define SVN_FS_FS_MAX_DELTIFICATION_WALK 1023
+
 /* Following are defines that specify the textual elements of the
    native filesystem directories and revision files. */
 
@@ -3382,7 +3389,9 @@ set_cached_window(svn_txdelta_window_t *window,
   if (rs->window_cache)
     {
       /* store the window and the first offset _past_ it */
-      svn_fs_fs__txdelta_cached_window_t cached_window = { window, rs->off };
+      svn_fs_fs__txdelta_cached_window_t cached_window;
+      cached_window.window = window;
+      cached_window.end_offset = rs->off;
 
       /* but key it with the start offset because that is the known state
        * when we will look it up */
@@ -5254,7 +5263,9 @@ svn_fs_fs__set_entry(svn_fs_t *fs,
       /* build parameters: (name, new entry) pair */
       const char *key =
           svn_fs_fs__id_unparse(parent_noderev->id, subpool)->data;
-      replace_baton_t baton = {name, NULL};
+      replace_baton_t baton;
+      baton.name = name;
+      baton.new_entry = NULL;
 
       if (id)
         {
@@ -5479,6 +5490,16 @@ choose_delta_base(representation_t **rep,
   count = noderev->predecessor_count;
   count = count & (count - 1);
 
+  /* Finding the delta base over a very long distance can become extremely
+     expensive for very deep histories, possibly causing client timeouts etc.
+     OTOH, this is a rare operation and its gains are minimal. Lets simply
+     start deltification anew close every other 1000 changes or so.  */
+  if (noderev->predecessor_count - count > SVN_FS_FS_MAX_DELTIFICATION_WALK)
+    {
+      *rep = NULL;
+      return SVN_NO_ERROR;
+    }
+
   /* Walk back a number of predecessors equal to the difference
      between count and the original predecessor count.  (For example,
      if noderev has ten predecessors and we want the eighth file rev,
@@ -5492,6 +5513,38 @@ choose_delta_base(representation_t **rep,
 
   return SVN_NO_ERROR;
 }
+
+/* Something went wrong and the pool for the rep write is being
+   cleared before we've finished writing the rep.  So we need
+   to remove the rep from the protorevfile and we need to unlock
+   the protorevfile. */
+static apr_status_t
+rep_write_cleanup(void *data)
+{
+  struct rep_write_baton *b = data;
+  const char *txn_id = svn_fs_fs__id_txn_id(b->noderev->id);
+  svn_error_t *err;
+  
+  /* Truncate and close the protorevfile. */
+  err = svn_io_file_trunc(b->file, b->rep_offset, b->pool);
+  err = svn_error_compose_create(err, svn_io_file_close(b->file, b->pool));
+
+  /* Remove our lock regardless of any preceeding errors so that the 
+     being_written flag is always removed and stays consistent with the
+     file lock which will be removed no matter what since the pool is
+     going away. */
+  err = svn_error_compose_create(err, unlock_proto_rev(b->fs, txn_id,
+                                                       b->lockcookie, b->pool));
+  if (err)
+    {
+      apr_status_t rc = err->apr_err;
+      svn_error_clear(err);
+      return rc;
+    }
+
+  return APR_SUCCESS;
+}
+
 
 /* Get a rep_write_baton and store it in *WB_P for the representation
    indicated by NODEREV in filesystem FS.  Perform allocations in
@@ -5555,6 +5608,10 @@ rep_write_get_baton(struct rep_write_baton **wb_p,
 
   /* Now determine the offset of the actual svndiff data. */
   SVN_ERR(get_file_offset(&b->delta_start, file, b->pool));
+
+  /* Cleanup in case something goes wrong. */
+  apr_pool_cleanup_register(b->pool, b, rep_write_cleanup,
+                            apr_pool_cleanup_null);
 
   /* Prepare to write the svndiff data. */
   svn_txdelta_to_svndiff3(&wh,
@@ -5662,6 +5719,9 @@ rep_write_contents_close(void *baton)
 
       b->noderev->data_rep = rep;
     }
+
+  /* Remove cleanup callback. */
+  apr_pool_cleanup_kill(b->pool, b, rep_write_cleanup);
 
   /* Write out the new node-rev information. */
   SVN_ERR(svn_fs_fs__put_node_revision(b->fs, b->noderev->id, b->noderev, FALSE,
@@ -5922,8 +5982,11 @@ validate_root_noderev(svn_fs_t *fs,
       return svn_error_createf(SVN_ERR_FS_CORRUPT, NULL,
                                _("predecessor count for "
                                  "the root node-revision is wrong: "
-                                 "found %d, committing r%ld"),
-                                 root_noderev->predecessor_count, rev);
+                                 "found (%d+%ld != %d), committing r%ld"),
+                                 head_predecessor_count,
+                                 rev - head_revnum, /* This is equal to 1. */
+                                 root_noderev->predecessor_count,
+                                 rev);
     }
 
   return SVN_NO_ERROR;
@@ -5985,16 +6048,23 @@ write_final_rev(const svn_fs_id_t **new_id_p,
     {
       apr_pool_t *subpool;
       apr_hash_t *entries, *str_entries;
-      apr_hash_index_t *hi;
+      apr_array_header_t *sorted_entries;
+      int i;
 
       /* This is a directory.  Write out all the children first. */
       subpool = svn_pool_create(pool);
 
       SVN_ERR(svn_fs_fs__rep_contents_dir(&entries, fs, noderev, pool));
-
-      for (hi = apr_hash_first(pool, entries); hi; hi = apr_hash_next(hi))
+      /* For the sake of the repository administrator sort the entries
+         so that the final file is deterministic and repeatable,
+         however the rest of the FSFS code doesn't require any
+         particular order here. */
+      sorted_entries = svn_sort__hash(entries, svn_sort_compare_items_lexically,
+                                      pool);
+      for (i = 0; i < sorted_entries->nelts; ++i)
         {
-          svn_fs_dirent_t *dirent = svn__apr_hash_index_val(hi);
+          svn_fs_dirent_t *dirent = APR_ARRAY_IDX(sorted_entries, i,
+                                                  svn_sort__item_t).value;
 
           svn_pool_clear(subpool);
           SVN_ERR(write_final_rev(&new_id, file, rev, fs, dirent->id,
@@ -6133,19 +6203,25 @@ write_final_changed_path_info(apr_off_t *offset_p,
 {
   apr_hash_t *changed_paths;
   apr_off_t offset;
-  apr_hash_index_t *hi;
   apr_pool_t *iterpool = svn_pool_create(pool);
   fs_fs_data_t *ffd = fs->fsap_data;
   svn_boolean_t include_node_kinds =
       ffd->format >= SVN_FS_FS__MIN_KIND_IN_CHANGED_FORMAT;
+  apr_array_header_t *sorted_changed_paths;
+  int i;
 
   SVN_ERR(get_file_offset(&offset, file, pool));
 
   SVN_ERR(svn_fs_fs__txn_changes_fetch(&changed_paths, fs, txn_id, pool));
+  /* For the sake of the repository administrator sort the changes so
+     that the final file is deterministic and repeatable, however the
+     rest of the FSFS code doesn't require any particular order here. */
+  sorted_changed_paths = svn_sort__hash(changed_paths,
+                                        svn_sort_compare_items_lexically, pool);
 
   /* Iterate through the changed paths one at a time, and convert the
      temporary node-id into a permanent one for each change entry. */
-  for (hi = apr_hash_first(pool, changed_paths); hi; hi = apr_hash_next(hi))
+  for (i = 0; i < sorted_changed_paths->nelts; ++i)
     {
       node_revision_t *noderev;
       const svn_fs_id_t *id;
@@ -6154,8 +6230,8 @@ write_final_changed_path_info(apr_off_t *offset_p,
 
       svn_pool_clear(iterpool);
 
-      change = svn__apr_hash_index_val(hi);
-      path = svn__apr_hash_index_key(hi);
+      change = APR_ARRAY_IDX(sorted_changed_paths, i, svn_sort__item_t).value;
+      path = APR_ARRAY_IDX(sorted_changed_paths, i, svn_sort__item_t).key;
 
       id = change->node_rev_id;
 

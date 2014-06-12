@@ -299,7 +299,12 @@ svn_client_status5(svn_revnum_t *result_rev,
         target_basename = svn_dirent_basename(target_abspath, NULL);
         dir = svn_dirent_dirname(path, pool);
 
-        if (kind != svn_node_file)
+        if (kind == svn_node_file)
+          {
+            if (depth == svn_depth_empty)
+              depth = svn_depth_files;
+          }
+        else
           {
             err = svn_wc_read_kind(&kind, ctx->wc_ctx, dir_abspath, FALSE,
                                    pool);
@@ -419,7 +424,7 @@ svn_client_status5(svn_revnum_t *result_rev,
                                                       pool));
             }
 
-          if (depth_as_sticky)
+          if (depth_as_sticky || !server_supports_depth)
             status_depth = depth;
           else
             status_depth = svn_depth_unknown; /* Use depth from WC */
@@ -505,15 +510,16 @@ svn_client_status5(svn_revnum_t *result_rev,
   */
   if (SVN_DEPTH_IS_RECURSIVE(depth) && (! ignore_externals))
     {
-      apr_hash_t *externals_new;
-      SVN_ERR(svn_wc__externals_gather_definitions(&externals_new, NULL,
-                                                   ctx->wc_ctx, target_abspath,
-                                                   depth, pool, pool));
+      apr_hash_t *external_map;
+      SVN_ERR(svn_wc__externals_defined_below(&external_map,
+                                              ctx->wc_ctx, target_abspath,
+                                              pool, pool));
 
 
-      SVN_ERR(svn_client__do_external_status(ctx, externals_new,
+      SVN_ERR(svn_client__do_external_status(ctx, external_map,
                                              depth, get_all,
                                              update, no_ignore,
+                                             sb.anchor_abspath, sb.anchor_relpath,
                                              status_func, status_baton, pool));
     }
 

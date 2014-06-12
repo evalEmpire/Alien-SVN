@@ -2117,7 +2117,7 @@ SWIG_ruby_failed(void)
 } 
 
 
-/*@SWIG:/x1/home/hwright/dev/svn-trunk/tools/dist/prefix/share/swig/2.0.4/ruby/rubyprimtypes.swg,19,%ruby_aux_method@*/
+/*@SWIG:/home/breser/wandisco/rm/1.7.17/prefix/share/swig/2.0.4/ruby/rubyprimtypes.swg,19,%ruby_aux_method@*/
 SWIGINTERN VALUE SWIG_AUX_NUM2LONG(VALUE *args)
 {
   VALUE obj = args[0];
@@ -2197,7 +2197,7 @@ SWIGINTERN svn_wc_external_item2_t *svn_wc_external_item2_t_dup(svn_wc_external_
     return svn_wc_external_item2_dup(self, pool);
   }
 
-/*@SWIG:/x1/home/hwright/dev/svn-trunk/tools/dist/prefix/share/swig/2.0.4/ruby/rubyprimtypes.swg,19,%ruby_aux_method@*/
+/*@SWIG:/home/breser/wandisco/rm/1.7.17/prefix/share/swig/2.0.4/ruby/rubyprimtypes.swg,19,%ruby_aux_method@*/
 SWIGINTERN VALUE SWIG_AUX_NUM2ULONG(VALUE *args)
 {
   VALUE obj = args[0];

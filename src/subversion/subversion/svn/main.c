@@ -1329,20 +1329,20 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "\n"
      "  Example output:\n"
      "    svn status wc\n"
-     "     M     wc/bar.c\n"
-     "    A  +   wc/qax.c\n"
+     "     M      wc/bar.c\n"
+     "    A  +    wc/qax.c\n"
      "\n"
      "    svn status -u wc\n"
-     "     M           965    wc/bar.c\n"
-     "           *     965    wc/foo.c\n"
-     "    A  +           -    wc/qax.c\n"
+     "     M             965   wc/bar.c\n"
+     "            *      965   wc/foo.c\n"
+     "    A  +             -   wc/qax.c\n"
      "    Status against revision:   981\n"
      "\n"
      "    svn status --show-updates --verbose wc\n"
-     "     M           965       938 kfogel       wc/bar.c\n"
-     "           *     965       922 sussman      wc/foo.c\n"
-     "    A  +           -       687 joe          wc/qax.c\n"
-     "                 965       687 joe          wc/zig.c\n"
+     "     M             965      938 kfogel       wc/bar.c\n"
+     "            *      965      922 sussman      wc/foo.c\n"
+     "    A  +             -      687 joe          wc/qax.c\n"
+     "                   965      687 joe          wc/zig.c\n"
      "    Status against revision:   981\n"
      "\n"
      "    svn status\n"
@@ -1995,7 +1995,8 @@ main(int argc, const char *argv[])
         opt_state.remove = TRUE;
         break;
       case opt_changelist:
-        opt_state.changelist = apr_pstrdup(pool, opt_arg);
+        SVN_INT_ERR(svn_utf_cstring_to_utf8(&utf8_opt_arg, opt_arg, pool));
+        opt_state.changelist = utf8_opt_arg;
         if (opt_state.changelist[0] == '\0')
           {
             err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,

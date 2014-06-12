@@ -1152,7 +1152,18 @@ static svn_error_t *ra_svn_get_dir(svn_ra_session_t *session,
       dirent->size = size;/* FIXME: svn_filesize_t */
       dirent->has_props = has_props;
       dirent->created_rev = crev;
-      SVN_ERR(svn_time_from_cstring(&dirent->time, cdate, pool));
+      /* NOTE: the tuple's format string says CDATE may be NULL. But this
+         function does not allow that. The server has always sent us some
+         random date, however, so this just happens to work. But let's
+         be wary of servers that are (improperly) fixed to send NULL.
+
+         Note: they should NOT be "fixed" to send NULL, as that would break
+         any older clients which received that NULL. But we may as well
+         be defensive against a malicous server.  */
+      if (cdate == NULL)
+        dirent->time = 0;
+      else
+        SVN_ERR(svn_time_from_cstring(&dirent->time, cdate, pool));
       dirent->last_author = cauthor;
       apr_hash_set(*dirents, name, APR_HASH_KEY_STRING, dirent);
     }
@@ -1499,10 +1510,10 @@ static svn_error_t *ra_svn_log(svn_ra_session_t *session,
           log_entry->has_children = has_children;
           log_entry->subtractive_merge = subtractive_merge;
           if (rplist)
-            SVN_ERR(svn_ra_svn_parse_proplist(rplist, pool,
+            SVN_ERR(svn_ra_svn_parse_proplist(rplist, iterpool,
                                               &log_entry->revprops));
           if (log_entry->revprops == NULL)
-            log_entry->revprops = apr_hash_make(pool);
+            log_entry->revprops = apr_hash_make(iterpool);
           if (revprops == NULL)
             {
               /* Caller requested all revprops; set author/date/log. */

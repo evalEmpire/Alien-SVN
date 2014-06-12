@@ -1015,6 +1015,20 @@ svn_opt__arg_canonicalize_url(const char **url_out, const char *url_in,
   /* Auto-escape some ASCII characters. */
   target = svn_path_uri_autoescape(target, pool);
 
+#if '/' != SVN_PATH_LOCAL_SEPARATOR
+  /* Allow using file:///C:\users\me/repos on Windows, like we did in 1.6 */
+  if (strchr(target, SVN_PATH_LOCAL_SEPARATOR))
+    {
+      char *p = apr_pstrdup(pool, target);
+      target = p;
+
+      /* Convert all local-style separators to the canonical ones. */
+      for (; *p != '\0'; ++p)
+        if (*p == SVN_PATH_LOCAL_SEPARATOR)
+          *p = '/';
+    }
+#endif
+
   /* Verify that no backpaths are present in the URL. */
   if (svn_path_is_backpath_present(target))
     return svn_error_createf(SVN_ERR_BAD_URL, 0,
@@ -1074,7 +1088,7 @@ svn_opt__print_version_info(const char *pgm_name,
                                      "   compiled %s, %s\n\n"), pgm_name,
                              SVN_VERSION, __DATE__, __TIME__));
   SVN_ERR(svn_cmdline_fputs(
-             _("Copyright (C) 2012 The Apache Software Foundation.\n"
+             _("Copyright (C) 2014 The Apache Software Foundation.\n"
                "This software consists of contributions made by many "
                "people; see the NOTICE\n"
                "file for more information.\n"

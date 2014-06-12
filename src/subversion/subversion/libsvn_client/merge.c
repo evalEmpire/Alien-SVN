@@ -48,6 +48,7 @@
 #include "svn_props.h"
 #include "svn_time.h"
 #include "svn_sorts.h"
+#include "svn_subst.h"
 #include "svn_ra.h"
 #include "client.h"
 #include "mergeinfo.h"
@@ -1861,10 +1862,14 @@ files_same_p(svn_boolean_t *same,
       working_rev.kind = svn_opt_revision_working;
 
       /* Compare the file content, translating 'mine' to 'normal' form. */
-      SVN_ERR(svn_client__get_normalized_stream(&mine_stream, wc_ctx,
-                                                mine_abspath, &working_rev,
-                                                FALSE, TRUE, NULL, NULL,
-                                                scratch_pool, scratch_pool));
+      if (svn_prop_get_value(working_props, SVN_PROP_SPECIAL) != NULL)
+        SVN_ERR(svn_subst_read_specialfile(&mine_stream, mine_abspath,
+                                           scratch_pool, scratch_pool));
+      else
+        SVN_ERR(svn_client__get_normalized_stream(&mine_stream, wc_ctx,
+                                                  mine_abspath, &working_rev,
+                                                  FALSE, TRUE, NULL, NULL,
+                                                  scratch_pool, scratch_pool));
 
       SVN_ERR(svn_stream_open_readonly(&older_stream, older_abspath,
                                        scratch_pool, scratch_pool));
@@ -2629,26 +2634,56 @@ notification_receiver(void *baton, const svn_wc_notify_t *notify,
 
       if (notify->action == svn_wc_notify_update_add)
         {
-          svn_boolean_t is_root_of_added_subtree = FALSE;
-          const char *added_path = apr_pstrdup(notify_b->pool, notify->path);
-          const char *added_path_parent = NULL;
+          svn_boolean_t root_of_added_subtree = TRUE;
 
           /* Stash the root path of any added subtrees. */
           if (notify_b->added_abspaths == NULL)
             {
+              /* The first added path is always a root. */
               notify_b->added_abspaths = apr_hash_make(notify_b->pool);
-              is_root_of_added_subtree = TRUE;
             }
           else
             {
-              added_path_parent = svn_dirent_dirname(added_path, pool);
-              if (!apr_hash_get(notify_b->added_abspaths, added_path_parent,
-                                APR_HASH_KEY_STRING))
-                is_root_of_added_subtree = TRUE;
+              const char *added_path_parent =
+                svn_dirent_dirname(notify->path, pool);
+              apr_pool_t *subpool = svn_pool_create(pool);
+
+              /* Is NOTIFY->PATH the root of an added subtree? */
+              while (strcmp(notify_b->merge_b->target_abspath,
+                            added_path_parent))
+                {
+                  if (apr_hash_get(notify_b->added_abspaths,
+                                   added_path_parent,
+                                   APR_HASH_KEY_STRING))
+                    {
+                      root_of_added_subtree = FALSE;
+                      break;
+                    }
+
+                  added_path_parent = svn_dirent_dirname(
+                    added_path_parent, subpool);
+                }
+
+              svn_pool_destroy(subpool);
             }
-          if (is_root_of_added_subtree)
-            apr_hash_set(notify_b->added_abspaths, added_path,
-                         APR_HASH_KEY_STRING, added_path);
+
+          if (root_of_added_subtree)
+            {
+              const char *added_root_path = apr_pstrdup(notify_b->pool,
+                                                        notify->path);
+              apr_hash_set(notify_b->added_abspaths, added_root_path,
+                           APR_HASH_KEY_STRING, added_root_path);
+            }
+        }
+
+      if (notify->action == svn_wc_notify_update_delete
+          && notify_b->added_abspaths)
+        {
+          /* Issue #4166: If a previous merge added NOTIFY_ABSPATH, but we
+             are now deleting it, then remove it from the list of added
+             paths. */
+          apr_hash_set(notify_b->added_abspaths, notify->path,
+                       APR_HASH_KEY_STRING, NULL);
         }
     }
 
@@ -6077,8 +6112,8 @@ static int
 compare_merge_source_ts(const void *a,
                         const void *b)
 {
-  svn_revnum_t a_rev = ((const merge_source_t *)a)->rev1;
-  svn_revnum_t b_rev = ((const merge_source_t *)b)->rev1;
+  svn_revnum_t a_rev = (*(const merge_source_t *const *)a)->rev1;
+  svn_revnum_t b_rev = (*(const merge_source_t *const *)b)->rev1;
   if (a_rev == b_rev)
     return 0;
   return a_rev < b_rev ? 1 : -1;
@@ -6563,6 +6598,7 @@ do_file_merge(svn_mergeinfo_catalog_t result_catalog,
               svn_boolean_t sources_related,
               svn_boolean_t squelch_mergeinfo_notifications,
               notification_receiver_baton_t *notify_b,
+              svn_boolean_t abort_on_conflicts,
               merge_cmd_baton_t *merge_b,
               apr_pool_t *scratch_pool)
 {
@@ -6827,10 +6863,13 @@ do_file_merge(svn_mergeinfo_catalog_t result_catalog,
           SVN_ERR(svn_io_remove_file2(tmpfile1, TRUE, iterpool));
           SVN_ERR(svn_io_remove_file2(tmpfile2, TRUE, iterpool));
 
-          if ((i < (ranges_to_merge->nelts - 1))
+          if ((i < (ranges_to_merge->nelts - 1) || abort_on_conflicts)
               && is_path_conflicted_by_merge(merge_b))
             {
               conflicted_range = svn_merge_range_dup(r, scratch_pool);
+              /* Only record partial mergeinfo if only a partial merge was
+                 performed before a conflict was encountered. */
+              range.end = r->end;
               break;
             }
         }
@@ -6852,7 +6891,8 @@ do_file_merge(svn_mergeinfo_catalog_t result_catalog,
         &filtered_rangelist,
         mergeinfo_path,
         merge_target->implicit_mergeinfo,
-        &range, iterpool));
+        &range,
+        iterpool));
 
       /* Only record mergeinfo if there is something other than
          self-referential mergeinfo, but don't record mergeinfo if
@@ -8766,6 +8806,11 @@ do_merge(apr_hash_t **modified_subtrees,
         APR_ARRAY_IDX(merge_sources, i, merge_source_t *);
       const char *url1, *url2;
       svn_revnum_t rev1, rev2;
+      /* If conflicts occur while merging any but the very last
+       * revision range we want an error to be raised that aborts
+       * the merge operation. The user will be asked to resolve conflicts
+       * before merging subsequent revision ranges. */
+      svn_boolean_t abort_on_conflicts = (i < merge_sources->nelts - 1);
 
       svn_pool_clear(iterpool);
 
@@ -8819,16 +8864,11 @@ do_merge(apr_hash_t **modified_subtrees,
                                 sources_related,
                                 squelch_mergeinfo_notifications,
                                 &notify_baton,
+                                abort_on_conflicts,
                                 &merge_cmd_baton, iterpool));
         }
       else if (target_kind == svn_node_dir)
         {
-          /* If conflicts occur while merging any but the very last
-           * revision range we want an error to be raised that aborts
-           * the merge operation. The user will be asked to resolve conflicts
-           * before merging subsequent revision ranges. */
-          svn_boolean_t abort_on_conflicts = (i < merge_sources->nelts - 1);
-
           SVN_ERR(do_directory_merge(result_catalog,
                                      url1, rev1, url2, rev2, target_abspath,
                                      depth, squelch_mergeinfo_notifications,
@@ -10541,6 +10581,32 @@ merge_reintegrate_locked(const char *source,
                               target_abspath, &working_revision,
                               &working_revision, NULL, svn_depth_infinity,
                               NULL, ctx, scratch_pool, scratch_pool));
+
+  if (apr_hash_count(subtrees_with_mergeinfo))
+    {
+      apr_hash_t *externals;
+      apr_hash_index_t *hi;
+
+      SVN_ERR(svn_wc__externals_defined_below(&externals, ctx->wc_ctx,
+                                              target_abspath, scratch_pool,
+                                              scratch_pool));
+
+      for (hi = apr_hash_first(scratch_pool, subtrees_with_mergeinfo);
+           hi;
+           hi = apr_hash_next(hi))
+        {
+          const char *wc_path = svn__apr_hash_index_key(hi);
+
+          /* svn_client_propget4 picks up file externals with
+             mergeinfo, but we don't want those. */
+          if (apr_hash_get(externals, wc_path, APR_HASH_KEY_STRING))
+            {
+              apr_hash_set(subtrees_with_mergeinfo, wc_path,
+                           APR_HASH_KEY_STRING, NULL);
+              continue;
+            }
+        }
+    }
 
   /* Open two RA sessions, one to our source and one to our target. */
   no_rev.kind = svn_opt_revision_unspecified;

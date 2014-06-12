@@ -24920,12 +24920,17 @@ SWIGINTERN PyObject *_wrap_svn_stream_read(PyObject *SWIGUNUSEDPARM(self), PyObj
     }
   }
   {
-    if (!PyInt_Check(obj1)) {
+    if (PyLong_Check(obj1)) {
+      temp2 = PyLong_AsLong(obj1);
+    }
+    else if (PyInt_Check(obj1)) {
+      temp2 = PyInt_AsLong(obj1);
+    }
+    else {
       PyErr_SetString(PyExc_TypeError,
         "expecting an integer for the buffer size");
       SWIG_fail;
     }
-    temp2 = PyInt_AsLong(obj1);
     if (temp2 < 0) {
       PyErr_SetString(PyExc_ValueError,
         "buffer size must be a positive integer");
@@ -27617,12 +27622,17 @@ SWIGINTERN PyObject *_wrap_svn_read_invoke_fn(PyObject *SWIGUNUSEDPARM(self), Py
     }
   }
   {
-    if (!PyInt_Check(obj2)) {
+    if (PyLong_Check(obj2)) {
+      temp3 = PyLong_AsLong(obj2);
+    }
+    else if (PyInt_Check(obj2)) {
+      temp3 = PyInt_AsLong(obj2);
+    }
+    else {
       PyErr_SetString(PyExc_TypeError,
         "expecting an integer for the buffer size");
       SWIG_fail;
     }
-    temp3 = PyInt_AsLong(obj2);
     if (temp3 < 0) {
       PyErr_SetString(PyExc_ValueError,
         "buffer size must be a positive integer");
@@ -30983,15 +30993,15 @@ SWIG_init(void) {
   SWIG_Python_SetConstant(d, "SVN_ALLOCATOR_RECOMMENDED_MAX_FREE",SWIG_From_long((long)((4096*1024))));
   SWIG_Python_SetConstant(d, "SVN_VER_MAJOR",SWIG_From_long((long)(1)));
   SWIG_Python_SetConstant(d, "SVN_VER_MINOR",SWIG_From_long((long)(7)));
-  SWIG_Python_SetConstant(d, "SVN_VER_PATCH",SWIG_From_long((long)(3)));
-  SWIG_Python_SetConstant(d, "SVN_VER_MICRO",SWIG_From_long((long)(3)));
+  SWIG_Python_SetConstant(d, "SVN_VER_PATCH",SWIG_From_long((long)(17)));
+  SWIG_Python_SetConstant(d, "SVN_VER_MICRO",SWIG_From_long((long)(17)));
   SWIG_Python_SetConstant(d, "SVN_VER_LIBRARY",SWIG_From_long((long)(1)));
-  SWIG_Python_SetConstant(d, "SVN_VER_TAG",SWIG_FromCharPtr(" (r1242825)"));
+  SWIG_Python_SetConstant(d, "SVN_VER_TAG",SWIG_FromCharPtr(" (r1591372)"));
   SWIG_Python_SetConstant(d, "SVN_VER_NUMTAG",SWIG_FromCharPtr(""));
-  SWIG_Python_SetConstant(d, "SVN_VER_REVISION",SWIG_From_long((long)(1242825)));
-  SWIG_Python_SetConstant(d, "SVN_VER_NUM",SWIG_FromCharPtr("1.7.3"));
-  SWIG_Python_SetConstant(d, "SVN_VER_NUMBER",SWIG_FromCharPtr("1.7.3"));
-  SWIG_Python_SetConstant(d, "SVN_VERSION",SWIG_FromCharPtr("1.7.3 (r1242825)"));
+  SWIG_Python_SetConstant(d, "SVN_VER_REVISION",SWIG_From_long((long)(1591372)));
+  SWIG_Python_SetConstant(d, "SVN_VER_NUM",SWIG_FromCharPtr("1.7.17"));
+  SWIG_Python_SetConstant(d, "SVN_VER_NUMBER",SWIG_FromCharPtr("1.7.17"));
+  SWIG_Python_SetConstant(d, "SVN_VERSION",SWIG_FromCharPtr("1.7.17 (r1591372)"));
   SWIG_Python_SetConstant(d, "svn_prop_entry_kind",SWIG_From_long((long)(svn_prop_entry_kind)));
   SWIG_Python_SetConstant(d, "svn_prop_wc_kind",SWIG_From_long((long)(svn_prop_wc_kind)));
   SWIG_Python_SetConstant(d, "svn_prop_regular_kind",SWIG_From_long((long)(svn_prop_regular_kind)));

@@ -1370,24 +1370,37 @@ open_root(void *edit_baton,
     }
   else
     {
-      svn_ra_serf__options_context_t *opt_ctx;
       svn_ra_serf__simple_request_context_t *mkact_ctx;
-      const char *activity_str;
+      const char *activity_str = ctx->session->activity_collection_url;
 
-      SVN_ERR(svn_ra_serf__create_options_req(&opt_ctx, ctx->session,
-                                              ctx->session->conns[0],
-                                              ctx->session->session_url.path,
-                                              ctx->pool));
-
-      SVN_ERR(svn_ra_serf__context_run_wait(
-        svn_ra_serf__get_options_done_ptr(opt_ctx),
-        ctx->session, ctx->pool));
-
-      activity_str = svn_ra_serf__options_get_activity_collection(opt_ctx);
       if (!activity_str)
-        return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
-                                _("The OPTIONS response did not include the "
-                                  "requested activity-collection-set value"));
+        {
+          svn_ra_serf__options_context_t *opt_ctx;
+
+          SVN_ERR(svn_ra_serf__create_options_req(&opt_ctx, ctx->session,
+                                                  ctx->session->conns[0],
+                                                  ctx->session->session_url.path,
+                                                  ctx->pool));
+
+          SVN_ERR(svn_ra_serf__context_run_wait(
+                      svn_ra_serf__get_options_done_ptr(opt_ctx),
+                      ctx->session, ctx->pool));
+
+          activity_str = svn_ra_serf__options_get_activity_collection(opt_ctx);
+        }
+
+      /* Cache the result. */
+      if (activity_str)
+        {
+          ctx->session->activity_collection_url =
+            apr_pstrdup(ctx->session->pool, activity_str);
+        }
+      else
+        {
+          return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
+                                  _("The OPTIONS response did not include the "
+                                    "requested activity-collection-set value"));
+        }
 
       ctx->activity_url =
         svn_path_url_add_component2(activity_str, svn_uuid_generate(ctx->pool),
@@ -2218,7 +2231,10 @@ close_edit(void *edit_baton,
 
   if (svn_ra_serf__merge_get_status(merge_ctx) != 200)
     {
-      SVN_ERR_MALFUNCTION();
+      return svn_error_createf(SVN_ERR_RA_DAV_REQUEST_FAILED, NULL,
+                               _("MERGE request failed: returned %d "
+                                 "(during commit)"),
+                               svn_ra_serf__merge_get_status(merge_ctx));
     }
 
   /* Inform the WC that we did a commit.  */

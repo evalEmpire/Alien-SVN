@@ -1,10 +1,8 @@
 {
    "abstract" : "A wrapper for installing the SVN Perl bindings",
-   "author" : [
-      "unknown"
-   ],
+   "author" : [],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.112621",
+   "generated_by" : "Module::Build version 0.4205",
    "license" : [
       "open_source"
    ],
@@ -40,41 +38,30 @@
       }
    },
    "provides" : {
-      "Alien::SVN" : {
-         "file" : "lib/Alien/SVN.pm",
-         "version" : "v1.7.3.1"
-      },
       "SVN::Base" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm"
       },
       "SVN::Client" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Client.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Client.pm"
       },
       "SVN::Core" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Core.pm",
-         "version" : "v1.7.3"
+         "version" : "1.7.17"
       },
       "SVN::Delta" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Delta.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Delta.pm"
       },
       "SVN::Fs" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Fs.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Fs.pm"
       },
       "SVN::Ra" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Ra.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Ra.pm"
       },
       "SVN::Repos" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Repos.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Repos.pm"
       },
       "SVN::Wc" : {
-         "file" : "src/subversion/subversion/bindings/swig/perl/native/Wc.pm",
-         "version" : 0
+         "file" : "src/subversion/subversion/bindings/swig/perl/native/Wc.pm"
       }
    },
    "release_status" : "stable",
@@ -89,5 +76,5 @@
          "url" : "http://github.com/schwern/alien-svn"
       }
    },
-   "version" : "v1.7.3.1"
+   "version" : "v1.7.17.0"
 }

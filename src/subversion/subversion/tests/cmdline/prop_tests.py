@@ -893,8 +893,7 @@ def prop_value_conversions(sbox):
   svntest.actions.set_prop('svn:executable', '*', lambda_path)
   for pval in ('      ', '', 'no', 'off', 'false'):
     svntest.actions.set_prop('svn:executable', pval, mu_path,
-                             ["svn: warning: To turn off the svn:executable property, use 'svn propdel';\n",
-                              "setting the property to '" + pval + "' will not turn it off.\n"])
+                             "svn: warning: W125005.*use 'svn propdel'")
 
   # Anything else should be untouched
   svntest.actions.set_prop('svn:some-prop', 'bar', lambda_path)
@@ -2269,7 +2268,7 @@ def propget_redirection(sbox):
 
   # Run propget -vR svn:mergeinfo, redirecting the stdout to a file.
   arglist = [svntest.main.svn_binary, 'propget', SVN_PROP_MERGEINFO, '-vR',
-             wc_dir]
+             '--config-dir', svntest.main.default_config_dir, wc_dir]
   redir_file = open(redirect_file, 'wb')
   pg_proc = subprocess.Popen(arglist, stdout=redir_file)
   pg_proc.wait()

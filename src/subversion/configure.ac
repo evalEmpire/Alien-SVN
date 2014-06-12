@@ -118,7 +118,7 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config)
 
 # Either a space-separated list of allowable Neon versions, or "any" to
 # mean allow anything.
-NEON_ALLOWED_LIST="0\.25 0\.26 0\.27\.2 0\.28 0\.29"
+NEON_ALLOWED_LIST="0\.25 0\.26 0\.27\.2 0\.28 0\.29 0\.30"
 NEON_RECOMMENDED_VER="0.29.6"
 NEON_URL="http://www.webdav.org/neon/neon-${NEON_RECOMMENDED_VER}.tar.gz"
 dnl You can skip the neon version check only if you know what you are doing 
@@ -532,7 +532,7 @@ AC_PREPROC_IFELSE([AC_LANG_SOURCE([[
 CPPFLAGS="$old_CPPFLAGS"
 
 
-dnl D-Bus (required for support for KWallet and GNOME Keyring) -------------------
+dnl D-Bus (required for support for KWallet) -------------------
 
 if test -n "$PKG_CONFIG"; then
   AC_MSG_CHECKING([for D-Bus .pc file])
@@ -582,31 +582,27 @@ if test "$with_gnome_keyring" != "no"; then
   if test "$svn_enable_shared" = "yes"; then
     if test "$APR_HAS_DSO" = "yes"; then
       if test -n "$PKG_CONFIG"; then
-        if test "$HAVE_DBUS" = "yes"; then
-          AC_MSG_CHECKING([for GLib and GNOME Keyring .pc files])
-          if $PKG_CONFIG --exists glib-2.0 gnome-keyring-1; then
+        AC_MSG_CHECKING([for GLib and GNOME Keyring .pc files])
+        if $PKG_CONFIG --exists glib-2.0 gnome-keyring-1; then
+          AC_MSG_RESULT([yes])
+          old_CPPFLAGS="$CPPFLAGS"
+          SVN_GNOME_KEYRING_INCLUDES="`$PKG_CONFIG --cflags glib-2.0 gnome-keyring-1`"
+          CPPFLAGS="$CPPFLAGS $SVN_GNOME_KEYRING_INCLUDES"
+          AC_CHECK_HEADER(gnome-keyring.h, with_gnome_keyring=yes, with_gnome_keyring=no)
+          AC_MSG_CHECKING([for GNOME Keyring])
+          if test "$with_gnome_keyring" = "yes"; then
             AC_MSG_RESULT([yes])
-            old_CPPFLAGS="$CPPFLAGS"
-            SVN_GNOME_KEYRING_INCLUDES="$DBUS_CPPFLAGS `$PKG_CONFIG --cflags glib-2.0 gnome-keyring-1`"
-            CPPFLAGS="$CPPFLAGS $SVN_GNOME_KEYRING_INCLUDES"
-            AC_CHECK_HEADER(gnome-keyring.h, with_gnome_keyring=yes, with_gnome_keyring=no)
-            AC_MSG_CHECKING([for GNOME Keyring])
-            if test "$with_gnome_keyring" = "yes"; then
-              AC_MSG_RESULT([yes])
-              AC_DEFINE([SVN_HAVE_GNOME_KEYRING], [1], 
-                        [Is GNOME Keyring support enabled?])
-              CPPFLAGS="$old_CPPFLAGS"
-              SVN_GNOME_KEYRING_LIBS="$DBUS_LIBS `$PKG_CONFIG --libs glib-2.0 gnome-keyring-1`"
-            else
-              AC_MSG_RESULT([no])
-              AC_MSG_ERROR([cannot find GNOME Keyring])
-            fi
+            AC_DEFINE([SVN_HAVE_GNOME_KEYRING], [1], 
+                      [Is GNOME Keyring support enabled?])
+            CPPFLAGS="$old_CPPFLAGS"
+            SVN_GNOME_KEYRING_LIBS="`$PKG_CONFIG --libs glib-2.0 gnome-keyring-1`"
           else
             AC_MSG_RESULT([no])
-            AC_MSG_ERROR([cannot find GLib and GNOME Keyring .pc files])
+            AC_MSG_ERROR([cannot find GNOME Keyring])
           fi
         else
-          AC_MSG_ERROR([cannot find D-Bus])
+          AC_MSG_RESULT([no])
+          AC_MSG_ERROR([cannot find GLib and GNOME Keyring .pc files])
         fi
       else
         AC_MSG_ERROR([cannot find pkg-config])
@@ -725,7 +721,7 @@ AC_ARG_WITH(libmagic,AS_HELP_STRING([--with-libmagic=PREFIX],
     CPPFLAGS="$CPPFLAGS -I$libmagic_prefix/include"
     AC_CHECK_HEADERS(magic.h,[
       save_ldflags="$LDFLAGS"
-      LDFLAGS="-L$libmagic_prefix/lib"
+      LDFLAGS="-L$libmagic_prefix/lib $LDFLAGS"
       AC_CHECK_LIB(magic, magic_open, [libmagic_found="yes"])
       LDFLAGS="$save_ldflags"
     ])

@@ -891,6 +891,9 @@ static const testcase_canonicalize_t uri_canonical_tests[] =
     { "file:///c:/temp/REPOS", "file:///c:/temp/REPOS" },
     { "file:///C:/temp/REPOS", "file:///C:/temp/REPOS" },
 #endif /* SVN_USE_DOS_PATHS */
+    /* Hostnames that look like non-canonical paths */
+    { "file://./foo",             "file://./foo" },
+    { "http://./foo",             "http://./foo" },
   /* svn_uri_is_canonical() was a private function in the 1.6 API, and
      has since taken a MAJOR change of direction, namely that only
      absolute URLs are considered canonical uris now. */
@@ -1357,6 +1360,9 @@ static const testcase_ancestor_t dirent_ancestor_tests[] =
     { "foo.",           "foo./.bar",        ".bar" },
     { "X:foo",          "X:bar",            NULL },
     { "../foo",         "..",               NULL },
+    { "/foo/bar/zig",   "/foo",             NULL },
+    { "/foo/bar/zig",   "/foo/ba",          NULL },
+    { "/foo/bar/zig",   "/foo/bar/zi",      NULL },
 #ifdef SVN_USE_DOS_PATHS
     { "",               "C:",               NULL },
     { "",               "C:foo",            NULL },
@@ -1377,6 +1383,9 @@ static const testcase_ancestor_t dirent_ancestor_tests[] =
     { "X:/foo",         "X:/",              NULL },
     { "A:/foo",         "A:/foo/bar",       "bar" },
     { "A:/foo",         "A:/foot",          NULL },
+    { "A:/foo/bar/zig", "A:/foo",           NULL },
+    { "A:/foo/bar/zig", "A:/foo/ba",        NULL },
+    { "A:/foo/bar/zig", "A:/foo/bar/zi",    NULL },
     { "//srv",          "//srv/share",      NULL },
     { "//srv",          "//srv/shr/fld",    NULL },
     { "//srv/shr",      "//srv",            NULL },
@@ -1386,6 +1395,7 @@ static const testcase_ancestor_t dirent_ancestor_tests[] =
     { "//srv/s r",      "//srv/s r/fld",    "fld" },
     { "//srv/shr/fld",  "//srv/shr",        NULL },
     { "//srv/shr/fld",  "//srv2/shr/fld",   NULL },
+    { "//srv/shr/fld",  "//srv/shr/f",      NULL },
     { "/",              "//srv/share",      NULL },
 #else /* !SVN_USE_DOS_PATHS */
     { "",               "C:",               "C:" },
@@ -1473,6 +1483,8 @@ static const testcase_ancestor_t uri_ancestor_tests[] =
     { "http://",        "http://test",      NULL },
     { "http://server",  "http://server/q",  "q" },
     { "svn://server",   "http://server/q",  NULL },
+    { "http://foo/bar", "http://foo",       NULL },
+    { "http://foo/bar", "http://foo/ba",    NULL },
   };
 
 static svn_error_t *
@@ -2483,7 +2495,7 @@ test_file_url_from_dirent(apr_pool_t *pool)
   } tests[] = {
 #ifdef SVN_USE_DOS_PATHS
     { "C:/file",                   "file:///C:/file" },
-    { "C:/",                       "file:///C:/" },
+    { "C:/",                       "file:///C:" },
     { "C:/File#$",                 "file:///C:/File%23$" },
     /* We can't check these as svn_dirent_get_absolute() won't work
        on shares that don't exist */
@@ -2510,6 +2522,8 @@ test_file_url_from_dirent(apr_pool_t *pool)
                                  "svn_uri_get_file_url_from_dirent(\"%s\") "
                                  "returned \"%s\" expected \"%s\"",
                                  tests[i].dirent, result, tests[i].result);
+
+      SVN_TEST_ASSERT(svn_uri_is_canonical(result, pool));
     }
 
   return SVN_NO_ERROR;

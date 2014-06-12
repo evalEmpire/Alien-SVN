@@ -1172,6 +1172,8 @@ def repos_lock_with_info(sbox):
 
 
 #----------------------------------------------------------------------
+@Issue(4126)
+@Skip(svntest.main.is_ra_type_dav_serf) # Issue 4126 unpredictable result
 def unlock_already_unlocked_files(sbox):
   "(un)lock set of files, one already (un)locked"
 
@@ -1690,6 +1692,12 @@ def update_locked_deleted(sbox):
 
   expected_status.tweak('iota', 'A/mu', 'A/B/E/alpha',
                         status='D ', writelocked='O')
+
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/mu'              : Item(status='  '),
+    'A/B/E/alpha'       : Item(status='  '),
+    'iota'              : Item(status='  '),
+  })
 
   svntest.actions.run_and_verify_update(wc_dir, expected_output,
                                         None, expected_status)

@@ -1437,7 +1437,7 @@ svn_dirent_skip_ancestor(const char *parent_dirent,
   apr_size_t len = strlen(parent_dirent);
   apr_size_t root_len;
 
-  if (0 != memcmp(parent_dirent, child_dirent, len))
+  if (0 != strncmp(parent_dirent, child_dirent, len))
     return NULL; /* parent_dirent is no ancestor of child_dirent */
 
   if (child_dirent[len] == 0)
@@ -1495,7 +1495,7 @@ svn_relpath_skip_ancestor(const char *parent_relpath,
   if (len == 0)
     return child_relpath;
 
-  if (0 != memcmp(parent_relpath, child_relpath, len))
+  if (0 != strncmp(parent_relpath, child_relpath, len))
     return NULL; /* parent_relpath is no ancestor of child_relpath */
 
   if (child_relpath[len] == 0)
@@ -1518,7 +1518,7 @@ uri_skip_ancestor(const char *parent_uri,
   assert(svn_uri_is_canonical(parent_uri, NULL));
   assert(svn_uri_is_canonical(child_uri, NULL));
 
-  if (0 != memcmp(parent_uri, child_uri, len))
+  if (0 != strncmp(parent_uri, child_uri, len))
     return NULL; /* parent_uri is no ancestor of child_uri */
 
   if (child_uri[len] == 0)
@@ -1604,10 +1604,32 @@ svn_dirent_get_absolute(const char **pabsolute,
                                APR_FILEPATH_NOTRELATIVE,
                                pool);
   if (apr_err)
-    return svn_error_createf(SVN_ERR_BAD_FILENAME,
-                             svn_error_create(apr_err, NULL, NULL),
-                             _("Couldn't determine absolute path of '%s'"),
-                             svn_dirent_local_style(relative, pool));
+    {
+      /* In some cases when the passed path or its ancestor(s) do not exist
+         or no longer exist apr returns an error.
+
+         In many of these cases we would like to return a path anyway, when the
+         passed path was already a safe absolute path. So check for that now to
+         avoid an error.
+
+         svn_dirent_is_absolute() doesn't perform the necessary checks to see
+         if the path doesn't need post processing to be in the canonical absolute
+         format.
+         */
+
+      if (svn_dirent_is_absolute(relative)
+          && svn_dirent_is_canonical(relative, pool)
+          && !svn_path_is_backpath_present(relative))
+        {
+          *pabsolute = apr_pstrdup(pool, relative);
+          return SVN_NO_ERROR;
+        }
+
+      return svn_error_createf(SVN_ERR_BAD_FILENAME,
+                               svn_error_create(apr_err, NULL, NULL),
+                               _("Couldn't determine absolute path of '%s'"),
+                               svn_dirent_local_style(relative, pool));
+    }
 
   SVN_ERR(svn_path_cstring_to_utf8(pabsolute, buffer, pool));
   *pabsolute = svn_dirent_canonicalize(*pabsolute, pool);
@@ -1844,6 +1866,9 @@ svn_uri_is_canonical(const char *uri, apr_pool_t *pool)
 #endif /* SVN_USE_DOS_PATHS */
 
   /* Now validate the rest of the URI. */
+  seg = ptr;
+  while (*ptr && (*ptr != '/'))
+    ptr++;
   while(1)
     {
       apr_size_t seglen = ptr - seg;
@@ -1862,9 +1887,8 @@ svn_uri_is_canonical(const char *uri, apr_pool_t *pool)
 
       if (*ptr == '/')
         ptr++;
+
       seg = ptr;
-
-
       while (*ptr && (*ptr != '/'))
         ptr++;
     }
@@ -2421,7 +2445,17 @@ svn_uri_get_file_url_from_dirent(const char **url,
       *url = apr_pstrcat(pool, "file:", dirent, NULL);
     }
   else
-    *url = apr_pstrcat(pool, "file:///", dirent, NULL);
+    {
+      char *uri = apr_pstrcat(pool, "file:///", dirent, NULL);
+      apr_size_t len = 8 /* strlen("file:///") */ + strlen(dirent);
+
+      /* "C:/" is a canonical dirent on Windows,
+         but "file:///C:/" is not a canonical uri */
+      if (uri[len-1] == '/')
+        uri[len-1] = '\0';
+
+      *url = uri;
+    }
 #endif
 
   return SVN_NO_ERROR;

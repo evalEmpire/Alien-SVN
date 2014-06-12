@@ -2842,6 +2842,70 @@ def update_below_depth_empty(sbox):
   svntest.actions.run_and_verify_update(sbox.wc_dir, expected_output, None,
                                         None, None)
 
+# Test for issue #4136.
+@Issue(4136)
+def commit_then_immediates_update(sbox):
+  "deep commit followed by update --depth immediates"
+  sbox.build()
+
+  repo_url = sbox.repo_url
+  wc_dir = sbox.wc_dir
+  mu_path = sbox.ospath('A/mu')
+
+  # Modify A/mu and commit the changes.
+  svntest.main.file_write(mu_path, "modified mu\n")
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/mu'        : Item(verb='Sending'),
+    })
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.tweak('A/mu', wc_rev=2, status='  ')
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output,
+                                        expected_status,
+                                        None,
+                                        wc_dir)
+
+  # Now, update --depth immediates in the root of the working copy.
+  expected_output = svntest.wc.State(wc_dir, { })
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.tweak('A/mu', contents="modified mu\n")
+  expected_status = svntest.wc.State(wc_dir, { '' : svntest.wc.StateItem() })
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.tweak('',     wc_rev=2, status='  ')
+  expected_status.tweak('A',    wc_rev=2, status='  ')
+  expected_status.tweak('A/mu', wc_rev=2, status='  ')
+  expected_status.tweak('iota', wc_rev=2, status='  ')
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        expected_disk,
+                                        expected_status,
+                                        None, None, None, None, None, False,
+                                        "--depth=immediates", wc_dir)
+
+def revert_depth_files(sbox):
+  "depth immediate+files should revert deleted files"
+
+  sbox.build(read_only = True)
+  
+  expected_output = "Reverted '" + re.escape(sbox.ospath('A/mu')) + "'"
+  
+  # Apply an unrelated delete one level to deep
+  sbox.simple_rm('A/D/gamma')
+
+  sbox.simple_rm('A/mu')
+  # Expect reversion of just 'mu'
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'revert', '--depth=immediates', sbox.ospath('A'))
+
+  # Apply an unrelated directory delete
+  sbox.simple_rm('A/D')
+
+  sbox.simple_rm('A/mu')
+  # Expect reversion of just 'mu'
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'revert', '--depth=files', sbox.ospath('A'))
+
+
 #----------------------------------------------------------------------
 # list all tests here, starting with None:
 test_list = [ None,
@@ -2889,6 +2953,8 @@ test_list = [ None,
               update_depth_empty_root_of_infinite_children,
               sparse_update_with_dash_dash_parents,
               update_below_depth_empty,
+              commit_then_immediates_update,
+              revert_depth_files,
               ]
 
 if __name__ == "__main__":

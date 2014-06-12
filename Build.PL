@@ -13,7 +13,7 @@ my $build = My::SVN::Builder->new(
     # perl for Alien::SVN, Apache for subversion and SVN::* modules.
     license         => 'open_source',
 
-    author          => 'Matthew Lanier <mlanier@cpan.org>',
+    author          => 'Michael G Schwern <schwern@pobox.com>',
     requires        => {
         perl                    => '5.8.0',
         version                 => '0.70',
@@ -35,7 +35,7 @@ my $build = My::SVN::Builder->new(
         provides => My::SVN::Builder->_svn_provides(),
 
         resources => {
-            license     => 'http://dev.perl.org/licenses/',
+            license     => ['http://dev.perl.org/licenses/'],
             bugtracker  =>
                 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN',
             repository  => 'http://github.com/schwern/alien-svn',

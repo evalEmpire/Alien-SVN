@@ -713,6 +713,13 @@ def disallow_dot_or_dotdot_directory_reference(sbox):
   if not external_urls: external_urls = list(external_url_for.values())
   externals_value_8 = external_urls.pop() + " /foo \n"
   if not external_urls: external_urls = list(external_url_for.values())
+  if svntest.main.is_os_windows():
+    externals_value_9 = external_urls.pop() + " D:/foo\n"
+    if not external_urls: external_urls = list(external_url_for.values())
+    externals_value_10 = external_urls.pop() + " D:\\foo\n"
+    if not external_urls: external_urls = list(external_url_for.values())
+    externals_value_11 = external_urls.pop() + " D:foo\n"
+    if not external_urls: external_urls = list(external_url_for.values())
 
   set_externals_for_path_expect_error(B_path, externals_value_1)
   set_externals_for_path_expect_error(G_path, externals_value_2)
@@ -722,6 +729,10 @@ def disallow_dot_or_dotdot_directory_reference(sbox):
   set_externals_for_path_expect_error(B_path, externals_value_6)
   set_externals_for_path_expect_error(G_path, externals_value_7)
   set_externals_for_path_expect_error(H_path, externals_value_8)
+  if svntest.main.is_os_windows():
+    set_externals_for_path_expect_error(B_path, externals_value_9)
+    set_externals_for_path_expect_error(B_path, externals_value_10)
+    set_externals_for_path_expect_error(B_path, externals_value_11)
 
 
 #----------------------------------------------------------------------
@@ -1884,6 +1895,72 @@ def exclude_externals(sbox):
                                         None, None, None, None, False,
                                         '--set-depth', 'infinity', wc_dir)
 
+def file_externals_different_url(sbox):
+  "update file externals via different url"
+
+  sbox.build()
+
+  wc_dir = sbox.wc_dir
+  r1_url = sbox.repo_url
+
+  r2_dir, r2_url = sbox.add_repo_path('2')
+  svntest.main.copy_repos(sbox.repo_dir, r2_dir, 1, 0)
+
+
+  sbox.simple_propset('svn:externals',
+                      'r1-e-1   ' + r1_url + '/iota\n' +
+                      r1_url + '/iota  r1-e-2\n' +
+                      'r2-e-1   ' + r2_url + '/iota\n' +
+                      r2_url + '/iota  r2-e-2\n' +
+                      '^/iota  rr-e-1\n', '')
+
+  # All file externals appear in the working copy, with normalised URLs.
+  expected_output = svntest.wc.State(wc_dir, {
+    'r1-e-1'            : Item(status='A '),
+    'r1-e-2'            : Item(status='A '),
+    'r2-e-1'            : Item(status='A '),
+    'r2-e-2'            : Item(status='A '),
+    'rr-e-1'            : Item(status='A '),
+  })
+
+  expected_status = actions.get_virginal_state(wc_dir, 1)
+  expected_status.tweak('', status=' M')
+  expected_status.add({
+    'r2-e-1'            : Item(status='  ', wc_rev='1', switched='X'),
+    'r1-e-1'            : Item(status='  ', wc_rev='1', switched='X'),
+    'r1-e-2'            : Item(status='  ', wc_rev='1', switched='X'),
+    'rr-e-1'            : Item(status='  ', wc_rev='1', switched='X'),
+    'r2-e-2'            : Item(status='  ', wc_rev='1', switched='X'),
+  })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output, None,
+                                        expected_status, None)
+
+  # Verify that all file external URLs are descendants of r1_url
+  for e in ['r1-e-1', 'r1-e-2', 'r2-e-1', 'r2-e-2', 'rr-e-1']:
+    actions.run_and_verify_info([{'Repository Root' : r1_url}],
+                                os.path.join(sbox.wc_dir, e))
+    
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'relocate', r1_url, r2_url, wc_dir)
+
+
+  # URLs of existing file externals are silently rewritten
+  expected_output = svntest.wc.State(wc_dir, {
+  })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output, None,
+                                        expected_status, None)
+
+  # Verify that all file external URLs are descendants of r2_url
+  for e in ['r1-e-1', 'r1-e-2', 'r2-e-1', 'r2-e-2', 'rr-e-1']:
+    actions.run_and_verify_info([{'Repository Root' : r2_url}],
+                                os.path.join(sbox.wc_dir, e))
+
+
 def file_external_in_unversioned(sbox):
   "file external in unversioned dir"
 
@@ -2165,6 +2242,112 @@ def dir_external_with_dash_r_only(sbox):
   expected_info = { 'Revision': '1' }
   actions.run_and_verify_info([expected_info], E_ext)
 
+# Test for issue #4123 'URL-to-WC copy of externals fails on Windows'
+@Issue(4123)
+def url_to_wc_copy_of_externals(sbox):
+  "url-to-wc copy of externals"
+
+  sbox.build()
+
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  # Create an external A/C/external pointing to ^/A/D/G.
+  svntest.actions.run_and_verify_svn(None, None, [], 'ps',
+                                     'svn:externals', '^/A/D/G external',
+                                     os.path.join(wc_dir, 'A', 'C'))
+  svntest.actions.run_and_verify_svn(None, None, [], 'ci', '-m',
+                                     'create an external', wc_dir)
+  svntest.actions.run_and_verify_svn(None, None, [], 'up', wc_dir)
+
+  # Copy ^/A/C to External-WC-to-URL-Copy.
+  #
+  # Previously this failed with:
+  #   >svn copy ^^/A/C External-WC-to-URL-Copy
+  #    U   External-WC-to-URL-Copy
+  #   
+  #   Fetching external item into 'External-WC-to-URL-Copy\external':
+  #   A    External-WC-to-URL-Copy\external\pi
+  #   A    External-WC-to-URL-Copy\external\rho
+  #   A    External-WC-to-URL-Copy\external\tau
+  #   Checked out external at revision 2.
+  #
+  #   Checked out revision 2.
+  #   ..\..\..\subversion\libsvn_client\copy.c:2249: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_client\copy.c:1857: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_client\copy.c:1857: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_client\copy.c:1737: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_client\copy.c:1737: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_client\copy.c:1537: (apr_err=720005)
+  #   ..\..\..\subversion\libsvn_subr\io.c:3416: (apr_err=720005)
+  #   svn: E720005: Can't move 'C:\SVN\src-trunk-3\Debug\subversion\tests\
+  #   cmdline\svn-test-work\working_copies\externals_tests-41\.svn\tmp\
+  #   svn-F9E2C0EC' to 'C:\SVN\src-trunk-3\Debug\subversion\tests\cmdline\
+  #   svn-test-work\working_copies\externals_tests-41\External-WC-to-URL-Copy':
+  #   Access is denied.
+  external_root_path = os.path.join(wc_dir, "External-WC-to-URL-Copy")
+  external_ex_path = os.path.join(wc_dir, "External-WC-to-URL-Copy",
+                                  "external")
+  external_pi_path = os.path.join(wc_dir, "External-WC-to-URL-Copy",
+                                  "external", "pi")
+  external_rho_path = os.path.join(wc_dir, "External-WC-to-URL-Copy",
+                                   "external", "rho")
+  external_tau_path = os.path.join(wc_dir, "External-WC-to-URL-Copy",
+                                   "external", "tau")
+  expected_stdout = verify.UnorderedOutput([
+    "\n",
+    " U   " + external_root_path + "\n",
+    "Fetching external item into '" + external_ex_path + "':\n",
+    "A    " + external_pi_path + "\n",
+    "A    " + external_rho_path + "\n",
+    "A    " + external_tau_path + "\n",
+    "Checked out external at revision 2.\n",
+    "Checked out revision 2.\n",
+    "A         " + external_root_path + "\n"
+  ])
+  exit_code, stdout, stderr = svntest.actions.run_and_verify_svn2(
+    "OUTPUT", expected_stdout, [], 0, 'copy', repo_url + '/A/C',
+    os.path.join(wc_dir, 'External-WC-to-URL-Copy'))
+
+# Test for issue #3741 'externals not removed when working copy is made shallow'
+@Issue(3741)
+def update_dir_external_shallow(sbox):
+  "shallow update should remove externals"
+
+  sbox.build()
+
+  # Create an external in r2
+  sbox.simple_propset('svn:externals', '^/A/D/H X', 'A/B/E')
+  sbox.simple_commit()
+  sbox.simple_update()
+
+  # Now make A/B/E shallow by updating with "--set-depth empty"
+  expected_output = svntest.wc.State(sbox.wc_dir, {
+    'A/B/E/alpha' : Item(status='D '),
+    'A/B/E/X'     : Item(verb='Removed external'),
+    'A/B/E/beta'  : Item(status='D '),
+  })
+  svntest.actions.run_and_verify_update(sbox.wc_dir,
+                                        expected_output, None, None,
+                                        None, None, None, None, None, False,
+                                        '--set-depth=empty',
+                                        sbox.ospath('A/B/E'))
+
+  # And bring the external back by updating with "--set-depth infinity"
+  expected_output = svntest.wc.State(sbox.wc_dir, {
+    'A/B/E/X/psi'   : Item(status='A '),
+    'A/B/E/X/chi'   : Item(status='A '),
+    'A/B/E/X/omega' : Item(status='A '),
+    'A/B/E/alpha'   : Item(status='A '),
+    'A/B/E/beta'    : Item(status='A '),
+  })
+  svntest.actions.run_and_verify_update(sbox.wc_dir,
+                                        expected_output, None, None,
+                                        None, None, None, None, None, False,
+                                        '--set-depth=infinity',
+                                        sbox.ospath('A/B/E'))
+
+
 ########################################################################
 # Run the tests
 
@@ -2203,10 +2386,13 @@ test_list = [ None,
               incoming_file_on_file_external,
               incoming_file_external_on_file,
               exclude_externals,
+              file_externals_different_url,
               file_external_in_unversioned,
               copy_file_externals,
               remap_file_external_with_prop_del,
               dir_external_with_dash_r_only,
+              url_to_wc_copy_of_externals,
+              update_dir_external_shallow,
              ]
 
 if __name__ == '__main__':
