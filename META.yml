@@ -20,6 +20,9 @@ no_index:
     - inc
     - src
 provides:
+  Alien::SVN:
+    file: lib/Alien/SVN.pm
+    version: v1.7.17.0
   SVN::Base:
     file: src/subversion/subversion/bindings/swig/perl/native/Base.pm
   SVN::Client:

@@ -43,7 +43,11 @@ sub _svn_provides {
         $provides{$module} = { file => $pm };
     }
     
-    $provides{"SVN::Core"}{version} = '1.7.17';
+    $provides{"SVN::Core"}{version}  = '1.7.17';
+    $provides{"Alien::SVN"} = {
+        version => '1.7.17.0',
+        file    => 'lib/Alien/SVN.pm'
+    };
 
     _chdir_back;
     

@@ -38,6 +38,10 @@
       }
    },
    "provides" : {
+      "Alien::SVN" : {
+         "file" : "lib/Alien/SVN.pm",
+         "version" : "1.7.17.0"
+      },
       "SVN::Base" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm"
       },
