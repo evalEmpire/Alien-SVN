@@ -784,7 +784,6 @@ src/subversion/subversion/libsvn_fs_fs/key-gen.c
 src/subversion/subversion/libsvn_fs_fs/key-gen.h
 src/subversion/subversion/libsvn_fs_fs/lock.c
 src/subversion/subversion/libsvn_fs_fs/lock.h
-src/subversion/subversion/libsvn_fs_fs/rep-cache-db.h
 src/subversion/subversion/libsvn_fs_fs/rep-cache-db.sql
 src/subversion/subversion/libsvn_fs_fs/rep-cache.c
 src/subversion/subversion/libsvn_fs_fs/rep-cache.h

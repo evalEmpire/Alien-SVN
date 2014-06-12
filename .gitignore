@@ -28,6 +28,7 @@ MYMETA.*
 /src/subversion/contrib/client-side/svncopy/testsvncopy.pl
 /src/subversion/packages/solaris/pkginfo
 /src/subversion/subversion/bindings/swig/perl/native/modules
+/src/subversion/subversion/libsvn_fs_fs/rep-cache-db.h
 /src/subversion/subversion/svn/svn
 /src/subversion/subversion/svn_private_config.h
 /src/subversion/subversion/svnadmin/svnadmin
