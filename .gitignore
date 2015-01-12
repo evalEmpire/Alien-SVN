@@ -33,6 +33,7 @@ MYMETA.*
 /src/subversion/subversion/svnadmin/svnadmin
 /src/subversion/subversion/svndumpfilter/svndumpfilter
 /src/subversion/subversion/svnlook/svnlook
+src/subversion/subversion/svnmucc/svnmucc
 /src/subversion/subversion/svnserve/svnserve
 /src/subversion/subversion/svnsync/svnsync
 /src/subversion/subversion/svnversion/svnversion
@@ -41,13 +42,17 @@ MYMETA.*
 /src/subversion/subversion/tests/cmdline/entries-dump
 /src/subversion/subversion/tests/libsvn_wc/wc-incomplete-tester
 /src/subversion/subversion/tests/libsvn_wc/wc-lock-tester
-/src/subversion/tools/client-side/svnmucc/svnmucc
+/src/subversion/tools/client-side/svn-bench/svn-bench
 /src/subversion/tools/dev/svnraisetreeconflict/svnraisetreeconflict
+/src/subversion/tools/dev/fsfs-access-map
+/src/subversion/tools/dev/fsfs-reorg
 /src/subversion/tools/diff/diff
 /src/subversion/tools/diff/diff3
 /src/subversion/tools/diff/diff4
+/src/subversion/tools/server-side/fsfs-stats
 /src/subversion/tools/server-side/svn-populate-node-origins-index
 /src/subversion/tools/server-side/svn-rep-sharing-stats
+/src/subversion/tools/server-side/svnauthz
 /src/subversion/tools/server-side/svnauthz-validate
 /src/subversion/tools/backup/hot-backup.py
 /src/subversion/tools/hook-scripts/commit-access-control.pl
