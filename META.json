@@ -1,7 +1,7 @@
 {
    "abstract" : "A wrapper for installing the SVN Perl bindings",
    "author" : [
-      "unknown"
+      "Michael G Schwern <schwern@pobox.com>"
    ],
    "dynamic_config" : 1,
    "generated_by" : "Module::Build version 0.4211",

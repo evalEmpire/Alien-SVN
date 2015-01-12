@@ -1,7 +1,7 @@
 ---
 abstract: 'A wrapper for installing the SVN Perl bindings'
 author:
-  - unknown
+  - 'Michael G Schwern <schwern@pobox.com>'
 build_requires:
   ExtUtils::MakeMaker: '6.31'
   Module::Build: '0.28'
