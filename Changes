@@ -1,4 +1,10 @@
+These are the changes to the Alien::SVN wrapper distribution.
+Changes to Subversion itself can be seen in src/subversion/CHANGES.
+
 1.7.19.0
+    Features
+    * Upgraded to Subversion 1.7.19
+
     Distribution Changes
     * Repository has been moved to the evalEmpire organization.
     * The bug tracker is now on Github.
