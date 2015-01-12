@@ -36,9 +36,8 @@ my $build = My::SVN::Builder->new(
 
         resources => {
             license     => ['http://dev.perl.org/licenses/'],
-            bugtracker  =>
-                'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN',
-            repository  => 'http://github.com/schwern/alien-svn',
+            bugtracker  => 'https://github.com/evalEmpire/Alien-SVN/issues',
+            repository  => 'https://github.com/evalEmpire/Alien-SVN/',
         },
     },
     
