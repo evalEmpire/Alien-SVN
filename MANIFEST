@@ -567,6 +567,7 @@ src/subversion/subversion/include/private/svn_adler32.h
 src/subversion/subversion/include/private/svn_atomic.h
 src/subversion/subversion/include/private/svn_auth_private.h
 src/subversion/subversion/include/private/svn_cache.h
+src/subversion/subversion/include/private/svn_cert.h
 src/subversion/subversion/include/private/svn_client_private.h
 src/subversion/subversion/include/private/svn_cmdline_private.h
 src/subversion/subversion/include/private/svn_dav_protocol.h
@@ -1037,6 +1038,7 @@ src/subversion/subversion/po/ko.po
 src/subversion/subversion/po/nb.po
 src/subversion/subversion/po/pl.po
 src/subversion/subversion/po/pt_BR.po
+src/subversion/subversion/po/subversion.pot
 src/subversion/subversion/po/sv.po
 src/subversion/subversion/po/zh_CN.po
 src/subversion/subversion/po/zh_TW.po
