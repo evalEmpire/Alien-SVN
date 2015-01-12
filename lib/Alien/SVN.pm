@@ -10,9 +10,9 @@ Alien::SVN - A wrapper for installing the SVN Perl bindings
 
 Alien::SVN is a wrapper to install the Perl bindings for subversion,
 also known as L<SVN::Core>.  If your module needs L<SVN::Core> it can
-depend on L<Alien::SVN> instead and then the CPAN shell can handle
-automatic installation.  This is particularly useful for programs like
-SVK.
+depend on SVN::Core normally, then CPAN clients can resolve the
+dependency normally via Alien::SVN.  This is particularly useful for
+programs like SVK.
 
 It comes with a copy of Subversion 1.8.11 which it will compile but
 only installs the Perl and Subversion libraries.  They will be
