@@ -42,6 +42,7 @@ typedef struct server_baton_t {
   svn_repos_t *repos;
   const char *repos_name;  /* URI-encoded name of repository (not for authz) */
   svn_fs_t *fs;            /* For convenience; same as svn_repos_fs(repos) */
+  const char *base;        /* Base directory for config files */
   svn_config_t *cfg;       /* Parsed repository svnserve.conf */
   svn_config_t *pwdb;      /* Parsed password database */
   svn_authz_t *authzdb;    /* Parsed authz rules */
@@ -59,6 +60,7 @@ typedef struct server_baton_t {
   svn_boolean_t use_sasl;  /* Use Cyrus SASL for authentication;
                               always false if SVN_HAVE_SASL not defined */
   apr_file_t *log_file;    /* Log filehandle. */
+  svn_boolean_t vhost;     /* Use virtual-host-based path to repo. */
   apr_pool_t *pool;
 } server_baton_t;
 
@@ -86,23 +88,14 @@ typedef struct serve_params_t {
      which forces all connections to be read-only. */
   svn_boolean_t read_only;
 
+  /* The base directory for any relative configuration files. */
+  const char *base;
+
   /* A parsed repository svnserve configuration file, ala
      svnserve.conf.  If this is NULL, then no configuration file was
      specified on the command line.  If this is non-NULL, then
      per-repository svnserve.conf are not read. */
   svn_config_t *cfg;
-
-  /* A parsed repository password database.  If this is NULL, then
-     either no svnserve configuration file was specified on the
-     command line, or it was specified and it did not refer to a
-     password database. */
-  svn_config_t *pwdb;
-
-  /* A parsed repository authorization database.  If this is NULL,
-     then either no svnserve configuration file was specified on the
-     command line, or it was specified and it did not refer to a
-     authorization database. */
-  svn_authz_t *authzdb;
 
   /* A filehandle open for writing logs to; possibly NULL. */
   apr_file_t *log_file;
@@ -116,6 +109,9 @@ typedef struct serve_params_t {
   /* Enable full-text caching for all FSFS repositories. */
   svn_boolean_t cache_fulltexts;
 
+  /* Enable revprop caching for all FSFS repositories. */
+  svn_boolean_t cache_revprops;
+
   /* Size of the in-memory cache (used by FSFS only). */
   apr_uint64_t memory_cache_size;
 
@@ -125,37 +121,40 @@ typedef struct serve_params_t {
      Defaults to SVN_DELTA_COMPRESSION_LEVEL_DEFAULT. */
   int compression_level;
 
+  /* Item size up to which we use the zero-copy code path to transmit
+     them over the network.  0 disables that code path. */
+  apr_size_t zero_copy_limit;
+
+  /* Amount of data to send between checks for cancellation requests
+     coming in from the client. */
+  apr_size_t error_check_interval;
+
+  /* Use virtual-host-based path to repo. */
+  svn_boolean_t vhost;
 } serve_params_t;
 
 /* Serve the connection CONN according to the parameters PARAMS. */
 svn_error_t *serve(svn_ra_svn_conn_t *conn, serve_params_t *params,
                    apr_pool_t *pool);
 
-/* Load a svnserve configuration file located at FILENAME into CFG,
-   and if such as found, then:
+/* Load the password database for the listening server based on the
+   entries in the SERVER struct.
 
-    - set *PWDB to any referenced password database,
-    - set *AUTHZDB to any referenced authorization database, and
-    - set *USERNAME_CASE to the enumerated value of the
-      'force-username-case' configuration value (or its default).
+   SERVER and CONN must not be NULL. The real errors will be logged with
+   SERVER and CONN but return generic errors to the client. */
+svn_error_t *load_pwdb_config(server_baton_t *server,
+                              svn_ra_svn_conn_t *conn,
+                              apr_pool_t *pool);
 
-   If MUST_EXIST is true and FILENAME does not exist, then return an
-   error.  BASE may be specified as the base path to any referenced
-   password and authorization files found in FILENAME.
+/* Load the authz database for the listening server based on the
+   entries in the SERVER struct.
 
-   If SERVER is not NULL, log the real errors with SERVER and CONN but
-   return generic errors to the client.  CONN must not be NULL if SERVER
-   is not NULL. */
-svn_error_t *load_configs(svn_config_t **cfg,
-                          svn_config_t **pwdb,
-                          svn_authz_t **authzdb,
-                          enum username_case_type *username_case,
-                          const char *filename,
-                          svn_boolean_t must_exist,
-                          const char *base,
-                          server_baton_t *server,
-                          svn_ra_svn_conn_t *conn,
-                          apr_pool_t *pool);
+   SERVER and CONN must not be NULL. The real errors will be logged with
+   SERVER and CONN but return generic errors to the client. */
+svn_error_t *load_authz_config(server_baton_t *server,
+                               svn_ra_svn_conn_t *conn,
+                               const char *repos_root,
+                               apr_pool_t *pool);
 
 /* Initialize the Cyrus SASL library. POOL is used for allocations. */
 svn_error_t *cyrus_init(apr_pool_t *pool);

@@ -29,6 +29,10 @@
 #include <perl.h>
 #include <XSUB.h>
 
+/* Perl defines a _ macro, but SVN uses it for translations.
+ * So undefine _ after including the Perl headers. */
+#undef _
+
 #include <apr.h>
 #include <apr_pools.h>
 #include <apr_strings.h>
@@ -93,9 +97,12 @@ apr_hash_t *svn_swig_pl_objs_to_hash_by_name(SV *source,
                                              apr_pool_t *pool);
 apr_hash_t *svn_swig_pl_objs_to_hash_of_revnum_t(SV *source,
                                                  apr_pool_t *pool);
+apr_hash_t *svn_swig_pl_hash_to_prophash(SV *source, apr_pool_t *pool);
 const apr_array_header_t *svn_swig_pl_objs_to_array(SV *source,
                                                     swig_type_info *tinfo,
                                                     apr_pool_t *pool);
+const apr_array_header_t *svn_swig_pl_array_to_apr_array_revision_range(
+        SV *source, apr_pool_t *pool);
 
 SV *svn_swig_pl_array_to_list(const apr_array_header_t *array);
 /* Formerly used by pre-1.0 APIs. Now unused
@@ -104,14 +111,25 @@ SV *svn_swig_pl_ints_to_list(const apr_array_header_t *array);
 SV *svn_swig_pl_convert_array(const apr_array_header_t *array,
                               swig_type_info *tinfo);
 
-/* thunked log receiver function.  */
-svn_error_t * svn_swig_pl_thunk_log_receiver(void *py_receiver,
+SV *svn_swig_pl_revnums_to_list(const apr_array_header_t *array);
+
+svn_opt_revision_t *svn_swig_pl_set_revision(svn_opt_revision_t *rev, 
+                                             SV *source,
+                                             svn_boolean_t croak_on_error);
+
+/* thunked log_message receiver function.  */
+svn_error_t * svn_swig_pl_thunk_log_receiver(void *baton,
                                              apr_hash_t *changed_paths,
                                              svn_revnum_t rev,
                                              const char *author,
                                              const char *date,
                                              const char *msg,
                                              apr_pool_t *pool);
+
+/* thunked log_entry receiver function.  */
+svn_error_t * svn_swig_pl_thunk_log_entry_receiver(void *baton,
+                                                   svn_log_entry_t *log_entry,
+                                                   apr_pool_t *pool);
 
 /* thunked diff summarize callback.  */
 svn_error_t * svn_swig_pl_thunk_client_diff_summarize_func(
@@ -124,6 +142,11 @@ svn_error_t *svn_swig_pl_thunk_commit_callback(svn_revnum_t new_revision,
 					       const char *date,
 					       const char *author,
 					       void *baton);
+
+/* thunked commit editor callback2. */
+svn_error_t *svn_swig_pl_thunk_commit_callback2(const svn_commit_info_t *commit_info,
+                                                void *baton,
+                                                apr_pool_t *pool);
 
 /* thunked repos_history callback. */
 svn_error_t *svn_swig_pl_thunk_history_func(void *baton,
@@ -144,6 +167,11 @@ svn_error_t *svn_ra_make_callbacks(svn_ra_callbacks_t **cb,
 				   SV *perl_callbacks,
 				   apr_pool_t *pool);
 
+/* thunked gnome_keyring_unlock_prompt callback function */
+svn_error_t *svn_swig_pl_thunk_gnome_keyring_unlock_prompt(char **keyring_password,
+                                                           const char *keyring_name,
+                                                           void *baton,
+                                                           apr_pool_t *pool);
 /* thunked simple_prompt callback function */
 svn_error_t *svn_swig_pl_thunk_simple_prompt(svn_auth_cred_simple_t **cred,
                                              void *baton,
@@ -224,6 +252,18 @@ svn_error_t *svn_swig_pl_cancel_func(void *cancel_baton);
 void svn_swig_pl_status_func(void *baton,
                              const char *path,
                              svn_wc_status_t *status);
+
+/* Thunked version of svn_wc_status_func2_t callback type. */
+void svn_swig_pl_status_func2(void *baton,
+                              const char *path,
+                              svn_wc_status2_t *status);
+
+/* Thunked version of svn_wc_status_func2_t callback type. */
+svn_error_t *svn_swig_pl_status_func3(void *baton,
+                                      const char *path,
+                                      svn_wc_status2_t *status,
+                                      apr_pool_t *pool);
+
 /* Thunked version of svn_client_blame_receiver_t callback type. */
 svn_error_t *svn_swig_pl_blame_func(void *baton,
                                     apr_int64_t line_no,

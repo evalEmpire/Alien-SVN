@@ -28,6 +28,11 @@
 #include <apr_pools.h>
 #include <apr_strings.h>
 
+#include <zlib.h>
+
+#ifndef SVN_ERR__TRACING
+#define SVN_ERR__TRACING
+#endif
 #include "svn_cmdline.h"
 #include "svn_error.h"
 #include "svn_pools.h"
@@ -64,8 +69,9 @@ static const char SVN_FILE_LINE_UNDEFINED[] = "svn:<undefined>";
 #undef svn_error_quick_wrap
 #undef svn_error_wrap_apr
 
-/* Note: This function was historically in the public API, so we need
- * to define it even when !SVN_DEBUG. */
+/* Note: Although this is a "__" function, it was historically in the
+ * public ABI, so we can never change it or remove its signature, even
+ * though it is now only used in SVN_DEBUG mode. */
 void
 svn_error__locate(const char *file, long line)
 {
@@ -193,9 +199,14 @@ svn_error_wrap_apr(apr_status_t status,
       va_start(ap, fmt);
       msg = apr_pvsprintf(err->pool, fmt, ap);
       va_end(ap);
-      err->message = apr_psprintf(err->pool, "%s%s%s", msg,
-                                  (msg_apr) ? ": " : "",
-                                  (msg_apr) ? msg_apr : "");
+      if (msg_apr)
+        {
+          err->message = apr_pstrcat(err->pool, msg, ": ", msg_apr, NULL);
+        }
+      else
+        {
+          err->message = msg;
+        }
     }
 
   return err;
@@ -213,6 +224,33 @@ svn_error_quick_wrap(svn_error_t *child, const char *new_msg)
                           new_msg);
 }
 
+/* Messages in tracing errors all point to this static string. */
+static const char error_tracing_link[] = "traced call";
+
+svn_error_t *
+svn_error__trace(const char *file, long line, svn_error_t *err)
+{
+#ifndef SVN_DEBUG
+
+  /* We shouldn't even be here, but whatever. Just return the error as-is.  */
+  return err;
+
+#else
+
+  /* Only do the work when an error occurs.  */
+  if (err)
+    {
+      svn_error_t *trace;
+      svn_error__locate(file, line);
+      trace = make_error_internal(err->apr_err, err);
+      trace->message = error_tracing_link;
+      return trace;
+    }
+  return SVN_NO_ERROR;
+
+#endif
+}
+
 
 svn_error_t *
 svn_error_compose_create(svn_error_t *err1,
@@ -220,7 +258,9 @@ svn_error_compose_create(svn_error_t *err1,
 {
   if (err1 && err2)
     {
-      svn_error_compose(err1, err2);
+      svn_error_compose(err1,
+                        svn_error_quick_wrap(err2,
+                                             _("Additional errors:")));
       return err1;
     }
   return err1 ? err1 : err2;
@@ -351,7 +391,7 @@ svn_error__is_tracing_link(svn_error_t *err)
      ### we add a boolean field to svn_error_t that's set only for
      ### these "placeholder error chain" items.  Not such a bad idea,
      ### really...  */
-  return (err && err->message && !strcmp(err->message, SVN_ERR__TRACED));
+  return (err && err->message && !strcmp(err->message, error_tracing_link));
 #else
   return FALSE;
 #endif
@@ -414,6 +454,8 @@ svn_error_purge_tracing(svn_error_t *err)
 #endif /* SVN_ERR__TRACING */
 }
 
+/* ### The logic around omitting (sic) apr_err= in maintainer mode is tightly
+   ### coupled to the current sole caller.*/
 static void
 print_error(svn_error_t *err, FILE *stream, const char *prefix)
 {
@@ -441,8 +483,18 @@ print_error(svn_error_t *err, FILE *stream, const char *prefix)
       svn_error_clear(temp_err);
     }
 
-  svn_error_clear(svn_cmdline_fprintf(stream, err->pool,
-                                      ": (apr_err=%d)\n", err->apr_err));
+  {
+    const char *symbolic_name;
+    if (svn_error__is_tracing_link(err))
+      /* Skip it; the error code will be printed by the real link. */
+      svn_error_clear(svn_cmdline_fprintf(stream, err->pool, ",\n"));
+    else if ((symbolic_name = svn_error_symbolic_name(err->apr_err)))
+      svn_error_clear(svn_cmdline_fprintf(stream, err->pool,
+                                          ": (apr_err=%s)\n", symbolic_name));
+    else
+      svn_error_clear(svn_cmdline_fprintf(stream, err->pool,
+                                          ": (apr_err=%d)\n", err->apr_err));
+  }
 #endif /* SVN_DEBUG */
 
   /* "traced call" */
@@ -590,9 +642,11 @@ svn_err_best_message(svn_error_t *err, char *buf, apr_size_t bufsize)
 
 /* svn_strerror() and helpers */
 
+/* Duplicate of the same typedef in tests/libsvn_subr/error-code-test.c */
 typedef struct err_defn {
-  svn_errno_t errcode;
-  const char *errdesc;
+  svn_errno_t errcode; /* 160004 */
+  const char *errname; /* SVN_ERR_FS_CORRUPT */
+  const char *errdesc; /* default message */
 } err_defn;
 
 /* To understand what is going on here, read svn_error_codes.h. */
@@ -613,6 +667,26 @@ svn_strerror(apr_status_t statcode, char *buf, apr_size_t bufsize)
 
   return apr_strerror(statcode, buf, bufsize);
 }
+
+const char *
+svn_error_symbolic_name(apr_status_t statcode)
+{
+  const err_defn *defn;
+
+  for (defn = error_table; defn->errdesc != NULL; ++defn)
+    if (defn->errcode == (svn_errno_t)statcode)
+      return defn->errname;
+
+  /* "No error" is not in error_table. */
+  if (statcode == SVN_NO_ERROR)
+    return "SVN_NO_ERROR";
+
+  return NULL;
+}
+
+
+
+/* Malfunctions. */
 
 svn_error_t *
 svn_error_raise_on_malfunction(svn_boolean_t can_return,
@@ -663,10 +737,64 @@ svn_error_set_malfunction_handler(svn_error_malfunction_handler_t func)
   return old_malfunction_handler;
 }
 
+/* Note: Although this is a "__" function, it is in the public ABI, so
+ * we can never remove it or change its signature. */
 svn_error_t *
 svn_error__malfunction(svn_boolean_t can_return,
                        const char *file, int line,
                        const char *expr)
 {
   return malfunction_handler(can_return, file, line, expr);
+}
+
+
+/* Misc. */
+
+svn_error_t *
+svn_error__wrap_zlib(int zerr, const char *function, const char *message)
+{
+  apr_status_t status;
+  const char *zmsg;
+
+  if (zerr == Z_OK)
+    return SVN_NO_ERROR;
+
+  switch (zerr)
+    {
+    case Z_STREAM_ERROR:
+      status = SVN_ERR_STREAM_MALFORMED_DATA;
+      zmsg = _("stream error");
+      break;
+
+    case Z_MEM_ERROR:
+      status = APR_ENOMEM;
+      zmsg = _("out of memory");
+      break;
+
+    case Z_BUF_ERROR:
+      status = APR_ENOMEM;
+      zmsg = _("buffer error");
+      break;
+
+    case Z_VERSION_ERROR:
+      status = SVN_ERR_STREAM_UNRECOGNIZED_DATA;
+      zmsg = _("version error");
+      break;
+
+    case Z_DATA_ERROR:
+      status = SVN_ERR_STREAM_MALFORMED_DATA;
+      zmsg = _("corrupt data");
+      break;
+
+    default:
+      status = SVN_ERR_STREAM_UNRECOGNIZED_DATA;
+      zmsg = _("unknown error");
+      break;
+    }
+
+  if (message != NULL)
+    return svn_error_createf(status, NULL, "zlib (%s): %s: %s", function,
+                             zmsg, message);
+  else
+    return svn_error_createf(status, NULL, "zlib (%s): %s", function, zmsg);
 }

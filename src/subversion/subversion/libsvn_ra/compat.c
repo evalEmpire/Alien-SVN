@@ -23,6 +23,7 @@
 
 #include <apr_pools.h>
 
+#include "svn_hash.h"
 #include "svn_error.h"
 #include "svn_pools.h"
 #include "svn_sorts.h"
@@ -91,7 +92,7 @@ prev_log_path(const char **prev_path_p,
   if (changed_paths)
     {
       /* See if PATH was explicitly changed in this revision. */
-      change = apr_hash_get(changed_paths, path, APR_HASH_KEY_STRING);
+      change = svn_hash_gets(changed_paths, path);
       if (change)
         {
           /* If PATH was not newly added in this revision, then it may or may
@@ -141,7 +142,7 @@ prev_log_path(const char **prev_path_p,
               svn_sort__item_t item = APR_ARRAY_IDX(paths,
                                                     i - 1, svn_sort__item_t);
               const char *ch_path = item.key;
-              int len = strlen(ch_path);
+              size_t len = strlen(ch_path);
 
               /* See if our path is the child of this change path.  If
                  not, keep looking.  */
@@ -154,7 +155,7 @@ prev_log_path(const char **prev_path_p,
                  path, to the change's copyfrom path.  Otherwise, this
                  change isn't really interesting to us, and our search
                  continues. */
-              change = apr_hash_get(changed_paths, ch_path, len);
+              change = item.value;
               if (change->copyfrom_path)
                 {
                   if (action_p)
@@ -630,7 +631,6 @@ fr_log_message_receiver(void *baton,
 {
   struct fr_log_message_baton *lmb = baton;
   struct rev *rev;
-  apr_hash_index_t *hi;
 
   rev = apr_palloc(lmb->pool, sizeof(*rev));
   rev->revision = log_entry->revision;
@@ -639,17 +639,7 @@ fr_log_message_receiver(void *baton,
   lmb->eldest = rev;
 
   /* Duplicate log_entry revprops into rev->props */
-  rev->props = apr_hash_make(lmb->pool);
-  for (hi = apr_hash_first(pool, log_entry->revprops); hi;
-       hi = apr_hash_next(hi))
-    {
-      void *val;
-      const void *key;
-
-      apr_hash_this(hi, &key, NULL, &val);
-      apr_hash_set(rev->props, apr_pstrdup(lmb->pool, key), APR_HASH_KEY_STRING,
-                   svn_string_dup(val, lmb->pool));
-    }
+  rev->props = svn_prop_hash_dup(log_entry->revprops, lmb->pool);
 
   return prev_log_path(&lmb->path, &lmb->action,
                        &lmb->copyrev, log_entry->changed_paths2,
@@ -757,8 +747,9 @@ svn_ra__file_revs_from_log(svn_ra_session_t *ra_session,
       /* Compute and send delta if client asked for it. */
       if (delta_handler)
         {
-          /* Get the content delta. */
-          svn_txdelta(&delta_stream, last_stream, stream, lastpool);
+          /* Get the content delta. Don't calculate checksums as we don't
+           * use them. */
+          svn_txdelta2(&delta_stream, last_stream, stream, FALSE, lastpool);
 
           /* And send. */
           SVN_ERR(svn_txdelta_send_txstream(delta_stream, delta_handler,
@@ -868,5 +859,94 @@ svn_ra__get_deleted_rev_from_log(svn_ra_session_t *session,
                           log_path_del_receiver, &log_path_deleted_baton,
                           pool));
   *revision_deleted = log_path_deleted_baton.revision_deleted;
+  return SVN_NO_ERROR;
+}
+
+
+svn_error_t *
+svn_ra__get_inherited_props_walk(svn_ra_session_t *session,
+                                 const char *path,
+                                 svn_revnum_t revision,
+                                 apr_array_header_t **inherited_props,
+                                 apr_pool_t *result_pool,
+                                 apr_pool_t *scratch_pool)
+{
+  const char *repos_root_url;
+  const char *session_url;
+  const char *parent_url;
+  apr_pool_t *iterpool = svn_pool_create(scratch_pool);
+
+  *inherited_props =
+    apr_array_make(result_pool, 1, sizeof(svn_prop_inherited_item_t *));
+
+  /* Walk to the root of the repository getting inherited
+     props for PATH. */
+  SVN_ERR(svn_ra_get_repos_root2(session, &repos_root_url, scratch_pool));
+  SVN_ERR(svn_ra_get_session_url(session, &session_url, scratch_pool));
+  parent_url = session_url;
+
+  while (strcmp(repos_root_url, parent_url))
+    {
+      apr_hash_index_t *hi;
+      apr_hash_t *parent_props;
+      apr_hash_t *final_hash = apr_hash_make(result_pool);
+      svn_error_t *err;
+
+      svn_pool_clear(iterpool);
+      parent_url = svn_uri_dirname(parent_url, scratch_pool);
+      SVN_ERR(svn_ra_reparent(session, parent_url, iterpool));
+      err = session->vtable->get_dir(session, NULL, NULL,
+                                     &parent_props, "",
+                                     revision, SVN_DIRENT_ALL,
+                                     iterpool);
+
+      /* If the user doesn't have read access to a parent path then
+         skip, but allow them to inherit from further up. */
+      if (err)
+        {
+          if ((err->apr_err == SVN_ERR_RA_NOT_AUTHORIZED)
+              || (err->apr_err == SVN_ERR_RA_DAV_FORBIDDEN))
+            {
+              svn_error_clear(err);
+              continue;
+            }
+          else
+            {
+              return svn_error_trace(err);
+            }
+        }
+
+      for (hi = apr_hash_first(scratch_pool, parent_props);
+           hi;
+           hi = apr_hash_next(hi))
+        {
+          const char *name = svn__apr_hash_index_key(hi);
+          apr_ssize_t klen = svn__apr_hash_index_klen(hi);
+          svn_string_t *value = svn__apr_hash_index_val(hi);
+
+          if (svn_property_kind2(name) == svn_prop_regular_kind)
+            {
+              name = apr_pstrdup(result_pool, name);
+              value = svn_string_dup(value, result_pool);
+              apr_hash_set(final_hash, name, klen, value);
+            }
+        }
+
+      if (apr_hash_count(final_hash))
+        {
+          svn_prop_inherited_item_t *new_iprop =
+            apr_palloc(result_pool, sizeof(*new_iprop));
+          new_iprop->path_or_url = svn_uri_skip_ancestor(repos_root_url,
+                                                         parent_url,
+                                                         result_pool);
+          new_iprop->prop_hash = final_hash;
+          svn_sort__array_insert(&new_iprop, *inherited_props, 0);
+        }
+    }
+
+  /* Reparent session back to original URL. */
+  SVN_ERR(svn_ra_reparent(session, session_url, scratch_pool));
+
+  svn_pool_destroy(iterpool);
   return SVN_NO_ERROR;
 }

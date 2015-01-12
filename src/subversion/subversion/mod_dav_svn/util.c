@@ -45,6 +45,9 @@ dav_svn__new_error(apr_pool_t *pool,
                    int error_id,
                    const char *desc)
 {
+  if (error_id == 0)
+    error_id = SVN_ERR_RA_DAV_REQUEST_FAILED;
+
 /*
  * Note: dav_new_error() in httpd 2.0/2.2 always treated
  * the errno field in dav_error as an apr_status_t when
@@ -53,9 +56,11 @@ dav_svn__new_error(apr_pool_t *pool,
  * > 2.2 below perpetuates this.
  */
 #if AP_MODULE_MAGIC_AT_LEAST(20091119,0)
-  /* old code assumed errno was valid; keep assuming */
-  return dav_new_error(pool, status, error_id, errno, desc);
+  return dav_new_error(pool, status, error_id, 0, desc);
 #else
+
+  errno = 0; /* For the same reason as in dav_svn__new_error_tag */
+
   return dav_new_error(pool, status, error_id, desc);
 #endif
 }
@@ -68,6 +73,9 @@ dav_svn__new_error_tag(apr_pool_t *pool,
                        const char *namespace,
                        const char *tagname)
 {
+  if (error_id == 0)
+    error_id = SVN_ERR_RA_DAV_REQUEST_FAILED;
+
 #if AP_MODULE_MAGIC_AT_LEAST(20091119,0)
   return dav_new_error_tag(pool, status, error_id, 0,
                            desc, namespace, tagname);
@@ -261,6 +269,11 @@ dav_svn__build_uri(const dav_svn_repos *repos,
 
     case DAV_SVN__BUILD_URI_VERSION:
       return apr_psprintf(pool, "%s%s/%s/ver/%ld%s%s",
+                          href1, root_path, special_uri,
+                          revision, path_uri, href2);
+
+    case DAV_SVN__BUILD_URI_REVROOT:
+      return apr_psprintf(pool, "%s%s/%s/rvr/%ld%s%s",
                           href1, root_path, special_uri,
                           revision, path_uri, href2);
 
@@ -546,11 +559,23 @@ dav_svn__sanitize_error(svn_error_t *serr,
   svn_error_t *safe_err = serr;
   if (new_msg != NULL)
     {
+      /* Purge error tracing from the error chain. */
+      svn_error_t *purged_serr = svn_error_purge_tracing(serr);
+
       /* Sanitization is necessary.  Create a new, safe error and
            log the original error. */
-        safe_err = svn_error_create(serr->apr_err, NULL, new_msg);
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_EGENERAL, r,
-                      "%s", serr->message);
+      safe_err = svn_error_create(purged_serr->apr_err, NULL, new_msg);
+      ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_EGENERAL, r,
+                    "%s", purged_serr->message);
+
+      /* Log the entire error chain. */
+      while (purged_serr->child)
+        {
+          purged_serr = purged_serr->child;
+          ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_EGENERAL, r,
+                        "%s", purged_serr->message);
+        }
+
         svn_error_clear(serr);
       }
     return dav_svn__convert_err(safe_err, http_status,
@@ -622,7 +647,7 @@ dav_svn__final_flush_or_error(request_rec *r,
   if (! do_flush)
     {
       /* Ask about the length of the bucket brigade, ignoring errors. */
-      apr_off_t len;
+      apr_off_t len = 0;
       (void)apr_brigade_length(bb, FALSE, &len);
       do_flush = (len != 0);
     }
@@ -757,7 +782,7 @@ request_body_to_string(svn_string_t **request_str,
     }
   else
     {
-      buf = svn_stringbuf_create("", pool);
+      buf = svn_stringbuf_create_empty(pool);
     }
 
   brigade = apr_brigade_create(r->pool, r->connection->bucket_alloc);
@@ -813,7 +838,7 @@ request_body_to_string(svn_string_t **request_str,
   apr_brigade_destroy(brigade);
 
   /* Make an svn_string_t from our svn_stringbuf_t. */
-  *request_str = svn_string_create("", pool);
+  *request_str = svn_string_create_empty(pool);
   (*request_str)->data = buf->data;
   (*request_str)->len = buf->len;
   return OK;

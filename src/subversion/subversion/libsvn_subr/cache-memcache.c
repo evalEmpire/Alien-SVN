@@ -29,6 +29,7 @@
 
 #include "svn_private_config.h"
 #include "private/svn_cache.h"
+#include "private/svn_dep_compat.h"
 
 #include "cache.h"
 
@@ -141,8 +142,15 @@ memcache_internal_get(char **data,
   memcache_t *cache = cache_void;
   apr_status_t apr_err;
   const char *mc_key;
-  apr_pool_t *subpool = svn_pool_create(pool);
+  apr_pool_t *subpool;
 
+  if (key == NULL)
+    {
+      *found = FALSE;
+      return SVN_NO_ERROR;
+    }
+
+  subpool = svn_pool_create(pool);
   SVN_ERR(build_key(&mc_key, cache, key, subpool));
 
   apr_err = apr_memcache_getp(cache->memcache,
@@ -195,9 +203,10 @@ memcache_get(void **value_p,
         }
       else
         {
-          svn_string_t *value = apr_pcalloc(result_pool, sizeof(*value));
+          svn_stringbuf_t *value = svn_stringbuf_create_empty(result_pool);
           value->data = data;
-          value->len = data_len;
+          value->blocksize = data_len;
+          value->len = data_len - 1; /* account for trailing NUL */
           *value_p = value;
         }
     }
@@ -240,9 +249,12 @@ memcache_set(void *cache_void,
 {
   memcache_t *cache = cache_void;
   apr_pool_t *subpool = svn_pool_create(scratch_pool);
-  char *data;
+  void *data;
   apr_size_t data_len;
   svn_error_t *err;
+
+  if (key == NULL)
+    return SVN_NO_ERROR;
 
   if (cache->serialize_func)
     {
@@ -252,7 +264,7 @@ memcache_set(void *cache_void,
     {
       svn_stringbuf_t *value_str = value;
       data = value_str->data;
-      data_len = value_str->len;
+      data_len = value_str->len + 1; /* copy trailing NUL */
     }
 
   err = memcache_internal_set(cache_void, key, data, data_len, subpool);
@@ -297,12 +309,12 @@ memcache_set_partial(void *cache_void,
 {
   svn_error_t *err = SVN_NO_ERROR;
 
-  char *data;
+  void *data;
   apr_size_t size;
   svn_boolean_t found = FALSE;
 
   apr_pool_t *subpool = svn_pool_create(scratch_pool);
-  SVN_ERR(memcache_internal_get(&data,
+  SVN_ERR(memcache_internal_get((char **)&data,
                                 &size,
                                 &found,
                                 cache_void,
@@ -518,7 +530,7 @@ svn_cache__make_memcache_from_config(svn_memcache_t **memcache_p,
                                     svn_config_t *config,
                                     apr_pool_t *pool)
 {
-  apr_uint16_t server_count;
+  int server_count;
   apr_pool_t *subpool = svn_pool_create(pool);
 
   server_count =
@@ -533,12 +545,15 @@ svn_cache__make_memcache_from_config(svn_memcache_t **memcache_p,
       return SVN_NO_ERROR;
     }
 
+  if (server_count > APR_INT16_MAX)
+    return svn_error_create(SVN_ERR_TOO_MANY_MEMCACHED_SERVERS, NULL, NULL);
+
 #ifdef SVN_HAVE_MEMCACHE
   {
     struct ams_baton b;
     svn_memcache_t *memcache = apr_pcalloc(pool, sizeof(*memcache));
     apr_status_t apr_err = apr_memcache_create(pool,
-                                               server_count,
+                                               (apr_uint16_t)server_count,
                                                0, /* flags */
                                                &(memcache->c));
     if (apr_err != APR_SUCCESS)

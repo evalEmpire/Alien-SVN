@@ -87,9 +87,9 @@ Example:
 
     close $fh;
 
-=item $repos->load_fs($dumpfile_fh, $feedback_fh, $uuid_action, $parent_dir, $cancel_func, $cancel_baton);
+=item $repos-E<gt>load_fs($dumpfile_fh, $feedback_fh, $uuid_action, $parent_dir, $cancel_func, $cancel_baton);
 
-=item $repos->load_fs2($dumpfile_fh, $feedback_fh, $uuid_action, $parent_dir, $use_pre_commit_hook, $use_post_commit_hook, $cancel_func, $cancel_baton);
+=item $repos-E<gt>load_fs2($dumpfile_fh, $feedback_fh, $uuid_action, $parent_dir, $use_pre_commit_hook, $use_post_commit_hook, $cancel_func, $cancel_baton);
 
 Loads a dumpfile specified by the C<$dumpfile_fh> filehandle into the repository.
 If the dumpstream contains copy history that is unavailable in the repository,
@@ -183,11 +183,11 @@ of paths that have changed in this revision.
 
 =item $rev
 
-The revision this change occured in.
+The revision this change occurred in.
 
 =item $date
 
-The date and time the revision occured.
+The date and time the revision occurred.
 
 =item $msg
 

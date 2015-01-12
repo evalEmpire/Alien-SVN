@@ -28,8 +28,6 @@
 #include <apr_want.h>
 #include <apr_general.h>
 #include <apr_strings.h>
-#include <apr_atomic.h>
-#include <apr_thread_mutex.h>
 #include <apr_version.h>
 
 #include "svn_types.h"
@@ -42,6 +40,7 @@
 
 #include "private/svn_atomic.h"
 #include "private/ra_svn_sasl.h"
+#include "private/svn_mutex.h"
 
 #include "ra_svn.h"
 
@@ -86,72 +85,90 @@ static apr_status_t sasl_done_cb(void *data)
 static apr_array_header_t *free_mutexes = NULL;
 
 /* A mutex to serialize access to the array. */
-static apr_thread_mutex_t *array_mutex = NULL;
+static svn_mutex__t *array_mutex = NULL;
 
 /* Callbacks we pass to sasl_set_mutex(). */
 
+static svn_error_t *
+sasl_mutex_alloc_cb_internal(svn_mutex__t **mutex)
+{
+  if (apr_is_empty_array(free_mutexes))
+    return svn_mutex__init(mutex, TRUE, sasl_pool);
+  else
+    *mutex = *((svn_mutex__t**)apr_array_pop(free_mutexes));
+
+  return SVN_NO_ERROR;
+}
+
 static void *sasl_mutex_alloc_cb(void)
 {
-  apr_thread_mutex_t *mutex;
-  apr_status_t apr_err;
+  svn_mutex__t *mutex = NULL;
+  svn_error_t *err;
 
   if (!svn_ra_svn__sasl_status)
     return NULL;
 
-  apr_err = apr_thread_mutex_lock(array_mutex);
-  if (apr_err != APR_SUCCESS)
-    return NULL;
-
-  if (apr_is_empty_array(free_mutexes))
-    {
-      apr_err = apr_thread_mutex_create(&mutex,
-                                        APR_THREAD_MUTEX_DEFAULT,
-                                        sasl_pool);
-      if (apr_err != APR_SUCCESS)
-        mutex = NULL;
-    }
+  err = svn_mutex__lock(array_mutex);
+  if (err)
+    svn_error_clear(err);
   else
-    mutex = *((apr_thread_mutex_t**)apr_array_pop(free_mutexes));
-
-  apr_err = apr_thread_mutex_unlock(array_mutex);
-  if (apr_err != APR_SUCCESS)
-    return NULL;
+    svn_error_clear(svn_mutex__unlock(array_mutex,
+                                      sasl_mutex_alloc_cb_internal(&mutex)));
 
   return mutex;
+}
+
+static int check_result(svn_error_t *err)
+{
+  if (err)
+    {
+      svn_error_clear(err);
+      return -1;
+    }
+
+  return 0;
 }
 
 static int sasl_mutex_lock_cb(void *mutex)
 {
   if (!svn_ra_svn__sasl_status)
     return 0;
-  return (apr_thread_mutex_lock(mutex) == APR_SUCCESS) ? 0 : -1;
+  return check_result(svn_mutex__lock(mutex));
 }
 
 static int sasl_mutex_unlock_cb(void *mutex)
 {
   if (!svn_ra_svn__sasl_status)
     return 0;
-  return (apr_thread_mutex_unlock(mutex) == APR_SUCCESS) ? 0 : -1;
+  return check_result(svn_mutex__unlock(mutex, SVN_NO_ERROR));
+}
+
+static svn_error_t *
+sasl_mutex_free_cb_internal(void *mutex)
+{
+  APR_ARRAY_PUSH(free_mutexes, svn_mutex__t*) = mutex;
+  return SVN_NO_ERROR;
 }
 
 static void sasl_mutex_free_cb(void *mutex)
 {
-  if (svn_ra_svn__sasl_status)
-    {
-      apr_status_t apr_err = apr_thread_mutex_lock(array_mutex);
-      if (apr_err == APR_SUCCESS)
-        {
-          APR_ARRAY_PUSH(free_mutexes, apr_thread_mutex_t*) = mutex;
-          apr_thread_mutex_unlock(array_mutex);
-        }
-    }
+  svn_error_t *err;
+
+  if (!svn_ra_svn__sasl_status)
+    return;
+
+  err = svn_mutex__lock(array_mutex);
+  if (err)
+    svn_error_clear(err);
+  else
+    svn_error_clear(svn_mutex__unlock(array_mutex,
+                                      sasl_mutex_free_cb_internal(mutex)));
 }
 #endif /* APR_HAS_THREADS */
 
-apr_status_t svn_ra_svn__sasl_common_init(apr_pool_t *pool)
+svn_error_t *
+svn_ra_svn__sasl_common_init(apr_pool_t *pool)
 {
-  apr_status_t apr_err = APR_SUCCESS;
-
   sasl_pool = svn_pool_create(pool);
   sasl_ctx_count = 1;
   apr_pool_cleanup_register(sasl_pool, NULL, sasl_done_cb,
@@ -161,12 +178,12 @@ apr_status_t svn_ra_svn__sasl_common_init(apr_pool_t *pool)
                  sasl_mutex_lock_cb,
                  sasl_mutex_unlock_cb,
                  sasl_mutex_free_cb);
-  free_mutexes = apr_array_make(sasl_pool, 0, sizeof(apr_thread_mutex_t *));
-  apr_err = apr_thread_mutex_create(&array_mutex,
-                                    APR_THREAD_MUTEX_DEFAULT,
-                                    sasl_pool);
+  free_mutexes = apr_array_make(sasl_pool, 0, sizeof(svn_mutex__t *));
+  SVN_ERR(svn_mutex__init(&array_mutex, TRUE, sasl_pool));
+
 #endif /* APR_HAS_THREADS */
-  return apr_err;
+
+  return SVN_NO_ERROR;
 }
 
 /* We are going to look at errno when we get SASL_FAIL but we don't
@@ -213,9 +230,7 @@ static svn_error_t *sasl_init_cb(void *baton, apr_pool_t *pool)
 {
   int result;
 
-  if (svn_ra_svn__sasl_common_init(pool) != APR_SUCCESS)
-    return svn_error_create(SVN_ERR_RA_NOT_AUTHORIZED, NULL,
-                            _("Could not initialize the SASL library"));
+  SVN_ERR(svn_ra_svn__sasl_common_init(pool));
   clear_sasl_errno();
   result = sasl_client_init(NULL);
   if (result != SASL_OK)
@@ -492,8 +507,8 @@ static svn_error_t *try_auth(svn_ra_svn__session_baton_t *sess,
   while (result == SASL_CONTINUE)
     {
       /* Read the server response */
-      SVN_ERR(svn_ra_svn_read_tuple(sess->conn, pool, "w(?s)",
-                                    &status, &in));
+      SVN_ERR(svn_ra_svn__read_tuple(sess->conn, pool, "w(?s)",
+                                     &status, &in));
 
       if (strcmp(status, "failure") == 0)
         {
@@ -518,7 +533,7 @@ static svn_error_t *try_auth(svn_ra_svn__session_baton_t *sess,
       clear_sasl_errno();
       result = sasl_client_step(sasl_ctx,
                                 in->data,
-                                in->len,
+                                (const unsigned int) in->len,
                                 &client_interact,
                                 &out, /* Filled in by SASL. */
                                 &outlen);
@@ -538,18 +553,18 @@ static svn_error_t *try_auth(svn_ra_svn__session_baton_t *sess,
           /* For CRAM-MD5, we don't use base64-encoding. */
           if (strcmp(mech, "CRAM-MD5") != 0)
             arg = svn_base64_encode_string2(arg, TRUE, pool);
-          SVN_ERR(svn_ra_svn_write_cstring(sess->conn, pool, arg->data));
+          SVN_ERR(svn_ra_svn__write_cstring(sess->conn, pool, arg->data));
         }
       else
         {
-          SVN_ERR(svn_ra_svn_write_cstring(sess->conn, pool, ""));
+          SVN_ERR(svn_ra_svn__write_cstring(sess->conn, pool, ""));
         }
     }
 
   if (!status || strcmp(status, "step") == 0)
     {
       /* This is a client-send-last mech.  Read the last server response. */
-      SVN_ERR(svn_ra_svn_read_tuple(sess->conn, pool, "w(?s)",
+      SVN_ERR(svn_ra_svn__read_tuple(sess->conn, pool, "w(?s)",
               &status, &in));
 
       if (strcmp(status, "failure") == 0)
@@ -605,7 +620,7 @@ static svn_error_t *sasl_read_cb(void *baton, char *buffer, apr_size_t *len)
           return SVN_NO_ERROR;
         }
       clear_sasl_errno();
-      result = sasl_decode(sasl_baton->ctx, buffer, len2,
+      result = sasl_decode(sasl_baton->ctx, buffer, (unsigned int) len2,
                            &sasl_baton->read_buf,
                            &sasl_baton->read_len);
       if (result != SASL_OK)
@@ -647,7 +662,7 @@ sasl_write_cb(void *baton, const char *buffer, apr_size_t *len)
       /* Make sure we don't write too much. */
       *len = (*len > sasl_baton->maxsize) ? sasl_baton->maxsize : *len;
       clear_sasl_errno();
-      result = sasl_encode(sasl_baton->ctx, buffer, *len,
+      result = sasl_encode(sasl_baton->ctx, buffer, (unsigned int) *len,
                            &sasl_baton->write_buf,
                            &sasl_baton->write_len);
 
@@ -719,7 +734,7 @@ svn_error_t *svn_ra_svn__enable_sasl_encryption(svn_ra_svn_conn_t *conn,
           const void *maxsize;
 
           /* Flush the connection, as we're about to replace its stream. */
-          SVN_ERR(svn_ra_svn_flush(conn, pool));
+          SVN_ERR(svn_ra_svn__flush(conn, pool));
 
           /* Create and initialize the stream baton. */
           sasl_baton = apr_pcalloc(conn->pool, sizeof(*sasl_baton));
@@ -740,9 +755,8 @@ svn_error_t *svn_ra_svn__enable_sasl_encryption(svn_ra_svn_conn_t *conn,
             {
               clear_sasl_errno();
               result = sasl_decode(sasl_ctx, conn->read_ptr,
-                                   conn->read_end - conn->read_ptr,
-                                   &sasl_baton->read_buf,
-                                   &sasl_baton->read_len);
+                             (unsigned int) (conn->read_end - conn->read_ptr),
+                             &sasl_baton->read_buf, &sasl_baton->read_len);
               if (result != SASL_OK)
                 return svn_error_create(SVN_ERR_RA_NOT_AUTHORIZED, NULL,
                                         get_sasl_error(sasl_ctx, result, pool));
@@ -812,7 +826,7 @@ svn_ra_svn__do_cyrus_auth(svn_ra_svn__session_baton_t *sess,
   const char *local_addrport = NULL, *remote_addrport = NULL;
   svn_boolean_t success;
   sasl_callback_t *callbacks;
-  cred_baton_t cred_baton;
+  cred_baton_t cred_baton = { 0 };
   int i;
 
   if (!sess->is_tunneled)
@@ -842,7 +856,6 @@ svn_ra_svn__do_cyrus_auth(svn_ra_svn__session_baton_t *sess,
   realmstring = apr_psprintf(pool, "%s %s", sess->realm_prefix, realm);
 
   /* Initialize the credential baton. */
-  memset(&cred_baton, 0, sizeof(cred_baton));
   cred_baton.auth_baton = sess->callbacks->auth_baton;
   cred_baton.realmstring = realmstring;
   cred_baton.pool = pool;
@@ -896,7 +909,7 @@ svn_ra_svn__do_cyrus_auth(svn_ra_svn__session_baton_t *sess,
           return cred_baton.err;
         }
       if (cred_baton.no_more_creds
-          || (! success && ! err && ! cred_baton.was_used))
+          || (! err && ! success && ! cred_baton.was_used))
         {
           svn_error_clear(err);
           /* If we ran out of authentication providers, or if we got a server

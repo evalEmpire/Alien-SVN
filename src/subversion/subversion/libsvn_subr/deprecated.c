@@ -32,17 +32,22 @@
    deprecated functions in this file. */
 #define SVN_DEPRECATED
 
+#include "svn_hash.h"
 #include "svn_subst.h"
 #include "svn_path.h"
 #include "svn_opt.h"
 #include "svn_cmdline.h"
+#include "svn_version.h"
 #include "svn_pools.h"
 #include "svn_dso.h"
 #include "svn_mergeinfo.h"
+#include "svn_utf.h"
 #include "svn_xml.h"
 
 #include "opt.h"
 #include "private/svn_opt_private.h"
+#include "private/svn_mergeinfo_private.h"
+#include "private/svn_subr_private.h"
 
 #include "svn_private_config.h"
 
@@ -69,38 +74,28 @@ kwstruct_to_kwhash(const svn_subst_keywords_t *kwstruct,
 
   if (kwstruct->revision)
     {
-      apr_hash_set(kwhash, SVN_KEYWORD_REVISION_LONG,
-                   APR_HASH_KEY_STRING, kwstruct->revision);
-      apr_hash_set(kwhash, SVN_KEYWORD_REVISION_MEDIUM,
-                   APR_HASH_KEY_STRING, kwstruct->revision);
-      apr_hash_set(kwhash, SVN_KEYWORD_REVISION_SHORT,
-                   APR_HASH_KEY_STRING, kwstruct->revision);
+      svn_hash_sets(kwhash, SVN_KEYWORD_REVISION_LONG, kwstruct->revision);
+      svn_hash_sets(kwhash, SVN_KEYWORD_REVISION_MEDIUM, kwstruct->revision);
+      svn_hash_sets(kwhash, SVN_KEYWORD_REVISION_SHORT, kwstruct->revision);
     }
   if (kwstruct->date)
     {
-      apr_hash_set(kwhash, SVN_KEYWORD_DATE_LONG,
-                   APR_HASH_KEY_STRING, kwstruct->date);
-      apr_hash_set(kwhash, SVN_KEYWORD_DATE_SHORT,
-                   APR_HASH_KEY_STRING, kwstruct->date);
+      svn_hash_sets(kwhash, SVN_KEYWORD_DATE_LONG, kwstruct->date);
+      svn_hash_sets(kwhash, SVN_KEYWORD_DATE_SHORT, kwstruct->date);
     }
   if (kwstruct->author)
     {
-      apr_hash_set(kwhash, SVN_KEYWORD_AUTHOR_LONG,
-                   APR_HASH_KEY_STRING, kwstruct->author);
-      apr_hash_set(kwhash, SVN_KEYWORD_AUTHOR_SHORT,
-                   APR_HASH_KEY_STRING, kwstruct->author);
+      svn_hash_sets(kwhash, SVN_KEYWORD_AUTHOR_LONG, kwstruct->author);
+      svn_hash_sets(kwhash, SVN_KEYWORD_AUTHOR_SHORT, kwstruct->author);
     }
   if (kwstruct->url)
     {
-      apr_hash_set(kwhash, SVN_KEYWORD_URL_LONG,
-                   APR_HASH_KEY_STRING, kwstruct->url);
-      apr_hash_set(kwhash, SVN_KEYWORD_URL_SHORT,
-                   APR_HASH_KEY_STRING, kwstruct->url);
+      svn_hash_sets(kwhash, SVN_KEYWORD_URL_LONG, kwstruct->url);
+      svn_hash_sets(kwhash, SVN_KEYWORD_URL_SHORT, kwstruct->url);
     }
   if (kwstruct->id)
     {
-      apr_hash_set(kwhash, SVN_KEYWORD_ID,
-                   APR_HASH_KEY_STRING, kwstruct->id);
+      svn_hash_sets(kwhash, SVN_KEYWORD_ID, kwstruct->id);
     }
 
   return kwhash;
@@ -361,7 +356,7 @@ print_command_info(const svn_opt_subcommand_desc_t *cmd,
         {
           if (cmd->valid_options[i])
             {
-              if (have_options == FALSE)
+              if (!have_options)
                 {
                   SVN_ERR(svn_cmdline_fputs(_("\nValid options:\n"),
                                             stream, pool));
@@ -523,6 +518,33 @@ svn_opt_args_to_target_array(apr_array_header_t **targets_p,
 }
 
 svn_error_t *
+svn_opt_print_help3(apr_getopt_t *os,
+                    const char *pgm_name,
+                    svn_boolean_t print_version,
+                    svn_boolean_t quiet,
+                    const char *version_footer,
+                    const char *header,
+                    const svn_opt_subcommand_desc2_t *cmd_table,
+                    const apr_getopt_option_t *option_table,
+                    const int *global_options,
+                    const char *footer,
+                    apr_pool_t *pool)
+{
+  return svn_error_trace(svn_opt_print_help4(os,
+                                             pgm_name,
+                                             print_version,
+                                             quiet,
+                                             FALSE,
+                                             version_footer,
+                                             header,
+                                             cmd_table,
+                                             option_table,
+                                             global_options,
+                                             footer,
+                                             pool));
+}
+
+svn_error_t *
 svn_opt_print_help2(apr_getopt_t *os,
                     const char *pgm_name,
                     svn_boolean_t print_version,
@@ -534,10 +556,11 @@ svn_opt_print_help2(apr_getopt_t *os,
                     const char *footer,
                     apr_pool_t *pool)
 {
-  return svn_error_trace(svn_opt_print_help3(os,
+  return svn_error_trace(svn_opt_print_help4(os,
                                              pgm_name,
                                              print_version,
                                              quiet,
+                                             FALSE,
                                              version_footer,
                                              header,
                                              cmd_table,
@@ -575,8 +598,11 @@ svn_opt_print_help(apr_getopt_t *os,
         }
     }
   else if (print_version)   /* just --version */
-    SVN_ERR(svn_opt__print_version_info(pgm_name, version_footer, quiet,
-                                        pool));
+    {
+      SVN_ERR(svn_opt__print_version_info(pgm_name, version_footer,
+                                          svn_version_extended(FALSE, pool),
+                                          quiet, FALSE, pool));
+    }
   else if (os && !targets->nelts)            /* `-h', `--help', or `help' */
     svn_opt_print_generic_help(header,
                                cmd_table,
@@ -766,6 +792,25 @@ svn_io_get_dirents(apr_hash_t **dirents,
 }
 
 svn_error_t *
+svn_io_start_cmd2(apr_proc_t *cmd_proc,
+                  const char *path,
+                  const char *cmd,
+                  const char *const *args,
+                  svn_boolean_t inherit,
+                  svn_boolean_t infile_pipe,
+                  apr_file_t *infile,
+                  svn_boolean_t outfile_pipe,
+                  apr_file_t *outfile,
+                  svn_boolean_t errfile_pipe,
+                  apr_file_t *errfile,
+                  apr_pool_t *pool)
+{
+  return svn_io_start_cmd3(cmd_proc, path, cmd, args, NULL, inherit,
+                           infile_pipe, infile, outfile_pipe, outfile,
+                           errfile_pipe, errfile, pool);
+}
+
+svn_error_t *
 svn_io_start_cmd(apr_proc_t *cmd_proc,
                  const char *path,
                  const char *cmd,
@@ -823,6 +868,22 @@ svn_io_dir_walk(const char *dirname,
   return svn_error_trace(svn_io_dir_walk2(dirname, wanted,
                                           walk_func_filter_func,
                                           &baton, pool));
+}
+
+svn_error_t *
+svn_io_stat_dirent(const svn_io_dirent2_t **dirent_p,
+                   const char *path,
+                   svn_boolean_t ignore_enoent,
+                   apr_pool_t *result_pool,
+                   apr_pool_t *scratch_pool)
+{
+  return svn_error_trace(
+            svn_io_stat_dirent2(dirent_p,
+                                path,
+                                FALSE,
+                                ignore_enoent,
+                                result_pool,
+                                scratch_pool));
 }
 
 /*** From constructors.c ***/
@@ -1036,14 +1097,6 @@ svn_path_canonicalize(const char *path, apr_pool_t *pool)
     return svn_dirent_canonicalize(path, pool);
 }
 
-svn_boolean_t
-svn_path_is_canonical(const char *path, apr_pool_t *pool)
-{
-  return svn_uri_is_canonical(path, pool) ||
-      svn_dirent_is_canonical(path, pool) ||
-      svn_relpath_is_canonical(path);
-}
-
 
 /*** From mergeinfo.c ***/
 
@@ -1061,8 +1114,8 @@ svn_mergeinfo_inheritable(svn_mergeinfo_t *output,
 }
 
 svn_error_t *
-svn_rangelist_inheritable(apr_array_header_t **inheritable_rangelist,
-                          const apr_array_header_t *rangelist,
+svn_rangelist_inheritable(svn_rangelist_t **inheritable_rangelist,
+                          const svn_rangelist_t *rangelist,
                           svn_revnum_t start,
                           svn_revnum_t end,
                           apr_pool_t *pool)
@@ -1073,17 +1126,90 @@ svn_rangelist_inheritable(apr_array_header_t **inheritable_rangelist,
                                                     pool, pool));
 }
 
+svn_error_t *
+svn_rangelist_merge(svn_rangelist_t **rangelist,
+                    const svn_rangelist_t *changes,
+                    apr_pool_t *pool)
+{
+  SVN_ERR(svn_rangelist_merge2(*rangelist, changes,
+                               pool, pool));
+
+  return svn_error_trace(
+            svn_rangelist__combine_adjacent_ranges(*rangelist, pool));
+}
+
+svn_error_t *
+svn_mergeinfo_diff(svn_mergeinfo_t *deleted, svn_mergeinfo_t *added,
+                   svn_mergeinfo_t from, svn_mergeinfo_t to,
+                   svn_boolean_t consider_inheritance,
+                   apr_pool_t *pool)
+{
+  return svn_error_trace(svn_mergeinfo_diff2(deleted, added, from, to,
+                                             consider_inheritance, pool,
+                                             pool));
+}
+
+svn_error_t *
+svn_mergeinfo_merge(svn_mergeinfo_t mergeinfo,
+                    svn_mergeinfo_t changes,
+                    apr_pool_t *pool)
+{
+  return svn_error_trace(svn_mergeinfo_merge2(mergeinfo, changes, pool,
+                         pool));
+}
+
+svn_error_t *
+svn_mergeinfo_remove(svn_mergeinfo_t *mergeinfo, svn_mergeinfo_t eraser,
+                     svn_mergeinfo_t whiteboard, apr_pool_t *pool)
+{
+  return svn_mergeinfo_remove2(mergeinfo, eraser, whiteboard, TRUE, pool,
+                               pool);
+}
+
+svn_error_t *
+svn_mergeinfo_intersect(svn_mergeinfo_t *mergeinfo,
+                        svn_mergeinfo_t mergeinfo1,
+                        svn_mergeinfo_t mergeinfo2,
+                        apr_pool_t *pool)
+{
+  return svn_mergeinfo_intersect2(mergeinfo, mergeinfo1, mergeinfo2,
+                                  TRUE, pool, pool);
+}
+
 /*** From config.c ***/
+svn_error_t *
+svn_config_create(svn_config_t **cfgp,
+                  svn_boolean_t section_names_case_sensitive,
+                  apr_pool_t *result_pool)
+{
+  return svn_error_trace(svn_config_create2(cfgp,
+                                            section_names_case_sensitive,
+                                            FALSE,
+                                            result_pool));
+}
+
+svn_error_t *
+svn_config_read2(svn_config_t **cfgp, const char *file,
+                 svn_boolean_t must_exist,
+                 svn_boolean_t section_names_case_sensitive,
+                 apr_pool_t *result_pool)
+{
+  return svn_error_trace(svn_config_read3(cfgp, file,
+                                          must_exist,
+                                          section_names_case_sensitive,
+                                          FALSE,
+                                          result_pool));
+}
 
 svn_error_t *
 svn_config_read(svn_config_t **cfgp, const char *file,
                 svn_boolean_t must_exist,
-                apr_pool_t *pool)
+                apr_pool_t *result_pool)
 {
-  return svn_error_trace(svn_config_read2(cfgp, file,
+  return svn_error_trace(svn_config_read3(cfgp, file,
                                           must_exist,
-                                          FALSE,
-                                          pool));
+                                          FALSE, FALSE,
+                                          result_pool));
 }
 
 #ifdef SVN_DISABLE_FULL_VERSION_MATCH
@@ -1125,4 +1251,61 @@ void
 svn_xml_make_header(svn_stringbuf_t **str, apr_pool_t *pool)
 {
   svn_xml_make_header2(str, NULL, pool);
+}
+
+void
+svn_utf_initialize(apr_pool_t *pool)
+{
+  svn_utf_initialize2(FALSE, pool);
+}
+
+svn_error_t *
+svn_subst_build_keywords(svn_subst_keywords_t *kw,
+                         const char *keywords_val,
+                         const char *rev,
+                         const char *url,
+                         apr_time_t date,
+                         const char *author,
+                         apr_pool_t *pool)
+{
+  apr_hash_t *kwhash;
+  const svn_string_t *val;
+
+  SVN_ERR(svn_subst_build_keywords2(&kwhash, keywords_val, rev,
+                                    url, date, author, pool));
+
+  /* The behaviour of pre-1.3 svn_subst_build_keywords, which we are
+   * replicating here, is to write to a slot in the svn_subst_keywords_t
+   * only if the relevant keyword was present in keywords_val, otherwise
+   * leaving that slot untouched. */
+
+  val = svn_hash_gets(kwhash, SVN_KEYWORD_REVISION_LONG);
+  if (val)
+    kw->revision = val;
+
+  val = svn_hash_gets(kwhash, SVN_KEYWORD_DATE_LONG);
+  if (val)
+    kw->date = val;
+
+  val = svn_hash_gets(kwhash, SVN_KEYWORD_AUTHOR_LONG);
+  if (val)
+    kw->author = val;
+
+  val = svn_hash_gets(kwhash, SVN_KEYWORD_URL_LONG);
+  if (val)
+    kw->url = val;
+
+  val = svn_hash_gets(kwhash, SVN_KEYWORD_ID);
+  if (val)
+    kw->id = val;
+
+  return SVN_NO_ERROR;
+}
+
+/*** From version.c ***/
+svn_error_t *
+svn_ver_check_list(const svn_version_t *my_version,
+                   const svn_version_checklist_t *checklist)
+{
+  return svn_ver_check_list2(my_version, checklist, svn_ver_compatible);
 }

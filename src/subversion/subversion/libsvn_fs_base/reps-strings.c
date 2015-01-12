@@ -489,8 +489,7 @@ rep_read_range(svn_fs_t *fs,
           /* Make a list of all the rep's we need to undeltify this range.
              We'll have to read them within this trail anyway, so we might
              as well do it once and up front. */
-          apr_array_header_t *reps =  /* ### what constant here? */
-            apr_array_make(pool, 666, sizeof(rep));
+          apr_array_header_t *reps = apr_array_make(pool, 30, sizeof(rep));
           do
             {
               const rep_delta_chunk_t *const first_chunk
@@ -1465,14 +1464,16 @@ svn_fs_base__rep_deltify(svn_fs_t *fs,
                                                 TRUE, trail, pool));
 
   /* Setup a stream to convert the textdelta data into svndiff windows. */
-  svn_txdelta(&txdelta_stream, source_stream, target_stream, pool);
+  svn_txdelta2(&txdelta_stream, source_stream, target_stream, TRUE, pool);
 
   if (bfd->format >= SVN_FS_BASE__MIN_SVNDIFF1_FORMAT)
-    svn_txdelta_to_svndiff2(&new_target_handler, &new_target_handler_baton,
-                            new_target_stream, 1, pool);
+    svn_txdelta_to_svndiff3(&new_target_handler, &new_target_handler_baton,
+                            new_target_stream, 1,
+                            SVN_DELTA_COMPRESSION_LEVEL_DEFAULT, pool);
   else
-    svn_txdelta_to_svndiff2(&new_target_handler, &new_target_handler_baton,
-                            new_target_stream, 0, pool);
+    svn_txdelta_to_svndiff3(&new_target_handler, &new_target_handler_baton,
+                            new_target_stream, 0,
+                            SVN_DELTA_COMPRESSION_LEVEL_DEFAULT, pool);
 
   /* subpool for the windows */
   wpool = svn_pool_create(pool);

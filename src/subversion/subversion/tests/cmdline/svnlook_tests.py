@@ -25,11 +25,14 @@
 ######################################################################
 
 # General modules
-import re, os
+import re, os, logging
+
+logger = logging.getLogger()
 
 # Our testing module
 import svntest
 
+from prop_tests import binary_mime_type_on_text_file_warning
 
 # (abbreviation)
 Skip = svntest.testcase.Skip_deco
@@ -46,19 +49,21 @@ Item = svntest.wc.StateItem
 # Convenience functions to make writing more tests easier
 
 def run_svnlook(*varargs):
-  """Run svnlook with VARARGS, returns stdout as list of lines.
-  Raises Failure if any stderr messages."""
+  """Run svnlook with VARARGS, returns exit code as int; stdout, stderr as
+  list of lines (including line terminators).
+  Raises Failure if any stderr messages.
+  """
   exit_code, output, dummy_errput = svntest.main.run_command(
-    svntest.main.svnlook_binary, 0, 0, *varargs)
+    svntest.main.svnlook_binary, 0, False, *varargs)
 
   return output
 
 
 def expect(tag, expected, got):
   if expected != got:
-    print("When testing: %s" % tag)
-    print("Expected: %s" % expected)
-    print("     Got: %s" % got)
+    logger.warn("When testing: %s", tag)
+    logger.warn("Expected: %s", expected)
+    logger.warn("     Got: %s", got)
     raise svntest.Failure
 
 
@@ -96,7 +101,7 @@ def test_misc(sbox):
 
   # give the repo a new UUID
   uuid = "01234567-89ab-cdef-89ab-cdef01234567"
-  svntest.main.run_command_stdin(svntest.main.svnadmin_binary, None, 0, 1,
+  svntest.main.run_command_stdin(svntest.main.svnadmin_binary, None, 0, True,
                            ["SVN-fs-dump-format-version: 2\n",
                             "\n",
                             "UUID: ", uuid, "\n",
@@ -165,7 +170,7 @@ def test_misc(sbox):
   # We cannot rely on svn:author's presence. ra_svn doesn't set it.
   if not (proplist == [ 'svn:author', 'svn:date', 'svn:log' ]
       or proplist == [ 'svn:date', 'svn:log' ]):
-    print("Unexpected result from proplist: %s" % proplist)
+    logger.warn("Unexpected result from proplist: %s", proplist)
     raise svntest.Failure
 
   prop_name = 'foo:bar-baz-quux'
@@ -415,12 +420,12 @@ def tree_non_recursive(sbox):
   treelist = run_svnlook('tree', '--non-recursive', repo_dir)
   for entry in treelist:
     if not entry.rstrip() in expected_results_root:
-      print("Unexpected result from tree with --non-recursive:")
-      print("  entry            : %s" % entry.rstrip())
+      logger.warn("Unexpected result from tree with --non-recursive:")
+      logger.warn("  entry            : %s", entry.rstrip())
       raise svntest.Failure
   if len(treelist) != len(expected_results_root):
-    print("Expected %i output entries, found %i"
-          % (len(expected_results_root), len(treelist)))
+    logger.warn("Expected %i output entries, found %i",
+          len(expected_results_root), len(treelist))
     raise svntest.Failure
 
   # check the output of svnlook --non-recursive on a
@@ -428,12 +433,12 @@ def tree_non_recursive(sbox):
   treelist = run_svnlook('tree', '--non-recursive', repo_dir, '/A/B')
   for entry in treelist:
     if not entry.rstrip() in expected_results_deep:
-      print("Unexpected result from tree with --non-recursive:")
-      print("  entry            : %s" % entry.rstrip())
+      logger.warn("Unexpected result from tree with --non-recursive:")
+      logger.warn("  entry            : %s", entry.rstrip())
       raise svntest.Failure
   if len(treelist) != len(expected_results_deep):
-    print("Expected %i output entries, found %i"
-          % (len(expected_results_deep), len(treelist)))
+    logger.warn("Expected %i output entries, found %i",
+          len(expected_results_deep), len(treelist))
     raise svntest.Failure
 
 #----------------------------------------------------------------------
@@ -502,6 +507,8 @@ def diff_ignore_eolstyle(sbox):
   repo_dir = sbox.repo_dir
   wc_dir = sbox.wc_dir
 
+  # CRLF is a string that will match a CRLF sequence read from a text file.
+  # ### On Windows, we assume CRLF will be read as LF, so it's a poor test.
   if os.name == 'nt':
     crlf = '\n'
   else:
@@ -572,7 +579,8 @@ def diff_binary(sbox):
   # Set A/mu to a binary mime-type, tweak its text, and commit.
   mu_path = os.path.join(wc_dir, 'A', 'mu')
   svntest.main.file_append(mu_path, 'new appended text for mu')
-  svntest.main.run_svn(None, 'propset', 'svn:mime-type',
+  svntest.main.run_svn(binary_mime_type_on_text_file_warning,
+                       'propset', 'svn:mime-type',
                        'application/octet-stream', mu_path)
   svntest.main.run_svn(None, 'ci', '-m', 'log msg', mu_path)
 
@@ -641,7 +649,7 @@ svnlook_bin=%s
 fp = open(os.path.join(sys.argv[1], 'hooks.log'), 'wb')
 def output_command(fp, cmd, opt):
   command = [svnlook_bin, cmd, '-t', sys.argv[2], sys.argv[1]] + opt
-  process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+  process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, bufsize=-1)
   (output, errors) = process.communicate()
   status = process.returncode
   fp.write(output)
@@ -694,12 +702,35 @@ fp.close()"""
   # Now check the logfile
   expected_data = [ 'bogus_val\n',
                     'bogus_rev_val\n',
+                    "Properties on '/A':\n",
                     '  bogus_prop\n',
                     '  svn:log\n', '  svn:author\n',
-                    #  internal property, not really expected
-                    '  svn:check-locks\n',
-                    '  bogus_rev_prop\n', '  svn:date\n']
+                    '  svn:check-locks\n', # internal prop, not really expected
+                    '  bogus_rev_prop\n',
+                    '  svn:date\n',
+                    '  svn:txn-client-compat-version\n',
+                    ]
+  # ra_dav and ra_svn add the user-agent ephemeral property
+  if svntest.main.is_ra_type_dav() or svntest.main.is_ra_type_svn():
+    expected_data.append('  svn:txn-user-agent\n')
   verify_logfile(logfilepath, svntest.verify.UnorderedOutput(expected_data))
+
+def property_delete(sbox):
+  "property delete"
+
+  sbox.build()
+  repo_dir = sbox.repo_dir
+
+  sbox.simple_propset('foo', 'bar', 'A/mu')
+  sbox.simple_commit()
+  sbox.simple_propdel('foo', 'A/mu')
+  sbox.simple_commit()
+
+  # XFail since r1293375, changed and diff produce no output on a
+  # property delete
+  svntest.actions.run_and_verify_svnlook(None, ["_U  A/mu\n"], [],
+                                         'changed', repo_dir)
+
 
 ########################################################################
 # Run the tests
@@ -719,6 +750,7 @@ test_list = [ None,
               diff_binary,
               test_filesize,
               test_txn_flag,
+              property_delete,
              ]
 
 if __name__ == '__main__':

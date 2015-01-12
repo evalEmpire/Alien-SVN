@@ -101,6 +101,8 @@
   svn_auth_provider_object_t **,
   svn_config_t **,
   svn_diff_t **,
+  svn_patch_file_t **,
+  svn_patch_t **,
   void **credentials,
   void **iter_baton,
   void **token,
@@ -706,28 +708,10 @@ svn_ ## TYPE ## _swig_rb_closed(VALUE self)
    svn_repos_get_logs()
 */
 
-#ifdef SWIGPYTHON
-%typemap(in) (svn_log_message_receiver_t receiver,
-                      void *receiver_baton) {
-    $1 = svn_swig_py_log_receiver;
-    $2 = (void *)$input;
-}
-#endif
-#ifdef SWIGPERL
-%typemap(in) (svn_log_message_receiver_t receiver,
-                     void *receiver_baton) {
-    $1 = svn_swig_pl_thunk_log_receiver;
-    $2 = (void *)$input;
-}
-#endif
-
-#ifdef SWIGRUBY
-%typemap(in) (svn_log_message_receiver_t receiver,
-                    void *receiver_baton) {
-    $1 = svn_swig_rb_log_receiver;
-    $2 = (void *)svn_swig_rb_make_baton($input, _global_svn_swig_rb_pool);
-}
-#endif
+%callback_typemap(svn_log_message_receiver_t receiver, void *receiver_baton,
+                  svn_swig_py_log_receiver,
+                  svn_swig_pl_thunk_log_receiver,
+                  svn_swig_rb_log_receiver)
 
 /* -----------------------------------------------------------------------
    Callback: svn_log_entry_receiver_t
@@ -736,21 +720,10 @@ svn_ ## TYPE ## _swig_rb_closed(VALUE self)
    svn_repos_get_logs4()
 */
 
-#ifdef SWIGPYTHON
-%typemap(in) (svn_log_entry_receiver_t receiver,
-                      void *receiver_baton) {
-    $1 = svn_swig_py_log_entry_receiver;
-    $2 = (void *)$input;
-}
-#endif
-
-#ifdef SWIGRUBY
-%typemap(in) (svn_log_entry_receiver_t receiver, void *receiver_baton)
-{
-  $1 = svn_swig_rb_log_entry_receiver;
-  $2 = (void *)svn_swig_rb_make_baton($input, _global_svn_swig_rb_pool);
-}
-#endif
+%callback_typemap(svn_log_entry_receiver_t receiver, void *receiver_baton,
+                  svn_swig_py_log_entry_receiver,
+                  svn_swig_pl_thunk_log_entry_receiver,
+                  svn_swig_rb_log_entry_receiver)
 
 /* -----------------------------------------------------------------------
    Callback: svn_commit_callback_t
@@ -791,23 +764,38 @@ svn_ ## TYPE ## _swig_rb_closed(VALUE self)
    Callback: svn_commit_callback2_t
    svn_ra get_commit_editor2()
    svn_repos_get_commit_editor4()
+   svn_client_mkdir4() 
+   svn_client_delete4() 
+   svn_client_import4() 
+   svn_client_commit5() 
+   svn_client_copy6() 
+   svn_client_move6() 
+   svn_client_propset_remote() 
 */
 
+#ifdef SWIGPERL
+%typemap(in) (svn_commit_callback2_t commit_callback, void *commit_baton) {
+    $1 = svn_swig_pl_thunk_commit_callback2;
+    $2 = (void *)$input;
+    svn_swig_pl_hold_ref_in_pool (_global_pool, $input);
+};
+#endif
+
 #ifdef SWIGRUBY
-%typemap(in) (svn_commit_callback2_t callback, void *callback_baton)
+%typemap(in) (svn_commit_callback2_t commit_callback, void *commit_baton)
 {
   $1 = svn_swig_rb_commit_callback2;
   $2 = (void *)svn_swig_rb_make_baton($input, _global_svn_swig_rb_pool);
 };
 
-%typemap(argout) (svn_commit_callback2_t callback, void *callback_baton)
+%typemap(argout) (svn_commit_callback2_t commit_callback, void *commit_baton)
 {
   svn_swig_rb_set_baton($result, (VALUE)$2);
 };
 #endif
 
 #ifdef SWIGPYTHON
-%typemap(in) (svn_commit_callback2_t callback, void *callback_baton)
+%typemap(in) (svn_commit_callback2_t commit_callback, void *commit_baton)
 {
   $1 = svn_swig_py_commit_callback2;
   $2 = (void *)$input;
@@ -885,6 +873,39 @@ svn_ ## TYPE ## _swig_rb_closed(VALUE self)
 {
   $1 = svn_swig_rb_info_receiver;
   $2 = (void *)svn_swig_rb_make_baton($input, _global_svn_swig_rb_pool);
+}
+#endif
+
+/* -----------------------------------------------------------------------
+   Callback: svn_repos_freeze_func_t
+*/
+#ifdef SWIGPYTHON
+%typemap(in) (svn_repos_freeze_func_t freeze_func, void *freeze_baton)
+{
+  $1 = svn_swig_py_repos_freeze_func;
+  $2 = (void *)$input;
+}
+#endif
+
+/* -----------------------------------------------------------------------
+   Callback: svn_fs_freeze_func_t
+*/
+#ifdef SWIGPYTHON
+%typemap(in) (svn_fs_freeze_func_t freeze_func, void *freeze_baton)
+{
+  $1 = svn_swig_py_fs_freeze_func;
+  $2 = (void *)$input;
+}
+#endif
+
+/* -----------------------------------------------------------------------
+   Callback: svn_proplist_receiver2_t
+*/
+#ifdef SWIGPYTHON
+%typemap(in) (svn_proplist_receiver2_t receiver, void *receiver_baton)
+{
+  $1 = svn_swig_py_proplist_receiver2;
+  $2 = (void *)$input;
 }
 #endif
 
@@ -1158,53 +1179,7 @@ svn_ ## TYPE ## _swig_rb_closed(VALUE self)
 */
 #ifdef SWIGPERL
 %typemap(in) svn_opt_revision_t * (svn_opt_revision_t rev) {
-    $1 = &rev;
-    if ($input == NULL || $input == &PL_sv_undef || !SvOK($input)) {
-        rev.kind = svn_opt_revision_unspecified;
-    }
-    else if (sv_isobject($input) && sv_derived_from($input, "_p_svn_opt_revision_t")) {
-        SWIG_ConvertPtr($input, (void **)&$1, $1_descriptor, 0);
-    }
-    else if (looks_like_number($input)) {
-        rev.kind = svn_opt_revision_number;
-        rev.value.number = SvIV($input);
-    }
-    else if (SvPOK($input)) {
-        char *input = SvPV_nolen($input);
-        if (svn_cstring_casecmp(input, "BASE") == 0)
-            rev.kind = svn_opt_revision_base;
-        else if (svn_cstring_casecmp(input, "HEAD") == 0)
-            rev.kind = svn_opt_revision_head;
-        else if (svn_cstring_casecmp(input, "WORKING") == 0)
-            rev.kind = svn_opt_revision_working;
-        else if (svn_cstring_casecmp(input, "COMMITTED") == 0)
-            rev.kind = svn_opt_revision_committed;
-        else if (svn_cstring_casecmp(input, "PREV") == 0)
-            rev.kind = svn_opt_revision_previous;
-        else if (*input == '{') {
-            svn_boolean_t matched;
-            apr_time_t tm;
-            svn_error_t *err;
-
-            char *end = strchr(input,'}');
-            if (!end)
-                SWIG_croak("unknown opt_revision_t type");
-            *end = '\0';
-            err = svn_parse_date (&matched, &tm, input + 1, apr_time_now(),
-                                  svn_swig_pl_make_pool ((SV *)NULL));
-            if (err) {
-                svn_error_clear (err);
-                SWIG_croak("unknown opt_revision_t type");
-            }
-            if (!matched)
-                SWIG_croak("unknown opt_revision_t type");
-
-            rev.kind = svn_opt_revision_date;
-            rev.value.date = tm;
-        } else
-            SWIG_croak("unknown opt_revision_t type");
-    } else
-        SWIG_croak("unknown opt_revision_t type");
+  $1 = svn_swig_pl_set_revision(&rev, $input, TRUE);
 }
 #endif
 

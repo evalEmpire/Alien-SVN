@@ -28,6 +28,7 @@
 #include <apr_tables.h>
 #include <stdlib.h>       /* for qsort()   */
 #include <assert.h>
+#include "svn_hash.h"
 #include "svn_path.h"
 #include "svn_sorts.h"
 #include "svn_error.h"
@@ -257,23 +258,52 @@ svn_sort__array_delete(apr_array_header_t *arr,
       && elements_to_delete > 0
       && (elements_to_delete + delete_index) <= arr->nelts)
     {
-      if (delete_index == (arr->nelts - 1))
+      /* If we are not deleting a block of elements that extends to the end
+         of the array, then we need to move the remaining elements to keep
+         the array contiguous. */
+      if ((elements_to_delete + delete_index) < arr->nelts)
+        memmove(
+          arr->elts + arr->elt_size * delete_index,
+          arr->elts + (arr->elt_size * (delete_index + elements_to_delete)),
+          arr->elt_size * (arr->nelts - elements_to_delete - delete_index));
+
+      /* Delete the last ELEMENTS_TO_DELETE elements. */
+      arr->nelts -= elements_to_delete;
+    }
+}
+
+void
+svn_sort__array_reverse(apr_array_header_t *array,
+                        apr_pool_t *scratch_pool)
+{
+  int i;
+
+  if (array->elt_size == sizeof(void *))
+    {
+      for (i = 0; i < array->nelts / 2; i++)
         {
-          /* Deleting the last or only element in an array is easy. */
-          apr_array_pop(arr);
+          int swap_index = array->nelts - i - 1;
+          void *tmp = APR_ARRAY_IDX(array, i, void *);
+
+          APR_ARRAY_IDX(array, i, void *) =
+            APR_ARRAY_IDX(array, swap_index, void *);
+          APR_ARRAY_IDX(array, swap_index, void *) = tmp;
         }
-      else if ((delete_index + elements_to_delete) == arr->nelts)
+    }
+  else
+    {
+      apr_size_t sz = array->elt_size;
+      char *tmp = apr_palloc(scratch_pool, sz);
+
+      for (i = 0; i < array->nelts / 2; i++)
         {
-          /* Delete the last ELEMENTS_TO_DELETE elements. */
-          arr->nelts -= elements_to_delete;
-        }
-      else
-        {
-          memmove(
-            arr->elts + arr->elt_size * delete_index,
-            arr->elts + (arr->elt_size * (delete_index + elements_to_delete)),
-            arr->elt_size * (arr->nelts - elements_to_delete - delete_index));
-          arr->nelts -= elements_to_delete;
+          int swap_index = array->nelts - i - 1;
+          char *x = array->elts + (sz * i);
+          char *y = array->elts + (sz * swap_index);
+
+          memcpy(tmp, x, sz);
+          memcpy(x, y, sz);
+          memcpy(y, tmp, sz);
         }
     }
 }

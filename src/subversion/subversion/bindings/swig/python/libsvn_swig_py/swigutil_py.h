@@ -215,6 +215,13 @@ apr_array_header_t *svn_swig_py_proparray_from_dict(PyObject *dict,
 SVN_SWIG_SWIGUTIL_EXPORT
 PyObject *svn_swig_py_proparray_to_dict(const apr_array_header_t *array);
 
+/* helper function to convert a 'apr_array_header_t *' of
+   'svn_prop_inherited_item_t' to a Python dictionary mapping strings
+   to dictionary. */
+SVN_SWIG_SWIGUTIL_EXPORT
+PyObject *
+svn_swig_py_propinheriteditemarray_to_dict(const apr_array_header_t *array);
+
 /* helper function to convert a Python dictionary mapping strings to
    strings into an apr_hash_t mapping const char *'s to svn_string_t's,
    allocated in POOL. */
@@ -298,6 +305,15 @@ apr_file_t *svn_swig_py_make_file(PyObject *py_file,
 SVN_SWIG_SWIGUTIL_EXPORT
 svn_stream_t *svn_swig_py_make_stream(PyObject *py_io,
                                       apr_pool_t *pool);
+
+/* Convert ops, a C array of num_ops elements, to a Python list of SWIG
+   objects with descriptor op_type_info and pool set to parent_pool. */
+SVN_SWIG_SWIGUTIL_EXPORT
+PyObject *
+svn_swig_py_convert_txdelta_op_c_array(int num_ops,
+                                       svn_txdelta_op_t *ops,
+                                       swig_type_info * op_type_info,
+                                       PyObject *parent_pool);
 
 /* a notify function that executes a Python function that is passed in
    via the baton argument */
@@ -390,6 +406,24 @@ svn_error_t *svn_swig_py_log_entry_receiver(void *baton,
                                             svn_log_entry_t *log_entry,
                                             apr_pool_t *pool);
 
+/* thunked repos freeze function */
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_error_t *svn_swig_py_repos_freeze_func(void *baton,
+                                           apr_pool_t *pool);
+
+/* thunked fs freeze function */
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_error_t *svn_swig_py_fs_freeze_func(void *baton,
+                                        apr_pool_t *pool);
+
+/* thunked proplist receiver2 function */
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_error_t *svn_swig_py_proplist_receiver2(void *baton,
+                                            const char *path,
+                                            apr_hash_t *prop_hash,
+                                            apr_array_header_t *inherited_props,
+                                            apr_pool_t *pool);
+
 /* thunked info receiver function */
 SVN_SWIG_SWIGUTIL_EXPORT
 svn_error_t *svn_swig_py_info_receiver_func(void *py_receiver,
@@ -422,6 +456,13 @@ svn_error_t *svn_swig_py_changelist_receiver_func(void *baton,
                                                   apr_pool_t *pool);
 
 /* auth provider callbacks */
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_error_t * svn_swig_py_auth_gnome_keyring_unlock_prompt_func(
+        char **keyring_passwd,
+        const char *keyring_name,
+        void *baton,
+        apr_pool_t *pool);
+
 SVN_SWIG_SWIGUTIL_EXPORT
 svn_error_t *svn_swig_py_auth_simple_prompt_func(
     svn_auth_cred_simple_t **cred,
@@ -464,6 +505,15 @@ svn_error_t *svn_swig_py_auth_ssl_client_cert_pw_prompt_func(
     const char *realm,
     svn_boolean_t may_save,
     apr_pool_t *pool);
+
+/* auth cleanup callback */
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_error_t *svn_swig_py_config_auth_walk_func(svn_boolean_t *delete_cred,
+                                               void *walk_baton,
+                                               const char *cred_kind,
+                                               const char *realmstring,
+                                               apr_hash_t *hash,
+                                               apr_pool_t *scratch_pool);
 
 SVN_SWIG_SWIGUTIL_EXPORT
 void
@@ -513,16 +563,18 @@ svn_error_t *svn_swig_py_ra_lock_callback(
 SVN_SWIG_SWIGUTIL_EXPORT
 extern const svn_ra_reporter2_t swig_py_ra_reporter2;
 
-/* Get a list of ops from a window. Used to replace the naive
-   svn_txdelta_window_t.ops accessor. op_type_info is supposed to be
-   the SWIG descriptor of "svn_txdelta_op_t *". window_pool is supposed
-   to be the pool associated with the window proxy and used for wrapping
-   the op objects. */
 SVN_SWIG_SWIGUTIL_EXPORT
-PyObject *
-svn_swig_py_txdelta_window_t_ops_get(svn_txdelta_window_t *window,
-                                     swig_type_info * op_type_info,
-                                     PyObject *window_pool);
+svn_boolean_t
+svn_swig_py_config_enumerator2(const char *name,
+                               const char *value,
+                               void *baton,
+                               apr_pool_t *pool);
+
+SVN_SWIG_SWIGUTIL_EXPORT
+svn_boolean_t
+svn_swig_py_config_section_enumerator2(const char *name,
+                                       void *baton,
+                                       apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

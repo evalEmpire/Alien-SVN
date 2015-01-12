@@ -39,7 +39,7 @@
 #include "svn_io.h"
 #include "svn_error.h"
 #include "svn_string.h"   /* This includes <apr_*.h> */
-
+#include "private/svn_string_private.h"
 
 /* A quick way to create error messages.  */
 static svn_error_t *
@@ -419,7 +419,7 @@ test15(apr_pool_t *pool)
 static svn_error_t *
 test16(apr_pool_t *pool)
 {
-  a = svn_stringbuf_create("", pool);
+  a = svn_stringbuf_create_empty(pool);
 
   return test_find_char_backward(a->data, a->len, ',', 0, pool);
 }
@@ -479,7 +479,7 @@ test21(apr_pool_t *pool)
 
   svn_stringbuf_strip_whitespace(a);
 
-  if (svn_stringbuf_compare(a, b) == TRUE)
+  if (svn_stringbuf_compare(a, b))
     return SVN_NO_ERROR;
   else
     return fail(pool, "test failed");
@@ -509,6 +509,206 @@ static svn_error_t *
 test23(apr_pool_t *pool)
 {
   return test_stringbuf_unequal("abc", "abb", pool);
+}
+
+static svn_error_t *
+test24(apr_pool_t *pool)
+{
+  char buffer[SVN_INT64_BUFFER_SIZE];
+  apr_size_t length;
+
+  length = svn__i64toa(buffer, 0);
+  SVN_TEST_ASSERT(length == 1);
+  SVN_TEST_STRING_ASSERT(buffer, "0");
+
+  length = svn__i64toa(buffer, 0x8000000000000000ll);
+  SVN_TEST_ASSERT(length == 20);
+  SVN_TEST_STRING_ASSERT(buffer, "-9223372036854775808");
+
+  length = svn__i64toa(buffer, 0x7fffffffffffffffll);
+  SVN_TEST_ASSERT(length == 19);
+  SVN_TEST_STRING_ASSERT(buffer, "9223372036854775807");
+
+  length = svn__ui64toa(buffer, 0ull);
+  SVN_TEST_ASSERT(length == 1);
+  SVN_TEST_STRING_ASSERT(buffer, "0");
+
+  length = svn__ui64toa(buffer, 0xffffffffffffffffull);
+  SVN_TEST_ASSERT(length == 20);
+  SVN_TEST_STRING_ASSERT(buffer, "18446744073709551615");
+
+  return test_stringbuf_unequal("abc", "abb", pool);
+}
+
+static svn_error_t *
+expect_stringbuf_equal(const svn_stringbuf_t* str1,
+                       const char* str2,
+                       apr_pool_t *pool)
+{
+  if (svn_stringbuf_compare(str1, svn_stringbuf_create(str2, pool)))
+    return SVN_NO_ERROR;
+  else
+    return fail(pool, "test failed");
+}
+
+static svn_error_t *
+test_stringbuf_insert(apr_pool_t *pool)
+{
+  a = svn_stringbuf_create("st , ", pool);
+
+  svn_stringbuf_insert(a, 0, "teflon", 2);
+  SVN_TEST_STRING_ASSERT(a->data, "test , ");
+
+  svn_stringbuf_insert(a, 5, "hllo", 4);
+  SVN_TEST_STRING_ASSERT(a->data, "test hllo, ");
+
+  svn_stringbuf_insert(a, 6, a->data + 1, 1);
+  SVN_TEST_STRING_ASSERT(a->data, "test hello, ");
+
+  svn_stringbuf_insert(a, 12, "world class", 5);
+  SVN_TEST_STRING_ASSERT(a->data, "test hello, world");
+
+  svn_stringbuf_insert(a, 1200, "!", 1);
+  return expect_stringbuf_equal(a, "test hello, world!", pool);
+}
+
+static svn_error_t *
+test_stringbuf_remove(apr_pool_t *pool)
+{
+  a = svn_stringbuf_create("test hello, world!", pool);
+
+  svn_stringbuf_remove(a, 0, 2);
+  SVN_TEST_STRING_ASSERT(a->data, "st hello, world!");
+
+  svn_stringbuf_remove(a, 2, 2);
+  SVN_TEST_STRING_ASSERT(a->data, "stello, world!");
+
+  svn_stringbuf_remove(a, 5, 200);
+  SVN_TEST_STRING_ASSERT(a->data, "stell");
+
+  svn_stringbuf_remove(a, 1200, 393);
+  return expect_stringbuf_equal(a, "stell", pool);
+}
+
+static svn_error_t *
+test_stringbuf_replace(apr_pool_t *pool)
+{
+  a = svn_stringbuf_create("odd with some world?", pool);
+
+  svn_stringbuf_replace(a, 0, 3, "tester", 4);
+  SVN_TEST_STRING_ASSERT(a->data, "test with some world?");
+
+  svn_stringbuf_replace(a, 5, 10, "hllo, coder", 6);
+  SVN_TEST_STRING_ASSERT(a->data, "test hllo, world?");
+
+  svn_stringbuf_replace(a, 6, 0, a->data + 1, 1);
+  SVN_TEST_STRING_ASSERT(a->data, "test hello, world?");
+
+  svn_stringbuf_replace(a, 17, 10, "!", 1);
+  SVN_TEST_STRING_ASSERT(a->data, "test hello, world!");
+
+  svn_stringbuf_replace(a, 1200, 199, "!!", 2);
+
+  return expect_stringbuf_equal(a, "test hello, world!!!", pool);
+}
+
+static svn_error_t *
+test_string_similarity(apr_pool_t *pool)
+{
+  const struct sim_score_test_t
+  {
+    const char *stra;
+    const char *strb;
+    apr_size_t lcs;
+    int score;
+  } tests[] =
+      {
+#define SCORE(lcs, len) ((2000 * (lcs) + (len)/2) / (len))
+
+        /* Equality */
+        {"",       "",          0, 1000},
+        {"quoth",  "quoth",     5, SCORE(5, 5+5)},
+
+        /* Deletion at start */
+        {"quoth",  "uoth",      4, SCORE(4, 5+4)},
+        {"uoth",   "quoth",     4, SCORE(4, 4+5)},
+
+        /* Deletion at end */
+        {"quoth",  "quot",      4, SCORE(4, 5+4)},
+        {"quot",   "quoth",     4, SCORE(4, 4+5)},
+
+        /* Insertion at start */
+        {"quoth",  "Xquoth",    5, SCORE(5, 5+6)},
+        {"Xquoth", "quoth",     5, SCORE(5, 6+5)},
+
+        /* Insertion at end */
+        {"quoth",  "quothX",    5, SCORE(5, 5+6)},
+        {"quothX", "quoth",     5, SCORE(5, 6+5)},
+
+        /* Insertion in middle */
+        {"quoth",  "quoXth",    5, SCORE(5, 5+6)},
+        {"quoXth", "quoth",     5, SCORE(5, 6+5)},
+
+        /* Transposition at start */
+        {"quoth",  "uqoth",     4, SCORE(4, 5+5)},
+        {"uqoth",  "quoth",     4, SCORE(4, 5+5)},
+
+        /* Transposition at end */
+        {"quoth",  "quoht",     4, SCORE(4, 5+5)},
+        {"quoht",  "quoth",     4, SCORE(4, 5+5)},
+
+        /* Transposition in middle */
+        {"quoth",  "qutoh",     4, SCORE(4, 5+5)},
+        {"qutoh",  "quoth",     4, SCORE(4, 5+5)},
+
+        /* Difference */
+        {"quoth",  "raven",     0, SCORE(0, 5+5)},
+        {"raven",  "quoth",     0, SCORE(0, 5+5)},
+        {"x",      "",          0, SCORE(0, 1+0)},
+        {"",       "x",         0, SCORE(0, 0+1)},
+        {"",       "quoth",     0, SCORE(0, 0+5)},
+        {"quoth",  "",          0, SCORE(0, 5+0)},
+        {"quoth",  "the raven", 2, SCORE(2, 5+9)},
+        {"the raven",  "quoth", 2, SCORE(2, 5+9)},
+        {NULL, NULL}
+      };
+
+  const struct sim_score_test_t *t;
+  svn_membuf_t buffer;
+
+  svn_membuf__create(&buffer, 0, pool);
+  for (t = tests; t->stra; ++t)
+    {
+      apr_size_t lcs;
+      const unsigned int score =
+        svn_cstring__similarity(t->stra, t->strb, &buffer, &lcs);
+      /*
+      fprintf(stderr,
+              "lcs %s ~ %s score %.3f (%"APR_SIZE_T_FMT
+              ") expected %.3f (%"APR_SIZE_T_FMT"))\n",
+              t->stra, t->strb, score/1000.0, lcs, t->score/1000.0, t->lcs);
+      */
+      if (score != t->score)
+        return fail(pool, "%s ~ %s score %.3f <> expected %.3f",
+                    t->stra, t->strb, score/1000.0, t->score/1000.0);
+
+      if (lcs != t->lcs)
+        return fail(pool,
+                    "%s ~ %s lcs %"APR_SIZE_T_FMT
+                    " <> expected %"APR_SIZE_T_FMT,
+                    t->stra, t->strb, lcs, t->lcs);
+    }
+
+  /* Test partial similarity */
+  {
+    const svn_string_t foo = {"svn:foo", 4};
+    const svn_string_t bar = {"svn:bar", 4};
+    if (1000 != svn_string__similarity(&foo, &bar, &buffer, NULL))
+      return fail(pool, "'%s'[:4] ~ '%s'[:4] found different",
+                  foo.data, bar.data);
+  }
+
+  return SVN_NO_ERROR;
 }
 
 /*
@@ -568,5 +768,15 @@ struct svn_test_descriptor_t test_funcs[] =
                    "compare stringbufs; different lengths"),
     SVN_TEST_PASS2(test23,
                    "compare stringbufs; same length, different content"),
+    SVN_TEST_PASS2(test24,
+                   "verify i64toa"),
+    SVN_TEST_PASS2(test_stringbuf_insert,
+                   "check inserting into svn_stringbuf_t"),
+    SVN_TEST_PASS2(test_stringbuf_remove,
+                   "check deletion from svn_stringbuf_t"),
+    SVN_TEST_PASS2(test_stringbuf_replace,
+                   "check replacement in svn_stringbuf_t"),
+    SVN_TEST_PASS2(test_string_similarity,
+                   "test string similarity scores"),
     SVN_TEST_NULL
   };

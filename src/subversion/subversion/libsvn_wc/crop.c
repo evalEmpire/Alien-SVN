@@ -31,23 +31,9 @@
 #include "svn_path.h"
 
 #include "wc.h"
+#include "workqueue.h"
 
 #include "svn_private_config.h"
-
-/* Evaluate EXPR.  If it returns an error, return that error, unless
-   the error's code is SVN_ERR_WC_LEFT_LOCAL_MOD, in which case clear
-   the error and do not return. */
-#define IGNORE_LOCAL_MOD(expr)                                   \
-  do {                                                           \
-    svn_error_t *__temp = (expr);                                \
-    if (__temp)                                                  \
-      {                                                          \
-        if (__temp->apr_err == SVN_ERR_WC_LEFT_LOCAL_MOD)        \
-          svn_error_clear(__temp);                               \
-        else                                                     \
-          return svn_error_trace(__temp);                       \
-      }                                                          \
-  } while (0)
 
 /* Helper function that crops the children of the LOCAL_ABSPATH, under the
  * constraint of NEW_DEPTH. The DIR_PATH itself will never be cropped. The
@@ -98,7 +84,7 @@ crop_children(svn_wc__db_t *db,
       const char *child_name = APR_ARRAY_IDX(children, i, const char *);
       const char *child_abspath;
       svn_wc__db_status_t child_status;
-      svn_wc__db_kind_t kind;
+      svn_node_kind_t kind;
       svn_depth_t child_depth;
 
       svn_pool_clear(iterpool);
@@ -117,50 +103,50 @@ crop_children(svn_wc__db_t *db,
           child_status == svn_wc__db_status_excluded ||
           child_status == svn_wc__db_status_not_present)
         {
-          svn_depth_t remove_below = (kind == svn_wc__db_kind_dir)
+          svn_depth_t remove_below = (kind == svn_node_dir)
                                             ? svn_depth_immediates
                                             : svn_depth_files;
           if (new_depth < remove_below)
-            SVN_ERR(svn_wc__db_op_remove_node(db, local_abspath,
-                                              SVN_INVALID_REVNUM,
-                                              svn_wc__db_kind_unknown,
-                                              iterpool));
+            SVN_ERR(svn_wc__db_base_remove(db, child_abspath,
+                                           FALSE /* keep_as_working */,
+                                           FALSE /* queue_deletes */,
+                                           FALSE /* remove_locks */,
+                                           SVN_INVALID_REVNUM,
+                                           NULL, NULL, iterpool));
 
           continue;
         }
-      else if (kind == svn_wc__db_kind_file)
+      else if (kind == svn_node_file)
         {
-          /* We currently crop on a directory basis. So don't worry about
-             svn_depth_exclude here. And even we permit excluding a single
-             file in the future, svn_wc_remove_from_revision_control() can
-             also handle it. We only need to skip the notification in that
-             case. */
           if (new_depth == svn_depth_empty)
-            IGNORE_LOCAL_MOD(
-              svn_wc__internal_remove_from_revision_control(
-                                                   db,
-                                                   child_abspath,
-                                                   TRUE, /* destroy */
-                                                   FALSE, /* instant error */
-                                                   cancel_func, cancel_baton,
-                                                   iterpool));
+            SVN_ERR(svn_wc__db_op_remove_node(NULL,
+                                              db, child_abspath,
+                                              TRUE /* destroy */,
+                                              FALSE /* destroy_changes */,
+                                              SVN_INVALID_REVNUM,
+                                              svn_wc__db_status_not_present,
+                                              svn_node_none,
+                                              NULL, NULL,
+                                              cancel_func, cancel_baton,
+                                              iterpool));
           else
             continue;
 
         }
-      else if (kind == svn_wc__db_kind_dir)
+      else if (kind == svn_node_dir)
         {
           if (new_depth < svn_depth_immediates)
             {
-              IGNORE_LOCAL_MOD(
-                svn_wc__internal_remove_from_revision_control(
-                                                     db,
-                                                     child_abspath,
-                                                     TRUE, /* destroy */
-                                                     FALSE, /* instant error */
-                                                     cancel_func,
-                                                     cancel_baton,
-                                                     iterpool));
+              SVN_ERR(svn_wc__db_op_remove_node(NULL,
+                                                db, child_abspath,
+                                                TRUE /* destroy */,
+                                                FALSE /* destroy_changes */,
+                                                SVN_INVALID_REVNUM,
+                                                svn_wc__db_status_not_present,
+                                                svn_node_none,
+                                                NULL, NULL,
+                                                cancel_func, cancel_baton,
+                                                iterpool));
             }
           else
             {
@@ -209,12 +195,12 @@ svn_wc_exclude(svn_wc_context_t *wc_ctx,
 {
   svn_boolean_t is_root, is_switched;
   svn_wc__db_status_t status;
-  svn_wc__db_kind_t kind;
+  svn_node_kind_t kind;
   svn_revnum_t revision;
   const char *repos_relpath, *repos_root, *repos_uuid;
 
-  SVN_ERR(svn_wc__check_wc_root(&is_root, NULL, &is_switched,
-                                wc_ctx->db, local_abspath, scratch_pool));
+  SVN_ERR(svn_wc__db_is_switched(&is_root, &is_switched, NULL,
+                                 wc_ctx->db, local_abspath, scratch_pool));
 
   if (is_root)
     {
@@ -272,27 +258,21 @@ svn_wc_exclude(svn_wc_context_t *wc_ctx,
         break; /* Ok to exclude */
     }
 
-  /* ### This could use some kind of transaction */
-
   /* Remove all working copy data below local_abspath */
-  IGNORE_LOCAL_MOD(svn_wc__internal_remove_from_revision_control(
-                                    wc_ctx->db,
-                                    local_abspath,
-                                    TRUE,
-                                    FALSE,
+  SVN_ERR(svn_wc__db_op_remove_node(NULL,
+                                    wc_ctx->db, local_abspath,
+                                    TRUE /* destroy */,
+                                    FALSE /* destroy_changes */,
+                                    revision,
+                                    svn_wc__db_status_excluded,
+                                    kind,
+                                    NULL, NULL,
                                     cancel_func, cancel_baton,
                                     scratch_pool));
 
-  SVN_ERR(svn_wc__db_base_add_excluded_node(wc_ctx->db,
-                                            local_abspath,
-                                            repos_relpath,
-                                            repos_root,
-                                            repos_uuid,
-                                            revision,
-                                            kind,
-                                            svn_wc__db_status_excluded,
-                                            NULL, NULL,
-                                            scratch_pool));
+  SVN_ERR(svn_wc__wq_run(wc_ctx->db, local_abspath,
+                         cancel_func, cancel_baton,
+                         scratch_pool));
 
   if (notify_func)
     {
@@ -318,7 +298,7 @@ svn_wc_crop_tree2(svn_wc_context_t *wc_ctx,
 {
   svn_wc__db_t *db = wc_ctx->db;
   svn_wc__db_status_t status;
-  svn_wc__db_kind_t kind;
+  svn_node_kind_t kind;
   svn_depth_t dir_depth;
 
   /* Only makes sense when the depth is restrictive. */
@@ -335,7 +315,7 @@ svn_wc_crop_tree2(svn_wc_context_t *wc_ctx,
                                db, local_abspath,
                                scratch_pool, scratch_pool));
 
-  if (kind != svn_wc__db_kind_dir)
+  if (kind != svn_node_dir)
     return svn_error_create(SVN_ERR_UNSUPPORTED_FEATURE, NULL,
       _("Can only crop directories"));
 
@@ -372,7 +352,11 @@ svn_wc_crop_tree2(svn_wc_context_t *wc_ctx,
         SVN_ERR_MALFUNCTION();
     }
 
-  return crop_children(db, local_abspath, dir_depth, depth,
-                       notify_func, notify_baton,
-                       cancel_func, cancel_baton, scratch_pool);
+  SVN_ERR(crop_children(db, local_abspath, dir_depth, depth,
+                        notify_func, notify_baton,
+                        cancel_func, cancel_baton, scratch_pool));
+
+  return svn_error_trace(svn_wc__wq_run(db, local_abspath,
+                                        cancel_func, cancel_baton,
+                                        scratch_pool));
 }

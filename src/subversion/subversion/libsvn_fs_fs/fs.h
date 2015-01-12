@@ -25,7 +25,6 @@
 
 #include <apr_pools.h>
 #include <apr_hash.h>
-#include <apr_thread_mutex.h>
 #include <apr_network_io.h>
 
 #include "svn_fs.h"
@@ -34,6 +33,8 @@
 #include "private/svn_cache.h"
 #include "private/svn_fs_private.h"
 #include "private/svn_sqlite.h"
+#include "private/svn_mutex.h"
+#include "private/svn_named_atomic.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,6 +61,12 @@ extern "C" {
 #define PATH_LOCKS_DIR        "locks"            /* Directory of locks */
 #define PATH_MIN_UNPACKED_REV "min-unpacked-rev" /* Oldest revision which
                                                     has not been packed. */
+#define PATH_REVPROP_GENERATION "revprop-generation"
+                                                 /* Current revprop generation*/
+#define PATH_MANIFEST         "manifest"         /* Manifest file name */
+#define PATH_PACKED           "pack"             /* Packed revision data file */
+#define PATH_EXT_PACKED_SHARD ".pack"            /* Extension for packed
+                                                    shards */
 /* If you change this, look at tests/svn_test_fs.c(maybe_install_fsfs_conf) */
 #define PATH_CONFIG           "fsfs.conf"        /* Configuration */
 
@@ -82,11 +89,19 @@ extern "C" {
 #define CONFIG_OPTION_FAIL_STOP          "fail-stop"
 #define CONFIG_SECTION_REP_SHARING       "rep-sharing"
 #define CONFIG_OPTION_ENABLE_REP_SHARING "enable-rep-sharing"
+#define CONFIG_SECTION_DELTIFICATION     "deltification"
+#define CONFIG_OPTION_ENABLE_DIR_DELTIFICATION   "enable-dir-deltification"
+#define CONFIG_OPTION_ENABLE_PROPS_DELTIFICATION "enable-props-deltification"
+#define CONFIG_OPTION_MAX_DELTIFICATION_WALK     "max-deltification-walk"
+#define CONFIG_OPTION_MAX_LINEAR_DELTIFICATION   "max-linear-deltification"
+#define CONFIG_SECTION_PACKED_REVPROPS   "packed-revprops"
+#define CONFIG_OPTION_REVPROP_PACK_SIZE  "revprop-pack-size"
+#define CONFIG_OPTION_COMPRESS_PACKED_REVPROPS  "compress-packed-revprops"
 
 /* The format number of this filesystem.
    This is independent of the repository format number, and
    independent of any other FS back ends. */
-#define SVN_FS_FS__FORMAT_NUMBER   4
+#define SVN_FS_FS__FORMAT_NUMBER   6
 
 /* The minimum format number that supports svndiff version 1.  */
 #define SVN_FS_FS__MIN_SVNDIFF1_FORMAT 2
@@ -118,12 +133,16 @@ extern "C" {
 /* The minimum format number that stores node kinds in changed-paths lists. */
 #define SVN_FS_FS__MIN_KIND_IN_CHANGED_FORMAT 4
 
+/* 1.8 deltification options should work with any FSFS repo but to avoid
+ * issues with very old servers, restrict those options to the 1.6+ format*/
+#define SVN_FS_FS__MIN_DELTIFICATION_FORMAT 4
+
 /* The 1.7-dev format, never released, that packed revprops into SQLite
    revprops.db . */
 #define SVN_FS_FS__PACKED_REVPROP_SQLITE_DEV_FORMAT 5
 
-/* The minimum format number that supports packed revprop shards. */
-#define SVN_FS_FS__MIN_PACKED_REVPROP_FORMAT SVN_FS_FS__PACKED_REVPROP_SQLITE_DEV_FORMAT
+/* The minimum format number that supports packed revprops. */
+#define SVN_FS_FS__MIN_PACKED_REVPROP_FORMAT 6
 
 /* The minimum format number that supports a configuration file (fsfs.conf) */
 #define SVN_FS_FS__MIN_CONFIG_FILE 4
@@ -161,6 +180,7 @@ typedef struct fs_fs_shared_txn_data_t
    per file.  On Windows apr implements the locking as per file handle
    locks, so we don't have to add our own mutex for just in-process
    synchronization. */
+/* Compare ../libsvn_subr/named_atomic.c:USE_THREAD_MUTEX */
 #if APR_HAS_THREADS && !defined(WIN32)
 #define SVN_FS_FS__USE_LOCK_MUTEX 1
 #else
@@ -182,26 +202,35 @@ typedef struct fs_fs_shared_data_t
      Access to this object is synchronised under TXN_LIST_LOCK. */
   fs_fs_shared_txn_data_t *free_txn;
 
-#if APR_HAS_THREADS
   /* A lock for intra-process synchronization when accessing the TXNS list. */
-  apr_thread_mutex_t *txn_list_lock;
-#endif
-#if SVN_FS_FS__USE_LOCK_MUTEX
+  svn_mutex__t *txn_list_lock;
+
   /* A lock for intra-process synchronization when grabbing the
      repository write lock. */
-  apr_thread_mutex_t *fs_write_lock;
+  svn_mutex__t *fs_write_lock;
 
   /* A lock for intra-process synchronization when locking the
      txn-current file. */
-  apr_thread_mutex_t *txn_current_lock;
-#endif
+  svn_mutex__t *txn_current_lock;
 
   /* The common pool, under which this object is allocated, subpools
      of which are used to allocate the transaction objects. */
   apr_pool_t *common_pool;
 } fs_fs_shared_data_t;
 
-/* Private (non-shared) FSFS-specific data for each svn_fs_t object. */
+/* Data structure for the 1st level DAG node cache. */
+typedef struct fs_fs_dag_cache_t fs_fs_dag_cache_t;
+
+/* Key type for all caches that use revision + offset / counter as key. */
+typedef struct pair_cache_key_t
+{
+  svn_revnum_t revision;
+
+  apr_int64_t second;
+} pair_cache_key_t;
+
+/* Private (non-shared) FSFS-specific data for each svn_fs_t object.
+   Any caches in here may be NULL. */
 typedef struct fs_fs_data_t
 {
   /* The format number of this FS. */
@@ -209,9 +238,6 @@ typedef struct fs_fs_data_t
   /* The maximum number of files to store per directory (for sharded
      layouts) or zero (for linear layouts). */
   int max_files_per_dir;
-
-  /* The uuid of this FS. */
-  const char *uuid;
 
   /* The revision that was youngest, last time we checked. */
   svn_revnum_t youngest_rev_cache;
@@ -227,16 +253,39 @@ typedef struct fs_fs_data_t
      (svn_fs_id_t *).  (Not threadsafe.) */
   svn_cache__t *rev_root_id_cache;
 
-  /* DAG node cache for immutable nodes */
+  /* Caches native dag_node_t* instances and acts as a 1st level cache */
+  fs_fs_dag_cache_t *dag_node_cache;
+
+  /* DAG node cache for immutable nodes.  Maps (revision, fspath)
+     to (dag_node_t *). This is the 2nd level cache for DAG nodes. */
   svn_cache__t *rev_node_cache;
 
   /* A cache of the contents of immutable directories; maps from
-     unparsed FS ID to ###x. */
+     unparsed FS ID to a apr_hash_t * mapping (const char *) dirent
+     names to (svn_fs_dirent_t *). */
   svn_cache__t *dir_cache;
 
   /* Fulltext cache; currently only used with memcached.  Maps from
-     rep key to svn_string_t. */
+     rep key (revision/offset) to svn_stringbuf_t. */
   svn_cache__t *fulltext_cache;
+
+  /* Access object to the atomics namespace used by revprop caching.
+     Will be NULL until the first access. */
+  svn_atomic_namespace__t *revprop_namespace;
+
+  /* Access object to the revprop "generation". Will be NULL until
+     the first access. */
+  svn_named_atomic__t *revprop_generation;
+
+  /* Access object to the revprop update timeout. Will be NULL until
+     the first access. */
+  svn_named_atomic__t *revprop_timeout;
+
+  /* Revision property cache.  Maps from (rev,generation) to apr_hash_t. */
+  svn_cache__t *revprop_cache;
+
+  /* Node properties cache.  Maps from rep key to apr_hash_t. */
+  svn_cache__t *properties_cache;
 
   /* Pack manifest cache; a cache mapping (svn_revnum_t) shard number to
      a manifest; and a manifest is a mapping from (svn_revnum_t) revision
@@ -247,13 +296,33 @@ typedef struct fs_fs_data_t
   /* Cache for txdelta_window_t objects; the key is (revFilePath, offset) */
   svn_cache__t *txdelta_window_cache;
 
+  /* Cache for combined windows as svn_stringbuf_t objects;
+     the key is (revFilePath, offset) */
+  svn_cache__t *combined_window_cache;
+
   /* Cache for node_revision_t objects; the key is (revision, id offset) */
   svn_cache__t *node_revision_cache;
+
+  /* Cache for change lists as APR arrays of change_t * objects; the key
+     is the revision */
+  svn_cache__t *changes_cache;
+
+  /* Cache for svn_mergeinfo_t objects; the key is a combination of
+     revision, inheritance flags and path. */
+  svn_cache__t *mergeinfo_cache;
+
+  /* Cache for presence of svn_mergeinfo_t on a noderev; the key is a
+     combination of revision, inheritance flags and path; value is "1"
+     if the node has mergeinfo, "0" if it doesn't. */
+  svn_cache__t *mergeinfo_existence_cache;
+
+  /* TRUE while the we hold a lock on the write lock file. */
+  svn_boolean_t has_write_lock;
 
   /* If set, there are or have been more than one concurrent transaction */
   svn_boolean_t concurrent_transactions;
 
-  /* Tempoary cache for changed directories yet to be committed; maps from
+  /* Temporary cache for changed directories yet to be committed; maps from
      unparsed FS ID to ###x.  NULL outside transactions. */
   svn_cache__t *txn_dir_cache;
 
@@ -266,12 +335,37 @@ typedef struct fs_fs_data_t
   /* Thread-safe boolean */
   svn_atomic_t rep_cache_db_opened;
 
-  /* The oldest revision not in a pack file. */
+  /* The oldest revision not in a pack file.  It also applies to revprops
+   * if revprop packing has been enabled by the FSFS format version. */
   svn_revnum_t min_unpacked_rev;
 
   /* Whether rep-sharing is supported by the filesystem
    * and allowed by the configuration. */
   svn_boolean_t rep_sharing_allowed;
+
+  /* File size limit in bytes up to which multiple revprops shall be packed
+   * into a single file. */
+  apr_int64_t revprop_pack_size;
+
+  /* Whether packed revprop files shall be compressed. */
+  svn_boolean_t compress_packed_revprops;
+
+  /* Whether directory nodes shall be deltified just like file nodes. */
+  svn_boolean_t deltify_directories;
+
+  /* Whether nodes properties shall be deltified. */
+  svn_boolean_t deltify_properties;
+
+  /* Restart deltification histories after each multiple of this value */
+  apr_int64_t max_deltification_walk;
+
+  /* Maximum number of length of the linear part at the top of the
+   * deltification history after which skip deltas will be used. */
+  apr_int64_t max_linear_deltification;
+
+  /* Pointer to svn_fs_open. */
+  svn_error_t *(*svn_fs_open_)(svn_fs_t **, const char *, apr_hash_t *,
+                               apr_pool_t *);
 } fs_fs_data_t;
 
 

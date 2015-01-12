@@ -29,6 +29,7 @@ import java.io.InputStream;
 import java.io.File;
 
 import org.apache.subversion.javahl.callback.ReposNotifyCallback;
+import org.apache.subversion.javahl.callback.ReposFreezeAction;
 import org.apache.subversion.javahl.types.*;
 
 /**
@@ -130,7 +131,14 @@ public class SVNRepos implements ISVNRepos
      * @throws ClientException  throw in case of problem
      */
     public native void hotcopy(File path, File targetPath,
-                               boolean cleanLogs) throws ClientException;
+                               boolean cleanLogs, boolean incremental)
+            throws ClientException;
+
+    public void hotcopy(File path, File targetPath,
+                        boolean cleanLogs) throws ClientException
+    {
+        hotcopy(path, targetPath, cleanLogs, false);
+    }
 
     /**
      * list all logfiles (BDB) in use or not)
@@ -150,7 +158,19 @@ public class SVNRepos implements ISVNRepos
     public native void listUnusedDBLogs(File path, ISVNRepos.MessageReceiver receiver)
             throws ClientException;
 
+    public void load(File path, InputStream dataInput,
+                     boolean ignoreUUID, boolean forceUUID,
+                     boolean usePreCommitHook, boolean usePostCommitHook,
+                     String relativePath, ReposNotifyCallback callback)
+            throws ClientException
+    {
+        load(path, dataInput, Revision.START, Revision.HEAD,
+             ignoreUUID, forceUUID, usePreCommitHook, usePostCommitHook,
+             relativePath, callback);
+    }
+
     public native void load(File path, InputStream dataInput,
+                            Revision start, Revision end,
                             boolean ignoreUUID, boolean forceUUID,
                             boolean usePreCommitHook, boolean usePostCommitHook,
                             String relativePath, ReposNotifyCallback callback)
@@ -166,6 +186,9 @@ public class SVNRepos implements ISVNRepos
             throws ClientException;
 
     public native long recover(File path, ReposNotifyCallback callback)
+            throws ClientException;
+
+    public native void freeze(ReposFreezeAction action, File... paths)
             throws ClientException;
 
     /**

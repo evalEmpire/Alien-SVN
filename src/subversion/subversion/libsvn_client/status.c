@@ -87,8 +87,7 @@ tweak_status(void *baton,
      transmission.  */
   if (sb->changelist_hash
       && (! status->changelist
-          || ! apr_hash_get(sb->changelist_hash, status->changelist,
-                            APR_HASH_KEY_STRING)))
+          || ! svn_hash_gets(sb->changelist_hash, status->changelist)))
     {
       return SVN_NO_ERROR;
     }
@@ -189,9 +188,8 @@ reporter_finish_report(void *report_baton, apr_pool_t *pool)
 
   /* Open an RA session to our common ancestor and grab the locks under it.
    */
-  SVN_ERR(svn_client__open_ra_session_internal(&ras, NULL, rb->ancestor, NULL,
-                                               NULL, FALSE, TRUE,
-                                               rb->ctx, subpool));
+  SVN_ERR(svn_client_open_ra_session2(&ras, rb->ancestor, NULL,
+                                      rb->ctx, subpool, subpool));
 
   /* The locks need to live throughout the edit.  Note that if the
      server doesn't support lock discovery, we'll just not do locky
@@ -236,6 +234,92 @@ static svn_ra_reporter3_t lock_fetch_reporter = {
   reporter_abort_report
 };
 
+/* Perform status operations on each external in EXTERNAL_MAP, a const char *
+   local_abspath of all externals mapping to the const char* defining_abspath.
+   All other options are the same as those passed to svn_client_status().
+
+   If ANCHOR_ABSPATH and ANCHOR-RELPATH are not null, use them to provide
+   properly formatted relative paths */
+static svn_error_t *
+do_external_status(svn_client_ctx_t *ctx,
+                   apr_hash_t *external_map,
+                   svn_depth_t depth,
+                   svn_boolean_t get_all,
+                   svn_boolean_t update,
+                   svn_boolean_t no_ignore,
+                   const char *anchor_abspath,
+                   const char *anchor_relpath,
+                   svn_client_status_func_t status_func,
+                   void *status_baton,
+                   apr_pool_t *scratch_pool)
+{
+  apr_hash_index_t *hi;
+  apr_pool_t *iterpool = svn_pool_create(scratch_pool);
+
+  /* Loop over the hash of new values (we don't care about the old
+     ones).  This is a mapping of versioned directories to property
+     values. */
+  for (hi = apr_hash_first(scratch_pool, external_map);
+       hi;
+       hi = apr_hash_next(hi))
+    {
+      svn_node_kind_t external_kind;
+      const char *local_abspath = svn__apr_hash_index_key(hi);
+      const char *defining_abspath = svn__apr_hash_index_val(hi);
+      svn_node_kind_t kind;
+      svn_opt_revision_t opt_rev;
+      const char *status_path;
+
+      svn_pool_clear(iterpool);
+
+      /* Obtain information on the expected external. */
+      SVN_ERR(svn_wc__read_external_info(&external_kind, NULL, NULL, NULL,
+                                         &opt_rev.value.number,
+                                         ctx->wc_ctx, defining_abspath,
+                                         local_abspath, FALSE,
+                                         iterpool, iterpool));
+
+      if (external_kind != svn_node_dir)
+        continue;
+
+      SVN_ERR(svn_io_check_path(local_abspath, &kind, iterpool));
+      if (kind != svn_node_dir)
+        continue;
+
+      if (SVN_IS_VALID_REVNUM(opt_rev.value.number))
+        opt_rev.kind = svn_opt_revision_number;
+      else
+        opt_rev.kind = svn_opt_revision_unspecified;
+
+      /* Tell the client we're starting an external status set. */
+      if (ctx->notify_func2)
+        ctx->notify_func2(
+               ctx->notify_baton2,
+               svn_wc_create_notify(local_abspath,
+                                    svn_wc_notify_status_external,
+                                    iterpool), iterpool);
+
+      status_path = local_abspath;
+      if (anchor_abspath)
+        {
+          status_path = svn_dirent_join(anchor_relpath,
+                           svn_dirent_skip_ancestor(anchor_abspath,
+                                                    status_path),
+                           iterpool);
+        }
+
+      /* And then do the status. */
+      SVN_ERR(svn_client_status5(NULL, ctx, status_path, &opt_rev, depth,
+                                 get_all, update, no_ignore, FALSE, FALSE,
+                                 NULL, status_func, status_baton,
+                                 iterpool));
+    }
+
+  /* Destroy SUBPOOL and (implicitly) ITERPOOL. */
+  svn_pool_destroy(iterpool);
+
+  return SVN_NO_ERROR;
+}
 
 /*** Public Interface. ***/
 
@@ -281,45 +365,56 @@ svn_client_status5(svn_revnum_t *result_rev,
   sb.wc_ctx = ctx->wc_ctx;
 
   SVN_ERR(svn_dirent_get_absolute(&target_abspath, path, pool));
-  {
-    svn_node_kind_t kind;
 
-    SVN_ERR(svn_wc_read_kind(&kind, ctx->wc_ctx, target_abspath, FALSE, pool));
+  if (update)
+    {
+      /* The status editor only works on directories, so get the ancestor
+         if necessary */
 
-    /* Dir must be a working copy directory or the status editor fails */
-    if (kind == svn_node_dir)
-      {
-        dir_abspath = target_abspath;
-        target_basename = "";
-        dir = path;
-      }
-    else
-      {
-        dir_abspath = svn_dirent_dirname(target_abspath, pool);
-        target_basename = svn_dirent_basename(target_abspath, NULL);
-        dir = svn_dirent_dirname(path, pool);
+      svn_node_kind_t kind;
 
-        if (kind == svn_node_file)
-          {
-            if (depth == svn_depth_empty)
-              depth = svn_depth_files;
-          }
-        else
-          {
-            err = svn_wc_read_kind(&kind, ctx->wc_ctx, dir_abspath, FALSE,
-                                   pool);
+      SVN_ERR(svn_wc_read_kind2(&kind, ctx->wc_ctx, target_abspath,
+                                TRUE, FALSE, pool));
 
-            svn_error_clear(err);
+      /* Dir must be a working copy directory or the status editor fails */
+      if (kind == svn_node_dir)
+        {
+          dir_abspath = target_abspath;
+          target_basename = "";
+          dir = path;
+        }
+      else
+        {
+          dir_abspath = svn_dirent_dirname(target_abspath, pool);
+          target_basename = svn_dirent_basename(target_abspath, NULL);
+          dir = svn_dirent_dirname(path, pool);
 
-            if (err || kind != svn_node_dir)
-              {
-                return svn_error_createf(SVN_ERR_WC_NOT_WORKING_COPY, NULL,
-                                         _("'%s' is not a working copy"),
-                                         svn_dirent_local_style(path, pool));
-              }
-          }
-      }
-  }
+          if (kind == svn_node_file)
+            {
+              if (depth == svn_depth_empty)
+                depth = svn_depth_files;
+            }
+          else
+            {
+              err = svn_wc_read_kind2(&kind, ctx->wc_ctx, dir_abspath,
+                                      FALSE, FALSE, pool);
+
+              svn_error_clear(err);
+
+              if (err || kind != svn_node_dir)
+                {
+                  return svn_error_createf(SVN_ERR_WC_NOT_WORKING_COPY, NULL,
+                                           _("'%s' is not a working copy"),
+                                           svn_dirent_local_style(path, pool));
+                }
+            }
+        }
+    }
+  else
+    {
+      dir = path;
+      dir_abspath = target_abspath;
+    }
 
   if (svn_dirent_is_absolute(dir))
     {
@@ -361,14 +456,14 @@ svn_client_status5(svn_revnum_t *result_rev,
 
       /* Open a repository session to the URL. */
       SVN_ERR(svn_client__open_ra_session_internal(&ra_session, NULL, URL,
-                                                   dir_abspath,
-                                                   NULL, FALSE, TRUE,
-                                                   ctx, pool));
+                                                   dir_abspath, NULL,
+                                                   FALSE, TRUE,
+                                                   ctx, pool, pool));
 
       SVN_ERR(svn_ra_has_capability(ra_session, &server_supports_depth,
                                     SVN_RA_CAPABILITY_DEPTH, pool));
 
-      SVN_ERR(svn_wc_get_status_editor5(&editor, &edit_baton, &set_locks_baton,
+      SVN_ERR(svn_wc__get_status_editor(&editor, &edit_baton, &set_locks_baton,
                                     &edit_revision, ctx->wc_ctx,
                                     dir_abspath, target_basename,
                                     depth, get_all,
@@ -390,7 +485,7 @@ svn_client_status5(svn_revnum_t *result_rev,
           svn_boolean_t added;
 
           /* Our status target does not exist in HEAD.  If we've got
-             it localled added, that's okay.  But if it was previously
+             it locally added, that's okay.  But if it was previously
              versioned, then it must have since been deleted from the
              repository.  (Note that "locally replaced" doesn't count
              as "added" in this case.)  */
@@ -516,11 +611,11 @@ svn_client_status5(svn_revnum_t *result_rev,
                                               pool, pool));
 
 
-      SVN_ERR(svn_client__do_external_status(ctx, external_map,
-                                             depth, get_all,
-                                             update, no_ignore,
-                                             sb.anchor_abspath, sb.anchor_relpath,
-                                             status_func, status_baton, pool));
+      SVN_ERR(do_external_status(ctx, external_map,
+                                 depth, get_all,
+                                 update, no_ignore,
+                                 sb.anchor_abspath, sb.anchor_relpath,
+                                 status_func, status_baton, pool));
     }
 
   return SVN_NO_ERROR;
@@ -569,6 +664,13 @@ svn_client_status_dup(const svn_client_status_t *status,
                                                              result_pool);
     }
 
+  if (status->moved_from_abspath)
+    st->moved_from_abspath =
+      apr_pstrdup(result_pool, status->moved_from_abspath);
+
+  if (status->moved_to_abspath)
+    st->moved_to_abspath = apr_pstrdup(result_pool, status->moved_to_abspath);
+
   return st;
 }
 
@@ -608,27 +710,11 @@ svn_client__create_status(svn_client_status_t **cst,
   (*cst)->repos_relpath = status->repos_relpath;
 
   (*cst)->switched = status->switched;
-  (*cst)->file_external = FALSE;
 
-  if (/* Old style file-externals */
-      (status->versioned
-       && status->switched
-       && status->kind == svn_node_file))
+  (*cst)->file_external = status->file_external;
+  if (status->file_external)
     {
-      svn_node_kind_t external_kind;
-
-      SVN_ERR(svn_wc__read_external_info(&external_kind, NULL, NULL, NULL,
-                                         NULL, wc_ctx,
-                                         local_abspath /* wri_abspath */,
-                                         local_abspath, TRUE,
-                                         scratch_pool, scratch_pool));
-
-      if (external_kind == svn_node_file)
-        {
-          (*cst)->file_external = TRUE;
-          (*cst)->switched = FALSE;
-          (*cst)->node_status = (*cst)->text_status;
-        }
+      (*cst)->switched = FALSE;
     }
 
   (*cst)->lock = status->lock;
@@ -672,6 +758,9 @@ svn_client__create_status(svn_client_status_t **cst,
       if (text_conflicted || prop_conflicted)
         (*cst)->node_status = svn_wc_status_conflicted;
     }
+
+  (*cst)->moved_from_abspath = status->moved_from_abspath;
+  (*cst)->moved_to_abspath = status->moved_to_abspath;
 
   return SVN_NO_ERROR;
 }

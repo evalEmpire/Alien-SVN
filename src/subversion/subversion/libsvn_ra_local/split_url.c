@@ -62,6 +62,10 @@ svn_ra_local__split_URL(svn_repos_t **repos,
     SVN_ERR(svn_repos_remember_client_capabilities(*repos, caps));
   }
 
+  /* = apr_pstrcat(pool,
+                   "/",
+                   svn_dirent_skip_ancestor(repos_root_dirent, repos_dirent),
+                   (const char *)NULL); */
   root_end = strlen(repos_root_dirent);
   if (! repos_dirent[root_end])
     *fs_path = "/";
@@ -74,13 +78,28 @@ svn_ra_local__split_URL(svn_repos_t **repos,
       SVN_ERR_ASSERT((*fs_path)[0] == '/');
     }
 
-  /* Remove the path components in *fs_path from the original URL, to get
-     the URL to the repository root. */
+  /* Remove the path components after the root dirent from the original URL,
+     to get a URL to the repository root.
+
+     We don't use svn_uri_get_file_url_from_dirent() here as that would
+     transform several uris to form a differently formed url than
+     svn_uri_canonicalize would.
+
+     E.g. file://localhost/C:/dir -> file:///C:/dir
+          (a transform that was originally supported directly by this function,
+           before the implementation moved)
+
+          On on Windows:
+          file:///dir -> file:///E:/dir  (When E: is the current disk)
+     */
   urlbuf = svn_stringbuf_create(URL, pool);
   svn_path_remove_components(urlbuf,
                              svn_path_component_count(repos_dirent)
                              - svn_path_component_count(repos_root_dirent));
   *repos_url = urlbuf->data;
+
+  /* Configure hook script environment variables. */
+  SVN_ERR(svn_repos_hooks_setenv(*repos, NULL, pool));
 
   return SVN_NO_ERROR;
 }

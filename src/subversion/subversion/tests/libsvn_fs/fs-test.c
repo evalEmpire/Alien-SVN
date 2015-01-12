@@ -27,6 +27,7 @@
 
 #include "../svn_test.h"
 
+#include "svn_hash.h"
 #include "svn_pools.h"
 #include "svn_time.h"
 #include "svn_string.h"
@@ -34,6 +35,7 @@
 #include "svn_checksum.h"
 #include "svn_mergeinfo.h"
 #include "svn_props.h"
+#include "svn_version.h"
 
 #include "private/svn_fs_private.h"
 
@@ -658,6 +660,7 @@ revision_props(const svn_test_opts_t *opts,
 
   /* Copy a property's value into a new property. */
   SVN_ERR(svn_fs_revision_prop(&value, fs, 0, "color", pool));
+  SVN_TEST_ASSERT(value);
 
   s1.data = value->data;
   s1.len = value->len;
@@ -694,6 +697,7 @@ revision_props(const svn_test_opts_t *opts,
   /* Obtain a list of all current properties, and make sure it matches
      the expected values. */
   SVN_ERR(svn_fs_revision_proplist(&proplist, fs, 0, pool));
+  SVN_TEST_ASSERT(proplist);
   {
     svn_string_t *prop_value;
 
@@ -1564,6 +1568,7 @@ merging_commit(const svn_test_opts_t *opts,
 
   /* (5) E doesn't exist in ANCESTOR, and has been added to A. */
   {
+    svn_revnum_t failed_rev;
     /* (1) E doesn't exist in ANCESTOR, and has been added to B.
        Conflict. */
     SVN_ERR(svn_fs_begin_txn(&txn, fs, revisions[4], pool));
@@ -1571,7 +1576,7 @@ merging_commit(const svn_test_opts_t *opts,
     SVN_ERR(svn_fs_make_file(txn_root, "theta", pool));
     SVN_ERR(svn_test__set_file_contents
             (txn_root, "theta", "This is another file 'theta'.\n", pool));
-    SVN_ERR(test_commit_txn(&after_rev, txn, "/theta", pool));
+    SVN_ERR(test_commit_txn(&failed_rev, txn, "/theta", pool));
     SVN_ERR(svn_fs_abort_txn(txn, pool));
 
     /* (1) E exists in ANCESTOR, but has been deleted from B.  Can't
@@ -1579,6 +1584,8 @@ merging_commit(const svn_test_opts_t *opts,
 
     /* (3) E exists in both ANCESTOR and B.  Can't occur, by assumption
        that E doesn't exist in ANCESTOR. */
+
+    SVN_TEST_ASSERT(failed_rev == SVN_INVALID_REVNUM);
   }
 
   /* (4) E exists in ANCESTOR, but has been deleted from A */
@@ -1592,15 +1599,16 @@ merging_commit(const svn_test_opts_t *opts,
     SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
     SVN_ERR(svn_fs_delete(txn_root, "A/D/H", pool));
 
-    /* ### FIXME: It is at this point that our test stops being valid,
-       ### hence its expected failure.  The following call will now
-       ### conflict on /A/D/H, causing revision 6 *not* to be created,
-       ### and the remainer of this test (which was written long ago)
-       ### to suffer from a shift in the expected state and behavior
-       ### of the filesystem as a result of this commit not happening.
-    */
+    /* We used to create the revision like this before fixing issue
+       #2751 -- Directory prop mods reverted in overlapping commits scenario.
 
-    SVN_ERR(test_commit_txn(&after_rev, txn, NULL, pool));
+       But we now expect that to fail as out of date */
+    {
+      svn_revnum_t failed_rev;
+      SVN_ERR(test_commit_txn(&failed_rev, txn, "/A/D/H", pool));
+
+      SVN_TEST_ASSERT(failed_rev == SVN_INVALID_REVNUM);
+    }
     /*********************************************************************/
     /* REVISION 6 */
     /*********************************************************************/
@@ -1638,18 +1646,22 @@ merging_commit(const svn_test_opts_t *opts,
     /* Try deleting a file F inside a subtree S where S does not exist
        in the most recent revision, but does exist in the ancestor
        tree.  This should conflict. */
-    SVN_ERR(svn_fs_begin_txn(&txn, fs, revisions[1], pool));
-    SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
-    SVN_ERR(svn_fs_delete(txn_root, "A/D/H/omega", pool));
-    SVN_ERR(test_commit_txn(&after_rev, txn, "/A/D/H", pool));
-    SVN_ERR(svn_fs_abort_txn(txn, pool));
+    {
+      svn_revnum_t failed_rev;
+      SVN_ERR(svn_fs_begin_txn(&txn, fs, revisions[1], pool));
+      SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
+      SVN_ERR(svn_fs_delete(txn_root, "A/D/H/omega", pool));
+      SVN_ERR(test_commit_txn(&failed_rev, txn, "/A/D/H", pool));
+      SVN_ERR(svn_fs_abort_txn(txn, pool));
+
+      SVN_TEST_ASSERT(failed_rev == SVN_INVALID_REVNUM);
+    }
 
     /* E exists in both ANCESTOR and B ... */
     {
       /* (1) but refers to different nodes.  Conflict. */
-      SVN_ERR(svn_fs_begin_txn(&txn, fs, revisions[1], pool));
+      SVN_ERR(svn_fs_begin_txn(&txn, fs, after_rev, pool));
       SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
-      SVN_ERR(svn_fs_delete(txn_root, "A/D/H", pool));
       SVN_ERR(svn_fs_make_dir(txn_root, "A/D/H", pool));
       SVN_ERR(test_commit_txn(&after_rev, txn, NULL, pool));
       revisions[revision_count++] = after_rev;
@@ -3527,11 +3539,12 @@ get_file_checksum(svn_checksum_t **checksum,
 
 /* Return a pseudo-random number in the range [0,SCALAR) i.e. return
    a number N such that 0 <= N < SCALAR */
-static int my_rand(int scalar, apr_uint32_t *seed)
+static int my_rand(apr_uint64_t scalar, apr_uint32_t *seed)
 {
   static const apr_uint32_t TEST_RAND_MAX = 0xffffffffUL;
   /* Assumes TEST_RAND_MAX+1 can be exactly represented in a double */
-  return (int)(((double)svn_test_rand(seed)
+  apr_uint32_t r = svn_test_rand(seed);
+  return (int)(((double)r
                 / ((double)TEST_RAND_MAX+1.0))
                * (double)scalar);
 }
@@ -3553,7 +3566,7 @@ random_data_to_buffer(char *buf,
 
   int ds_off = 0;
   const char *dataset = "0123456789";
-  int dataset_size = strlen(dataset);
+  apr_size_t dataset_size = strlen(dataset);
 
   if (full)
     {
@@ -4174,12 +4187,12 @@ check_related(const svn_test_opts_t *opts,
             int related = 0;
 
             /* Get the ID for the first path/revision combination. */
-            SVN_ERR(svn_fs_revision_root(&rev_root, fs, pr1.rev, pool));
-            SVN_ERR(svn_fs_node_id(&id1, rev_root, pr1.path, pool));
+            SVN_ERR(svn_fs_revision_root(&rev_root, fs, pr1.rev, subpool));
+            SVN_ERR(svn_fs_node_id(&id1, rev_root, pr1.path, subpool));
 
             /* Get the ID for the second path/revision combination. */
-            SVN_ERR(svn_fs_revision_root(&rev_root, fs, pr2.rev, pool));
-            SVN_ERR(svn_fs_node_id(&id2, rev_root, pr2.path, pool));
+            SVN_ERR(svn_fs_revision_root(&rev_root, fs, pr2.rev, subpool));
+            SVN_ERR(svn_fs_node_id(&id2, rev_root, pr2.path, subpool));
 
             /* <exciting> Now, run the relationship check! </exciting> */
             related = svn_fs_check_related(id1, id2) ? 1 : 0;
@@ -4799,6 +4812,130 @@ node_origin_rev(const svn_test_opts_t *opts,
   return SVN_NO_ERROR;
 }
 
+
+/* Helper: call svn_fs_history_location() and check the results. */
+static svn_error_t *
+check_history_location(const char *expected_path,
+                       svn_revnum_t expected_revision,
+                       svn_fs_history_t *history,
+                       apr_pool_t *pool)
+{
+  const char *actual_path;
+  svn_revnum_t actual_revision;
+
+  SVN_ERR(svn_fs_history_location(&actual_path, &actual_revision,
+                                  history, pool));
+
+  /* Validate the location against our expectations. */
+  if (actual_revision != expected_revision
+      || (actual_path && expected_path && strcmp(actual_path, expected_path))
+      || (actual_path != NULL) != (expected_path != NULL))
+    {
+      return svn_error_createf(SVN_ERR_TEST_FAILED, NULL,
+                               "svn_fs_history_location() failed:\n"
+                               "  expected '%s@%ld'\n"
+                               "     found '%s@%ld",
+                               expected_path ? expected_path : "(null)",
+                               expected_revision,
+                               actual_path ? actual_path : "(null)",
+                               actual_revision);
+    }
+
+  return SVN_NO_ERROR;
+}
+
+/* Test svn_fs_history_*(). */
+static svn_error_t *
+node_history(const svn_test_opts_t *opts,
+             apr_pool_t *pool)
+{
+  svn_fs_t *fs;
+  svn_fs_txn_t *txn;
+  svn_fs_root_t *txn_root;
+  svn_revnum_t after_rev;
+
+  /* Prepare a txn to receive the greek tree. */
+  SVN_ERR(svn_test__create_fs(&fs, "test-repo-node-history",
+                              opts, pool));
+  SVN_ERR(svn_fs_begin_txn(&txn, fs, 0, pool));
+  SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
+
+  /* Create and verify the greek tree. */
+  SVN_ERR(svn_test__create_greek_tree(txn_root, pool));
+  SVN_ERR(test_commit_txn(&after_rev, txn, NULL, pool));
+
+  /* Make some changes, following copy_test() above. */
+
+  /* r2: copy pi to pi2, with textmods. */
+  {
+    svn_fs_root_t *rev_root;
+
+    SVN_ERR(svn_fs_revision_root(&rev_root, fs, after_rev, pool));
+    SVN_ERR(svn_fs_begin_txn(&txn, fs, after_rev, pool));
+    SVN_ERR(svn_fs_txn_root(&txn_root, txn, pool));
+    SVN_ERR(svn_fs_copy(rev_root, "A/D/G/pi",
+                        txn_root, "A/D/H/pi2",
+                        pool));
+    SVN_ERR(svn_test__set_file_contents
+            (txn_root, "A/D/H/pi2", "This is the file 'pi2'.\n", pool));
+    SVN_ERR(test_commit_txn(&after_rev, txn, NULL, pool));
+  }
+
+  /* Go back in history: pi2@r2 -> pi@r1 */
+  {
+    svn_fs_history_t *history;
+    svn_fs_root_t *rev_root;
+
+    SVN_ERR(svn_fs_revision_root(&rev_root, fs, after_rev, pool));
+
+    /* Fetch a history object, and walk it until its start. */
+
+    SVN_ERR(svn_fs_node_history(&history, rev_root, "A/D/H/pi2", pool));
+    SVN_ERR(check_history_location("/A/D/H/pi2", 2, history, pool));
+
+    SVN_ERR(svn_fs_history_prev(&history, history, TRUE, pool));
+    SVN_ERR(check_history_location("/A/D/H/pi2", 2, history, pool));
+
+    SVN_ERR(svn_fs_history_prev(&history, history, TRUE, pool));
+    SVN_ERR(check_history_location("/A/D/G/pi", 1, history, pool));
+
+    SVN_ERR(svn_fs_history_prev(&history, history, TRUE, pool));
+    SVN_TEST_ASSERT(history == NULL);
+  }
+
+  return SVN_NO_ERROR;
+}
+
+/* Test svn_fs_delete_fs(). */
+static svn_error_t *
+delete_fs(const svn_test_opts_t *opts,
+             apr_pool_t *pool)
+{
+  const char *path;
+  svn_node_kind_t kind;
+
+  /* We have to use a subpool to close the svn_fs_t before calling
+     svn_fs_delete_fs.  See issue 4264. */
+  {
+    svn_fs_t *fs;
+    apr_pool_t *subpool = svn_pool_create(pool);
+    SVN_ERR(svn_test__create_fs(&fs, "test-repo-delete-fs", opts, subpool));
+    path = svn_fs_path(fs, pool);
+    svn_pool_destroy(subpool);
+  }
+
+  SVN_ERR(svn_io_check_path(path, &kind, pool));
+  SVN_TEST_ASSERT(kind != svn_node_none);
+  SVN_ERR(svn_fs_delete_fs(path, pool));
+  SVN_ERR(svn_io_check_path(path, &kind, pool));
+  SVN_TEST_ASSERT(kind == svn_node_none);
+
+  /* Recreate dir so that test cleanup doesn't fail. */
+  SVN_ERR(svn_io_dir_make(path, APR_OS_DEFAULT, pool));
+
+  return SVN_NO_ERROR;
+}
+
 /* Issue 4340, "fs layer should reject filenames with trailing \n" */
 static svn_error_t *
 filename_trailing_newline(const svn_test_opts_t *opts,
@@ -4810,14 +4947,16 @@ filename_trailing_newline(const svn_test_opts_t *opts,
   svn_fs_root_t *txn_root, *root;
   svn_revnum_t youngest_rev = 0;
   svn_error_t *err;
-  svn_boolean_t allow_newlines;
-  
-  /* Some filesystem implementations can handle newlines in filenames
-   * and can be white-listed here.
-   * Currently, only BDB supports \n in filenames. */
-  allow_newlines = (strcmp(opts->fs_type, "bdb") == 0);
+  svn_boolean_t legacy_backend;
+  static const char contents[] = "foo\003bar";
 
-  SVN_ERR(svn_test__create_fs(&fs, "test-filename-trailing-newline",
+  /* The FS API wants \n to be permitted, but FSFS never implemented that,
+   * so for FSFS we expect errors rather than successes in some of the commits.
+   * Use a blacklist approach so that new FSes default to implementing the API
+   * as originally defined. */
+  legacy_backend = (!strcmp(opts->fs_type, SVN_FS_TYPE_FSFS));
+
+  SVN_ERR(svn_test__create_fs(&fs, "test-repo-filename-trailing-newline",
                               opts, pool));
 
   /* Revision 1:  Add a directory /foo  */
@@ -4833,27 +4972,62 @@ filename_trailing_newline(const svn_test_opts_t *opts,
   SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
   SVN_ERR(svn_fs_revision_root(&root, fs, youngest_rev, subpool));
   err = svn_fs_copy(root, "/foo", txn_root, "/bar\n", subpool);
-  if (allow_newlines)
+  if (!legacy_backend)
     SVN_TEST_ASSERT(err == SVN_NO_ERROR);
   else
-    {
-      SVN_TEST_ASSERT(err && err->apr_err == SVN_ERR_FS_PATH_SYNTAX);
-      svn_error_clear(err);
-    }
+    SVN_TEST_ASSERT_ERROR(err, SVN_ERR_FS_PATH_SYNTAX);
 
   /* Attempt to create a file /foo/baz\n. This should fail on FSFS. */
   err = svn_fs_make_file(txn_root, "/foo/baz\n", subpool);
-  if (allow_newlines)
+  if (!legacy_backend)
     SVN_TEST_ASSERT(err == SVN_NO_ERROR);
   else
+    SVN_TEST_ASSERT_ERROR(err, SVN_ERR_FS_PATH_SYNTAX);
+  
+
+  /* Create another file, with contents. */
+  if (!legacy_backend)
     {
-      SVN_TEST_ASSERT(err && err->apr_err == SVN_ERR_FS_PATH_SYNTAX);
-      svn_error_clear(err);
+      SVN_ERR(svn_fs_make_file(txn_root, "/bar\n/baz\n", subpool));
+      SVN_ERR(svn_test__set_file_contents(txn_root, "bar\n/baz\n",
+                                          contents, pool));
+    }
+
+  if (!legacy_backend)
+    {
+      svn_revnum_t after_rev;
+      static svn_test__tree_entry_t expected_entries[] = {
+        { "foo", NULL },
+        { "bar\n", NULL },
+        { "foo/baz\n", "" },
+        { "bar\n/baz\n", contents },
+        { NULL, NULL }
+      };
+      const char *expected_changed_paths[] = {
+        "/bar\n",
+        "/foo/baz\n",
+        "/bar\n/baz\n",
+        NULL
+      };
+      apr_hash_t *expected_changes = apr_hash_make(pool);
+      int i;
+
+      SVN_ERR(svn_fs_commit_txn(NULL, &after_rev, txn, subpool));
+      SVN_TEST_ASSERT(SVN_IS_VALID_REVNUM(after_rev));
+
+      /* Validate the DAG. */
+      SVN_ERR(svn_fs_revision_root(&root, fs, after_rev, pool));
+      SVN_ERR(svn_test__validate_tree(root, expected_entries, 4, pool));
+
+      /* Validate changed-paths, where the problem originally occurred. */
+      for (i = 0; expected_changed_paths[i]; i++)
+        svn_hash_sets(expected_changes, expected_changed_paths[i],
+                      "undefined value");
+      SVN_ERR(svn_test__validate_changes(root, expected_changes, pool));
     }
 
   return SVN_NO_ERROR;
 }
-
 
 /* ------------------------------------------------------------------------ */
 
@@ -4896,10 +5070,7 @@ struct svn_test_descriptor_t test_funcs[] =
                        "basic commit"),
     SVN_TEST_OPTS_PASS(test_tree_node_validation,
                        "testing tree validation helper"),
-    SVN_TEST_OPTS_WIMP(merging_commit,
-                       "merging commit",
-                       "needs to be written to match new"
-                       " merge() algorithm expectations"),
+    SVN_TEST_OPTS_PASS(merging_commit, "merging commit"),
     SVN_TEST_OPTS_PASS(copy_test,
                        "copying and tracking copy history"),
     SVN_TEST_OPTS_PASS(commit_date,
@@ -4934,6 +5105,10 @@ struct svn_test_descriptor_t test_funcs[] =
                        "test svn_fs_node_origin_rev"),
     SVN_TEST_OPTS_PASS(small_file_integrity,
                        "create and modify small file"),
+    SVN_TEST_OPTS_PASS(node_history,
+                       "test svn_fs_node_history"),
+    SVN_TEST_OPTS_PASS(delete_fs,
+                       "test svn_fs_delete_fs"),
     SVN_TEST_OPTS_PASS(filename_trailing_newline,
                        "filenames with trailing \\n might be rejected"),
     SVN_TEST_NULL

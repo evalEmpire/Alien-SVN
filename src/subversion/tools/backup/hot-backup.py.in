@@ -28,7 +28,7 @@
 #    under the License.
 # ====================================================================
 
-# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.7.x/tools/backup/hot-backup.py.in $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.8.x/tools/backup/hot-backup.py.in $
 # $LastChangedDate: 2010-08-20 04:30:52 +0000 (Fri, 20 Aug 2010) $
 # $LastChangedBy: cmpilato $
 # $LastChangedRevision: 987379 $

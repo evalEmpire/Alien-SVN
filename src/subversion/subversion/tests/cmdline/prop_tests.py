@@ -25,12 +25,16 @@
 ######################################################################
 
 # General modules
-import sys, re, os, stat, subprocess
+import sys, re, os, stat, subprocess, logging
+
+logger = logging.getLogger()
 
 # Our testing module
 import svntest
 
 from svntest.main import SVN_PROP_MERGEINFO
+from svntest.main import SVN_PROP_INHERITABLE_IGNORES
+from svntest import wc
 
 # (abbreviation)
 Skip = svntest.testcase.Skip_deco
@@ -44,6 +48,10 @@ Item = svntest.wc.StateItem
 def is_non_posix_and_non_windows_os():
   """lambda function to skip revprop_change test"""
   return (not svntest.main.is_posix_os()) and sys.platform != 'win32'
+
+# this is global so other test files can use it
+binary_mime_type_on_text_file_warning = \
+  "svn: warning:.*is a binary mime-type but file.*looks like text.*"
 
 ######################################################################
 # Tests
@@ -88,11 +96,7 @@ def make_local_props(sbox):
   # Read the real disk tree.  Notice we are passing the (normally
   # disabled) "load props" flag to this routine.  This will run 'svn
   # proplist' on every item in the working copy!
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, 1)
-
-  # Compare actual vs. expected disk trees.
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk, True)
 
   # Edit without actually changing the property
   svntest.main.use_editor('identity')
@@ -365,7 +369,7 @@ def update_conflict_props(sbox):
                                         None, None, 1)
 
   if len(extra_files) != 0:
-    print("didn't get expected conflict files")
+    logger.warn("didn't get expected conflict files")
     raise svntest.verify.SVNUnexpectedOutput
 
   # Resolve the conflicts
@@ -612,7 +616,9 @@ def inappropriate_props(sbox):
   svntest.main.file_append(path, "binary")
   sbox.simple_add('binary')
 
-  sbox.simple_propset('svn:mime-type', 'application/octet-stream', 'binary')
+  svntest.main.run_svn(binary_mime_type_on_text_file_warning,
+                       'propset', 'svn:mime-type', 'application/octet-stream',
+                       sbox.ospath('binary'))
 
   svntest.actions.run_and_verify_svn('Illegal target', None,
                                      svntest.verify.AnyOutput,
@@ -776,9 +782,9 @@ def copy_inherits_special_props(sbox):
 
   expected_stdout = [orig_mime_type + '\n']
   if actual_stdout != expected_stdout:
-    print("svn pg svn:mime-type output does not match expected.")
-    print("Expected standard output:  %s\n" % expected_stdout)
-    print("Actual standard output:  %s\n" % actual_stdout)
+    logger.warn("svn pg svn:mime-type output does not match expected.")
+    logger.warn("Expected standard output:  %s\n", expected_stdout)
+    logger.warn("Actual standard output:  %s\n", actual_stdout)
     raise svntest.verify.SVNUnexpectedOutput
 
   # Check the svn:executable value.
@@ -789,9 +795,9 @@ def copy_inherits_special_props(sbox):
 
     expected_stdout = ['*\n']
     if actual_stdout != expected_stdout:
-      print("svn pg svn:executable output does not match expected.")
-      print("Expected standard output:  %s\n" % expected_stdout)
-      print("Actual standard output:  %s\n" % actual_stdout)
+      logger.warn("svn pg svn:executable output does not match expected.")
+      logger.warn("Expected standard output:  %s\n", expected_stdout)
+      logger.warn("Actual standard output:  %s\n", actual_stdout)
       raise svntest.verify.SVNUnexpectedOutput
 
 #----------------------------------------------------------------------
@@ -896,9 +902,9 @@ def prop_value_conversions(sbox):
                              "svn: warning: W125005.*use 'svn propdel'")
 
   # Anything else should be untouched
-  svntest.actions.set_prop('svn:some-prop', 'bar', lambda_path)
-  svntest.actions.set_prop('svn:some-prop', ' bar baz', mu_path)
-  svntest.actions.set_prop('svn:some-prop', 'bar\n', iota_path)
+  svntest.actions.set_prop('svn:some-prop', 'bar', lambda_path, force=True)
+  svntest.actions.set_prop('svn:some-prop', ' bar baz', mu_path, force=True)
+  svntest.actions.set_prop('svn:some-prop', 'bar\n', iota_path, force=True)
   svntest.actions.set_prop('some-prop', 'bar', lambda_path)
   svntest.actions.set_prop('some-prop', ' bar baz', mu_path)
   svntest.actions.set_prop('some-prop', 'bar\n', iota_path)
@@ -1038,8 +1044,8 @@ def binary_props(sbox):
 # expected_out, and that errput is empty.
 def verify_output(expected_out, output, errput):
   if errput != []:
-    print('Error: stderr:')
-    print(errput)
+    logger.warn('Error: stderr:')
+    logger.warn(errput)
     raise svntest.Failure
   output.sort()
   ln = 0
@@ -1048,8 +1054,8 @@ def verify_output(expected_out, output, errput):
       continue
     if ((line.find(expected_out[ln]) == -1) or
         (line != '' and expected_out[ln] == '')):
-      print('Error: expected keywords:  %s' % expected_out)
-      print('       actual full output: %s' % output)
+      logger.warn('Error: expected keywords:  %s', expected_out)
+      logger.warn('       actual full output: %s', output)
       raise svntest.Failure
     ln = ln + 1
   if ln != len(expected_out):
@@ -1124,7 +1130,7 @@ def recursive_base_wc_ops(sbox):
 #----------------------------------------------------------------------
 
 def url_props_ops(sbox):
-  "property operations on an URL"
+  "property operations on a URL"
 
   # Bootstrap
   sbox.build()
@@ -1315,9 +1321,7 @@ def props_on_replaced_file(sbox):
   # check that the replaced file has no properties
   expected_disk = svntest.main.greek_state.copy()
   expected_disk.tweak('iota', contents="some mod")
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, 1)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
   # now add a new property to iota
   sbox.simple_propset('red', 'mojo', 'iota')
@@ -1325,9 +1329,7 @@ def props_on_replaced_file(sbox):
 
   # What we expect the disk tree to look like:
   expected_disk.tweak('iota', props={'red' : 'mojo', 'groovy' : 'baby'})
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, 1)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
 #----------------------------------------------------------------------
 
@@ -1738,11 +1740,9 @@ def post_revprop_change_hook(sbox):
   svntest.actions.create_failing_hook(repo_dir, 'post-revprop-change',
                                       error_msg)
 
-  # serf/neon/mod_dav_svn splits the "svn: hook failed" line
-  expected_error = svntest.verify.RegexOutput([
-    '(svn: E165001: |)post-revprop-change hook failed',
-    error_msg + "\n",
-  ], match_all = False)
+  # serf/neon/mod_dav_svn give SVN_ERR_RA_DAV_REQUEST_FAILED
+  # file/svn give SVN_ERR_REPOS_HOOK_FAILURE
+  expected_error = 'svn: (E175002|E165001).*post-revprop-change hook failed'
 
   svntest.actions.run_and_verify_svn(None, [], expected_error,
                                      'ps', '--revprop', '-r0', 'p', 'v',
@@ -1779,26 +1779,23 @@ def rm_of_replaced_file(sbox):
   expected_disk.tweak('iota', props={'red': 'rojo', 'blue': 'lagoon'})
   expected_disk.tweak('A/mu', props={'red': 'rojo', 'blue': 'lagoon'},
                       contents="This is the file 'iota'.\n")
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, 1)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
   # Remove the copy. This should leave the original locally-deleted mu,
   # which should have no properties.
   svntest.main.run_svn(None, 'rm', '--force', mu_path)
 
-  exit_code, output, errput = svntest.main.run_svn(None,
-                                                   'proplist', '-v', mu_path)
-  if output or errput:
-    raise svntest.Failure('no output/errors expected')
-  svntest.verify.verify_exit_code(None, exit_code, 0)
+  svntest.actions.run_and_verify_svn(
+                        None, [],
+                        'svn: E200009.*some targets are not versioned.*',
+                        'proplist', '-v', mu_path)
 
   # Run it again, but ask for the pristine properties, which should
   # be mu's original props.
   exit_code, output, errput = svntest.main.run_svn(None,
                                                    'proplist', '-v',
                                                    mu_path + '@base')
-  expected_output = svntest.verify.UnorderedRegexOutput([
+  expected_output = svntest.verify.UnorderedRegexListOutput([
       'Properties on',
       '  yellow',
       '    submarine',
@@ -1984,7 +1981,7 @@ def prop_reject_grind(sbox):
       if match:
         # The last line in the list is always an empty string.
         if msg_lines[i + 1] == "":
-          #print("found message %i in file at line %i" % (n, j))
+          #logger.info("found message %i in file at line %i" % (n, j))
           break
         i += 1
       else:
@@ -2010,17 +2007,13 @@ def obstructed_subdirs(sbox):
 
   expected_disk = svntest.main.greek_state.copy()
   expected_disk.tweak('A/C', props={'red': 'blue'})
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, load_props=True)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
   # Remove the subdir from disk, and validate the status
   svntest.main.safe_rmtree(C_path)
 
   expected_disk.remove('A/C')
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, load_props=True)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
   expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
   expected_status.tweak('A/C', status='!M', wc_rev='1')
@@ -2033,9 +2026,7 @@ def obstructed_subdirs(sbox):
   expected_disk.add({'A/C': Item(contents='', props={'red': 'blue'})})
   expected_status.tweak('A/C', status='~M', wc_rev='1')
 
-  actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, load_props=True)
-  svntest.tree.compare_trees("disk", actual_disk_tree,
-                             expected_disk.old_tree())
+  svntest.actions.verify_disk(wc_dir, expected_disk.old_tree(), True)
 
 
   svntest.actions.run_and_verify_status(wc_dir, expected_status)
@@ -2047,7 +2038,7 @@ def atomic_over_ra(sbox):
   sbox.build(create_wc=False)
   repo_url = sbox.repo_url
 
-  # From this point on, similar to ../libsvn_fs-fs-test.c:revision_props().
+  # From this point on, similar to ../libsvn_fs/fs-test.c:revision_props().
   s1 = "violet"
   s2 = "wrong value"
 
@@ -2138,6 +2129,8 @@ def propget_redirection(sbox):
   # it refers to non-existent path-revs, but that is not relevant to
   # this test.  What matters is that it is a realistic 'big' mergeinfo
   # value (it is from Subversion's own 1.6.x branch in fact).
+  # Also, the syntax is wrong: every path should start with '/';
+  # Subversion currently silently corrects this.
   big_prop_val = "subversion/branches/1.5.x:872364-874936\n"           + \
   "subversion/branches/1.5.x-34184:874657-874741\n"                    + \
   "subversion/branches/1.5.x-34432:874744-874798\n"                    + \
@@ -2277,131 +2270,26 @@ def propget_redirection(sbox):
 
   # Check if the redirected output of svn pg -vR on the root of the WC
   # is what we expect.
+  expected_mergeinfo_displayed = [
+    '    /' + line for line in big_prop_val.splitlines(True) ]
   expected_output = [
     "Properties on '" + B_path +  "':\n", # Should ocur only once!
-    "Properties on '" + C_path +  "':\n", # Should ocur only once!
-    "Properties on '" + D_path +  "':\n", # Should ocur only once!
-    # Everything below should appear three times since this same
-    # mergeinfo value is set on three paths in the WC.
     "  svn:mergeinfo\n",
-    "    /subversion/branches/1.5.x:872364-874936\n",
-    "    /subversion/branches/1.5.x-34184:874657-874741\n",
-    "    /subversion/branches/1.5.x-34432:874744-874798\n",
-    "    /subversion/branches/1.5.x-issue3067:872184-872314\n",
-    "    /subversion/branches/1.5.x-issue3157:872165-872175\n",
-    "    /subversion/branches/1.5.x-issue3174:872178-872348\n",
-    "    /subversion/branches/1.5.x-r30215:870310,870312,870319,870362\n",
-    "    /subversion/branches/1.5.x-r30756:874853-874870\n",
-    "    /subversion/branches/1.5.x-r30868:870951-870970\n",
-    "    /subversion/branches/1.5.x-r31314:874476-874605\n",
-    "    /subversion/branches/1.5.x-r31516:871592-871649\n",
-    "    /subversion/branches/1.5.x-r32470:872546-872676\n",
-    "    /subversion/branches/1.5.x-r32968:873773-873872\n",
-    "    /subversion/branches/1.5.x-r33447:873527-873547\n",
-    "    /subversion/branches/1.5.x-r33465:873541-873549\n",
-    "    /subversion/branches/1.5.x-r33641:873880-873883\n",
-    "    /subversion/branches/1.5.x-r34050-followups:874639-874686\n",
-    "    /subversion/branches/1.5.x-r34487:874562-874581\n",
-    "    /subversion/branches/1.5.x-ra_serf-backports:872354-872626\n",
-    "    /subversion/branches/1.5.x-rb-test-fix:874916-874919\n",
-    "    /subversion/branches/1.5.x-reintegrate-improvements:874586-874922\n",
-    "    /subversion/branches/1.5.x-tests-pass:870925-870973\n",
-    "    /subversion/branches/dont-save-plaintext-passwords-by-default:"
-    "870728-871118\n",
-    "    /subversion/branches/gnome-keyring:870558-871410\n",
-    "    /subversion/branches/issue-3220-dev:872210-872226\n",
-    "    /subversion/branches/kwallet:870785-871314\n",
-    "    /subversion/branches/log-g-performance:870941-871032\n",
-    "    /subversion/branches/r30963-1.5.x:871056-871076\n",
-    "    /subversion/branches/reintegrate-improvements:873853-874164\n",
-    "    /subversion/branches/svn-mergeinfo-enhancements:870196\n",
-    "    /subversion/branches/svnpatch-diff:871905\n",
-    "    /subversion/trunk:869159-869165,869168-869181,869185,869188,869191,"
-    "869200-869201,869203-869207,869209-869224,869227-869238,869240-869244,"
-    "869248,869250-869260,869262-869263,869265,869267-869268,869272-869280,"
-    "869282-869325,869328-869330,869335,869341-869347,869351,869354-869355,"
-    "869358,869361-869377,869379-869381,869383-869417,869419-869422,869432-"
-    "869453,869455-869466,869471-869473,869475,869483,869486,869488-869489,"
-    "869491-869497,869499-869500,869503,869506-869508,869510-869521,869523-"
-    "869540,869542-869552,869556,869558,869560-869561,869563,869565,869567,"
-    "869570,869572,869582,869601-869602,869605,869607,869613-869614,869616,"
-    "869618,869620,869625,869627,869630,869633,869639,869641-869643,869645-"
-    "869652,869655,869657,869665,869668,869674,869677,869681,869685,869687-"
-    "869688,869693,869697,869699-869700,869704-869708,869716,869719,869722,"
-    "869724,869730,869733-869734,869737-869740,869745-869746,869751-869754,"
-    "869766,869812-869813,869815-869818,869820,869825,869837,869841,869843-"
-    "869844,869858,869860-869861,869871,869875,869889,869895,869898,869902,"
-    "869907,869909,869926,869928-869929,869931-869933,869942-869943,869950,"
-    "869952,869957-869958,869969,869972,869974,869988,869994,869996,869999,"
-    "870004,870013-870014,870016,870024,870032,870036,870039,870041-870043,"
-    "870054,870060,870068-870071,870078,870083,870094,870104,870124,870127-"
-    "870128,870133,870135-870136,870141,870144,870148,870160,870172,870175,"
-    "870191,870198,870203-870204,870211,870219,870225,870233,870235-870236,"
-    "870254-870255,870259,870307,870311,870313,870320,870323,870330-870331,"
-    "870352-870353,870355,870359-870360,870371,870373,870378,870393-870395,"
-    "870402,870409-870410,870414,870416,870421,870436,870442,870447,870449,"
-    "870452,870454,870466,870476,870481-870483,870486,870500,870502,870505,"
-    "870513-870518,870522-870523,870527,870529,870534,870536-870538,870540-"
-    "870541,870543-870548,870554,870556,870561,870563,870584,870590-870592,"
-    "870594-870595,870597,870618,870620,870622,870625-870626,870641,870647,"
-    "870657,870665,870671,870681,870702-870703,870706-870708,870717-870718,"
-    "870727,870730,870737,870740,870742,870752,870758,870800,870809,870815,"
-    "870817,870820-870825,870830,870834-870836,870850-870851,870853,870859,"
-    "870861,870886,870894,870916-870918,870942,870945,870957,870962,870970,"
-    "870979,870981,870989,870996,871003,871005,871009,871011,871023,871033,"
-    "871035-871038,871041,871060,871078,871080,871092,871097,871099,871105,"
-    "871107,871120,871123-871127,871130,871133-871135,871140,871149,871155-"
-    "871156,871160,871162,871164,871181,871191,871199-871200,871205,871211-"
-    "871212,871215,871219,871225,871227,871229,871231,871236,871270,871273,"
-    "871277,871283,871297,871302,871306,871308,871315-871320,871323-871325,"
-    "871333-871335,871345,871347-871350,871354,871357,871361,871363-871366,"
-    "871374-871375,871377,871382,871385-871388,871391,871408,871411,871422,"
-    "871435,871441,871443-871444,871465,871470,871472-871476,871481,871489,"
-    "871499,871501-871502,871505,871508,871520,871523,871525-871527,871538,"
-    "871542,871544,871547-871549,871556,871559,871562-871563,871578,871581,"
-    "871587,871589-871597,871608,871613,871616-871617,871620,871624,871649,"
-    "871668,871675,871677,871693-871694,871696,871704,871732-871733,871744,"
-    "871747,871759,871762,871766,871769,871793,871796,871799,871801,871811,"
-    "871813,871821-871826,871831,871843,871860,871880,871891,871894,871899,"
-    "871907,871911,871926,871928,871933,871935,871941-871942,871947-871949,"
-    "871958,871974,872000-872001,872003,872005,872018,872022,872038,872065,"
-    "872068,872086,872091,872093,872097,872103,872112,872130,872154,872157,"
-    "872206,872216,872218-872219,872227,872234,872238,872243,872253,872255,"
-    "872259,872261,872278-872279,872281,872310-872311,872362,872404,872416-"
-    "872417,872429,872431,872434,872439,872450-872453,872468,872470,872477-"
-    "872478,872483,872490-872491,872495,872515-872516,872518-872519,872537,"
-    "872541,872544,872565,872568,872571-872573,872584,872596-872597,872612,"
-    "872619,872624,872632,872656,872670,872706,872710,872713,872717,872746-"
-    "872748,872777,872780-872782,872791,872804,872813,872845,872864,872870,"
-    "872872,872947-872948,872961,872974,872981,872985-872987,873004,873042,"
-    "873049,873051,873076,873087,873090,873096,873098,873100,873183,873186,"
-    "873192,873195,873210-873211,873247,873252,873256,873259,873275,873286,"
-    "873288,873343,873379-873381,873443,873521,873538-873539,873714-873715,"
-    "873718,873733,873745,873751,873767,873778,873781,873849,873856,873862,"
-    "873914,873940,873947-873948,873975-873976,873987,873998,874026-874027,"
-    "874075,874077-874078,874124-874125,874127,874156,874159,874161,874165,"
-    "874168,874170,874184,874189,874204,874223-874224,874245,874258,874262,"
-    "874270,874292-874297,874300-874301,874303,874305,874316-874318,874330,"
-    "874363,874380,874405,874421,874441,874459,874467,874473,874497,874506,"
-    "874545-874546,874561,874566,874568,874580,874619,874621,874634,874636,"
-    "874659,874673,874681,874727,874730,874743,874765-874767,874806,874816,"
-    "874848,874868,874888,874896,874909,874912,874996,875051,875069,875129,"
-    "875132,875134,875137,875151-875153,875186-875188,875190,875235-875237,"
-    "875242-875243,875249,875388,875393,875406,875411\n"]
+    ] + expected_mergeinfo_displayed + [
+    "Properties on '" + C_path +  "':\n", # Should ocur only once!
+    "  svn:mergeinfo\n",
+    ] + expected_mergeinfo_displayed + [
+    "Properties on '" + D_path +  "':\n", # Should ocur only once!
+    "  svn:mergeinfo\n",
+    ] + expected_mergeinfo_displayed
   svntest.verify.verify_outputs(
     "Redirected pg -vR doesn't match pg -vR stdout",
     pg_stdout_redir, None,
     svntest.verify.UnorderedOutput(expected_output), None)
-  # Because we are using UnorderedOutput above, this test would spuriously
-  # pass if the redirected pg output contained duplicates.  This hasn't been
-  # observed as part of issue #3721, but we might as well be thorough...
-  #
-  # ...Since we've set the same mergeinfo prop on A/B, A/C, and A/D, this
-  # means the number of lines in the redirected output of svn pg -vR should
-  # be three times the number of lines in EXPECTED_OUTPUT, adjusted for the
-  # fact the "Properties on '[A/B | A/C | A/D]'" headers  appear only once.
-  if ((len(expected_output) * 3) - 6) != len(pg_stdout_redir):
-    raise svntest.Failure("Redirected pg -vR has unexpected duplicates")
+  # (We want this check to fail if the redirected pg output contains
+  # unexpected duplicate lines, although this hasn't been observed as
+  # part of issue #3721.  We used to check separately here because the old
+  # UnorderedOutput class ignored duplicates but now it detects them.)
 
 @Issue(3852)
 def file_matching_dir_prop_reject(sbox):
@@ -2466,7 +2354,7 @@ def file_matching_dir_prop_reject(sbox):
                                         extra_files,
                                         None, None, True, '-r', '2', wc_dir)
   if len(extra_files) != 0:
-    print("didn't get expected conflict files")
+    logger.warn("didn't get expected conflict files")
     raise svntest.verify.SVNUnexpectedOutput
 
   # Revert and update to check that conflict files are removed
@@ -2506,6 +2394,279 @@ def pristine_props_listed(sbox):
   # And now we see no property at all
   svntest.actions.run_and_verify_svn(None, expected_output, [],
                                      'proplist', '-R', wc_dir, '-r', 'BASE')
+
+def create_inherited_ignores_config(config_dir):
+  "create config stuffs for inherited ignores tests"
+
+  # contents of the file 'config'
+  config_contents = '''\
+[miscellany]
+global-ignores = *.boo *.goo
+'''
+
+  svntest.main.create_config_dir(config_dir, config_contents)
+
+def inheritable_ignores(sbox):
+  "inheritable ignores with svn:ignores and config"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  tmp_dir = os.path.abspath(svntest.main.temp_dir)
+  config_dir = os.path.join(tmp_dir, 'autoprops_config_' + sbox.name)
+  create_inherited_ignores_config(config_dir)
+
+  sbox.simple_propset(SVN_PROP_INHERITABLE_IGNORES, '*.doo', 'A/B')
+  sbox.simple_propset(SVN_PROP_INHERITABLE_IGNORES, '*.moo', 'A/D')
+  sbox.simple_propset('svn:ignore', '*.foo', 'A/B/E')
+  sbox.simple_commit()
+
+  # Some directories and files that should always be added because they
+  # don't match any applicable ignore patterns.
+  X_dir_path = sbox.ospath('ADD-ME-DIR-X')
+  Y_dir_path = sbox.ospath('A/ADD-ME-DIR-Y.doo')
+  Z_dir_path = sbox.ospath('A/D/G/ADD-ME-DIR-Z.doo')
+  os.mkdir(X_dir_path)
+  os.mkdir(Y_dir_path)
+  os.mkdir(Z_dir_path)
+
+  # Some directories and files that should be ignored when adding
+  # because they match an ignore pattern (unless of course they are
+  # the direct target of an add, which we always add).
+  boo_dir_path = sbox.ospath('IGNORE-ME-DIR.boo')
+  goo_dir_path = sbox.ospath('IGNORE-ME-DIR.boo/IGNORE-ME-DIR.goo')
+  doo_dir_path = sbox.ospath('A/B/IGNORE-ME-DIR.doo')
+  moo_dir_path = sbox.ospath('A/D/IGNORE-ME-DIR.moo')
+  foo_dir_path = sbox.ospath('A/B/E/IGNORE-ME-DIR.foo')
+  os.mkdir(boo_dir_path)
+  os.mkdir(goo_dir_path)
+  os.mkdir(doo_dir_path)
+  os.mkdir(moo_dir_path)
+  os.mkdir(foo_dir_path)
+  boo_file_path = sbox.ospath('ADD-ME-DIR-X/ignore-me-file.boo')
+  goo_file_path = sbox.ospath('A/D/G/ignore-me-file.goo')
+  doo_file_path = sbox.ospath('A/B/IGNORE-ME-DIR.doo/ignore-me-file.doo')
+  doo_file2_path = sbox.ospath('A/B/E/ignore-me-file.doo')
+  moo_file_path = sbox.ospath('A/D/ignore-me-file.moo')
+  foo_file_path = sbox.ospath('A/B/E/ignore-me-file.foo')
+  svntest.main.file_write(boo_file_path, 'I should not be versioned!\n')
+  svntest.main.file_write(goo_file_path, 'I should not be versioned!\n')
+  svntest.main.file_write(doo_file_path, 'I should not be versioned!\n')
+  svntest.main.file_write(doo_file2_path, 'I should not be versioned!\n')
+  svntest.main.file_write(moo_file_path, 'I should not be versioned!\n')
+  svntest.main.file_write(foo_file_path, 'I should not be versioned!\n')
+
+  # Some directories and files that don't match any ignore pattern
+  # but are located within a subtree that does match and so shouldn't
+  # be added.
+  roo_file_path = sbox.ospath('A/B/IGNORE-ME-DIR.doo/ignore-me-file.roo')
+  svntest.main.file_write(roo_file_path, 'I should not be versioned!\n')
+
+  # Check (non-verbose) status with the custom config. We should only see
+  # the three unversioned directories which don't match any of the ignore
+  # patterns and aren't proper subtrees of an unversioned or ignored
+  # subtree.
+  expected_output = svntest.verify.UnorderedOutput(
+    ['?       ' + X_dir_path + '\n',
+     '?       ' + Y_dir_path + '\n',
+     '?       ' + Z_dir_path + '\n',])
+  svntest.actions.run_and_verify_svn(None, expected_output, [], 'st',
+                                     '--config-dir', config_dir, wc_dir)
+
+  # Check status without the custom config.
+  # Should be the same as above except the *.boo and *.goo paths
+  # now show up as unversioned '?'.
+  expected_output = svntest.verify.UnorderedOutput(
+    ['?       ' + X_dir_path    + '\n',
+     '?       ' + Y_dir_path    + '\n',
+     '?       ' + Z_dir_path    + '\n',
+     '?       ' + boo_dir_path  + '\n',
+     '?       ' + goo_file_path + '\n',])
+  svntest.actions.run_and_verify_svn(None, expected_output, [], 'st', wc_dir)
+
+  # Check status with the custom config and --no-ignore.
+  expected_output = svntest.verify.UnorderedOutput(
+    ['?       ' + X_dir_path     + '\n',
+     '?       ' + Y_dir_path     + '\n',
+     '?       ' + Z_dir_path     + '\n',
+     'I       ' + boo_dir_path   + '\n',
+     'I       ' + doo_dir_path   + '\n',
+     'I       ' + doo_file2_path + '\n',
+     'I       ' + moo_dir_path   + '\n',
+     'I       ' + foo_dir_path   + '\n',
+     'I       ' + goo_file_path  + '\n',
+     'I       ' + moo_file_path  + '\n',
+     'I       ' + foo_file_path  + '\n',])
+  svntest.actions.run_and_verify_svn(None, expected_output, [], 'st',
+                                     '--config-dir', config_dir,
+                                     '--no-ignore', wc_dir)
+
+  # Check status without the custom config and --no-ignore.
+  # Should be the same as above except the *.boo and *.goo paths
+  # are reported as unversioned '?' rather than ignored 'I'.
+  expected_output = svntest.verify.UnorderedOutput(
+    ['?       ' + X_dir_path     + '\n',
+     '?       ' + Y_dir_path     + '\n',
+     '?       ' + Z_dir_path     + '\n',
+     '?       ' + boo_dir_path   + '\n',
+     'I       ' + doo_dir_path   + '\n',
+     'I       ' + doo_file2_path + '\n',
+     'I       ' + moo_dir_path   + '\n',
+     'I       ' + foo_dir_path   + '\n',
+     '?       ' + goo_file_path  + '\n',
+     'I       ' + moo_file_path  + '\n',
+     'I       ' + foo_file_path  + '\n',])
+  svntest.actions.run_and_verify_svn(None, expected_output, [], 'st',
+                                     '--no-ignore', wc_dir)
+
+  # Perform the add with the --force flag, targeting the root of the WC.
+  ### Note: You have to be inside the working copy or else Subversion
+  ### will think you're trying to add the working copy to its parent
+  ### directory, and will (possibly, if the parent directory isn't
+  ### versioned) fail -- see also schedule_tests.py 11 "'svn add'
+  ### should traverse already-versioned dirs"
+  saved_wd = os.getcwd()
+  os.chdir(sbox.wc_dir)
+  expected = svntest.verify.UnorderedOutput(
+    ['A         ' + 'ADD-ME-DIR-X\n',
+     'A         ' + os.path.join('A', 'ADD-ME-DIR-Y.doo') + '\n',
+     'A         ' + os.path.join('A', 'D', 'G', 'ADD-ME-DIR-Z.doo') + '\n'])
+  svntest.actions.run_and_verify_svn("Adds in spite of ignores", expected,
+                                     [], 'add', '.', '--force',
+                                     '--config-dir', config_dir)
+  os.chdir(saved_wd)
+
+  # Now revert and try the add with the --no-ignore flag, nothing should
+  # be ignored.
+  svntest.actions.run_and_verify_svn(None, None, [], 'revert', wc_dir, '-R')
+  saved_wd = os.getcwd()
+  os.chdir(sbox.wc_dir)
+  expected = svntest.verify.UnorderedOutput(
+    ['A         ' + 'ADD-ME-DIR-X\n',
+     'A         ' + os.path.join('A', 'ADD-ME-DIR-Y.doo') + '\n',
+     'A         ' + os.path.join('A', 'D', 'G', 'ADD-ME-DIR-Z.doo') + '\n',
+     'A         ' + os.path.join('ADD-ME-DIR-X', 'ignore-me-file.boo') + '\n',
+     'A         ' + 'IGNORE-ME-DIR.boo' + '\n',
+     'A         ' + os.path.join('IGNORE-ME-DIR.boo',
+                                 'IGNORE-ME-DIR.goo') + '\n',
+     'A         ' + os.path.join('A', 'B', 'E', 'IGNORE-ME-DIR.foo') + '\n',
+     'A         ' + os.path.join('A', 'B', 'E', 'ignore-me-file.foo') + '\n',
+     'A         ' + os.path.join('A', 'D', 'G', 'ignore-me-file.goo') + '\n',
+
+     'A         ' + os.path.join('A', 'B', 'E', 'ignore-me-file.doo') + '\n',
+     'A         ' + os.path.join('A', 'B', 'IGNORE-ME-DIR.doo') + '\n',
+     'A         ' + os.path.join('A', 'B', 'IGNORE-ME-DIR.doo',
+                                 'ignore-me-file.doo') + '\n',
+     'A         ' + os.path.join('A', 'B', 'IGNORE-ME-DIR.doo',
+                                 'ignore-me-file.roo') + '\n',
+     'A         ' + os.path.join('A', 'D', 'IGNORE-ME-DIR.moo') + '\n',
+     'A         ' + os.path.join('A', 'D', 'ignore-me-file.moo') + '\n'])
+  svntest.actions.run_and_verify_svn("Files ignored with --no-ignore",
+                                     expected, [], 'add', '.', '--force',
+                                     '--no-ignore', '--config-dir',
+                                     config_dir)
+
+def almost_known_prop_names(sbox):
+  "propset with svn: prefix but unknown name"
+
+  sbox.build(read_only=True)
+  wc_dir = sbox.wc_dir
+  iota_path = sbox.ospath('iota')
+
+  # Same prefix, different prop name
+  svntest.actions.set_prop('svn:exemutable', 'x', iota_path,
+                           "svn: E195011: 'svn:exemutable' "
+                           "is not a valid svn: property name")
+  svntest.actions.set_prop('svn:exemutable', 'x', iota_path, force=True)
+
+  # Similar prefix, different prop name
+  svntest.actions.set_prop('svm:exemutable', 'x', iota_path)
+
+  # Similar prefix, same prop name
+  svntest.actions.set_prop('svm:executable', 'x', iota_path,
+                           "svn: E195011: 'svm:executable' "
+                           "is not a valid svn: property name")
+  svntest.actions.set_prop('svm:executable', 'x', iota_path, force=True)
+
+  # Different prefix, same prop name
+  svntest.actions.set_prop('tsvn:executable', 'x', iota_path)
+
+  # Property name is too different to matter
+  svntest.actions.set_prop('svn:foobar', 'x', iota_path,
+                           "svn: E195011: 'svn:foobar'"
+                           " is not a valid svn: property name;"
+                           " re-run with '--force' to set it")
+
+@Issue(3231)
+def peg_rev_base_working(sbox):
+  """peg rev @BASE, peg rev @WORKING"""
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # set up a local prop mod
+  svntest.actions.set_prop('ordinal', 'ninth\n', sbox.ospath('iota'))
+  sbox.simple_commit(message='r2')
+  svntest.actions.set_prop('cardinal', 'nine\n', sbox.ospath('iota'))
+  svntest.actions.run_and_verify_svn(None, ['ninth\n'], [],
+                                     'propget', '--strict', 'ordinal',
+                                     sbox.ospath('iota') + '@BASE')
+
+def iprops_list_abspath(sbox):
+  "test listing iprops via abspath"
+
+  sbox.build()
+
+  sbox.simple_propset('im', 'root', '')
+  sbox.simple_commit()
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'switch', '^/A/D', sbox.ospath(''),
+                                     '--ignore-ancestry')
+
+  sbox.simple_propset('im', 'GammA', 'gamma')
+
+  expected_output = [
+    'Inherited properties on \'%s\',\n' % sbox.ospath('')[:-1],
+    'from \'%s\':\n' % sbox.repo_url,
+    '  im\n',
+    '    root\n',
+    'Properties on \'%s\':\n' % sbox.ospath('gamma'),
+    '  im\n',
+    '    GammA\n'
+  ]
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'pl', '-R',
+                                     '--show-inherited-props', '-v',
+                                     sbox.ospath(''))
+
+  expected_output = [
+    'Inherited properties on \'%s\',\n' % os.path.abspath(sbox.ospath('')),
+    'from \'%s\':\n' % sbox.repo_url,
+    '  im\n',
+    '    root\n',
+    'Properties on \'%s\':\n' % os.path.abspath(sbox.ospath('gamma')),
+    '  im\n',
+    '    GammA\n'
+  ]
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'pl', '-R',
+                                     '--show-inherited-props', '-v',
+                                     os.path.abspath(sbox.ospath('')))
+
+def wc_propop_on_url(sbox):
+  "perform wc specific operations on url"
+
+  sbox.build(create_wc = False)
+
+  svntest.actions.run_and_verify_svn(None, None, '.*E195000:.*path',
+                                     'pl', '-r', 'PREV',
+                                     sbox.repo_url)
+
+  svntest.actions.run_and_verify_svn(None, None, '.*E195000:.*path',
+                                     'pg', 'my:Q', '-r', 'PREV',
+                                     sbox.repo_url)
+
 
 ########################################################################
 # Run the tests
@@ -2549,6 +2710,11 @@ test_list = [ None,
               propget_redirection,
               file_matching_dir_prop_reject,
               pristine_props_listed,
+              inheritable_ignores,
+              almost_known_prop_names,
+              peg_rev_base_working,
+              iprops_list_abspath,
+              wc_propop_on_url,
              ]
 
 if __name__ == '__main__':

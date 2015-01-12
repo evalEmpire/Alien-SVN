@@ -28,6 +28,7 @@
 #include <httpd.h>
 #include <mod_dav.h>
 
+#include "svn_hash.h"
 #include "svn_checksum.h"
 #include "svn_error.h"
 #include "svn_io.h"
@@ -240,17 +241,23 @@ dav_svn__store_activity(const dav_svn_repos *repos,
 dav_error *
 dav_svn__create_txn(const dav_svn_repos *repos,
                     const char **ptxn_name,
+                    apr_hash_t *revprops,
                     apr_pool_t *pool)
 {
   svn_revnum_t rev;
   svn_fs_txn_t *txn;
   svn_error_t *serr;
-  apr_hash_t *revprop_table = apr_hash_make(pool);
+
+  if (! revprops)
+    {
+      revprops = apr_hash_make(pool);
+    }
 
   if (repos->username)
     {
-      apr_hash_set(revprop_table, SVN_PROP_REVISION_AUTHOR, APR_HASH_KEY_STRING,
-                   svn_string_create(repos->username, pool));
+      svn_hash_sets(revprops,
+                    SVN_PROP_REVISION_AUTHOR,
+                    svn_string_create(repos->username, pool));
     }
 
   serr = svn_fs_youngest_rev(&rev, repos->fs, pool);
@@ -262,8 +269,7 @@ dav_svn__create_txn(const dav_svn_repos *repos,
     }
 
   serr = svn_repos_fs_begin_txn_for_commit2(&txn, repos->repos, rev,
-                                            revprop_table,
-                                            repos->pool);
+                                            revprops, repos->pool);
   if (serr != NULL)
     {
       return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,

@@ -202,6 +202,10 @@ capability and C indicates a client capability):
 [S]  atomic-revprops   If the server presents this capability, it
                        supports the change-rev-prop2 command.
                        See section 3.1.1.
+[S]  inherited-props   If the server presents this capability, it supports the
+                       retrieval of inherited properties via the get-dir and
+                       get-file commands and also supports the get-iprops
+                       command (see section 3.1.1).
 
 3. Commands
 -----------
@@ -222,6 +226,7 @@ responds.
 Here are some miscellaneous prototypes used by the command sets:
 
   proplist:  ( ( name:string value:string ) ... )
+  iproplist: ( ( name:string proplist ) ... )
   propdelta: ( ( name:string [ value:string ] ) ... )
   node-kind: none|file|dir|unknown
   bool:      true|false
@@ -289,26 +294,35 @@ second place for auth-request point as noted below.
     Upon receiving response, client switches to editor command set.
     Upon successful completion of edit, server sends auth-request.
     After auth exchange completes, server sends commit-info.
+    If rev-props is present, logmsg is ignored.  Only the svn:log entry in
+    rev-props (if any) will be used.
     commit-info: ( new-rev:number date:string author:string
                    ? ( post-commit-err:string ) )
+    NOTE: when revving this, make 'logmsg' optional, or delete that parameter
+          and have the log message specified in 'rev-props'.
 
   get-file
-    params:   ( path:string [ rev:number ] want-props:bool want-contents:bool )
-    response: ( [ checksum:string ] rev:number props:proplist )
+    params:   ( path:string [ rev:number ] want-props:bool want-contents:bool
+                [ want-iprops:bool ] )
+    response: ( [ checksum:string ] rev:number props:proplist
+                [ inherited-props:iproplist ] )
     If want-contents is specified, then after sending response, server
      sends file contents as a series of strings, terminated by the empty
      string, followed by a second empty command response to indicate
      whether an error occurred during the sending of the file.
+    NOTE: the standard client never sends want-iprops, it uses get-iprops. 
 
   get-dir
     params:   ( path:string [ rev:number ] want-props:bool want-contents:bool
-                ? ( field:dirent-field ... ) )
-    response: ( rev:number props:proplist ( entry:dirent ... ) )]
+                ? ( field:dirent-field ... ) [ want-iprops:bool ] )
+    response: ( rev:number props:proplist ( entry:dirent ... )
+                [ inherited-props:iproplist ] )]
     dirent:   ( name:string kind:node-kind size:number has-props:bool
                 created-rev:number [ created-date:string ]
                 [ last-author:string ] )
     dirent-field: kind | size | has-props | created-rev | time | last-author
                   | word
+    NOTE: the standard client never sends want-iprops, it uses get-iprops. 
 
   check-path
     params:   ( path:string [ rev:number ] )
@@ -332,7 +346,7 @@ second place for auth-request point as noted below.
 
   update
     params:   ( [ rev:number ] target:string recurse:bool
-                ? depth:word send_copyfrom_param:bool )
+                ? depth:word send_copyfrom_args:bool ? ignore_ancestry:bool )
     Client switches to report command set.
     Upon finish-report, server sends auth-request.
     After auth exchange completes, server switches to editor command set.
@@ -341,7 +355,7 @@ second place for auth-request point as noted below.
 
   switch
     params:   ( [ rev:number ] target:string recurse:bool url:string
-                ? depth:word)
+                ? depth:word ? send_copyfrom_args:bool ignore_ancestry:bool )
     Client switches to report command set.
     Upon finish-report, server sends auth-request.
     After auth exchange completes, server switches to editor command set.
@@ -463,6 +477,11 @@ second place for auth-request point as noted below.
   get-deleted-rev
     params:   ( path:string peg-rev:number end-rev:number )
     response: ( deleted-rev:number )
+
+  get-iprops
+    params:   ( path:string [ rev:number ] )
+    response: ( inherited-props:iproplist )
+    New in svn 1.8.  If rev is not specified, the youngest revision is used.
 
 3.1.2. Editor Command Set
 

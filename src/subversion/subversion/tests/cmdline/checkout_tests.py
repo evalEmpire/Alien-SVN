@@ -32,6 +32,7 @@ import datetime
 # Our testing module
 import svntest
 from svntest import wc, actions
+import logging
 
 # (abbreviation)
 Skip = svntest.testcase.Skip_deco
@@ -42,6 +43,8 @@ Issue = svntest.testcase.Issue_deco
 Wimp = svntest.testcase.Wimp_deco
 Item = wc.StateItem
 
+logger = logging.getLogger()
+
 #----------------------------------------------------------------------
 # Helper function for testing stderr from co.
 # If none of the strings in STDERR list matches the regular expression
@@ -51,10 +54,9 @@ def test_stderr(re_string, stderr):
   for line in stderr:
     if exp_err_re.search(line):
       return
-  if svntest.main.options.verbose:
-    for x in stderr:
-      sys.stdout.write(x)
-    print("Expected stderr reg-ex: '" + re_string + "'")
+  for x in stderr:
+    logger.debug(x[:-1])
+  logger.info("Expected stderr reg-ex: '" + re_string + "'")
   raise svntest.Failure("Checkout failed but not in the expected way")
 
 #----------------------------------------------------------------------
@@ -1144,25 +1146,8 @@ def checkout_wc_from_drive(sbox):
       'B/F'               : Item(status='A '),
       'B/lambda'          : Item(status='A '),
     })
-
-    expected_wc = wc.State('', {
-      'C'         : Item(),
-      'B/E/beta'  : Item(contents="This is the file 'beta'.\n"),
-      'B/E/alpha' : Item(contents="This is the file 'alpha'.\n"),
-      'B/lambda'  : Item(contents="This is the file 'lambda'.\n"),
-      'B/F'       : Item(),
-      'D/H/omega' : Item(contents="This is the file 'omega'.\n"),
-      'D/H/psi'   : Item(contents="This is the file 'psi'.\n"),
-      'D/H/chi'   : Item(contents="This is the file 'chi'.\n"),
-      'D/G/rho'   : Item(contents="This is the file 'rho'.\n"),
-      'D/G/tau'   : Item(contents="This is the file 'tau'.\n"),
-      'D/G/pi'    : Item(contents="This is the file 'pi'.\n"),
-      'D/gamma'   : Item(contents="This is the file 'gamma'.\n"),
-      'mu'        : Item(contents="This is the file 'mu'.\n"),    
-    })
-    
     svntest.actions.run_and_verify_checkout(repo_url + '/A', wc2_dir,
-                                            expected_output, expected_wc,
+                                            expected_output, None,
                                             None, None, None, None)
 
     wc3_dir = sbox.add_wc_path('3')
@@ -1178,18 +1163,8 @@ def checkout_wc_from_drive(sbox):
       'gamma'             : Item(status='A '),
     })
 
-    expected_wc = wc.State('', {
-      'H/chi'   : Item(contents="This is the file 'chi'.\n"),
-      'H/psi'   : Item(contents="This is the file 'psi'.\n"),
-      'H/omega' : Item(contents="This is the file 'omega'.\n"),
-      'G/pi'    : Item(contents="This is the file 'pi'.\n"),
-      'G/tau'   : Item(contents="This is the file 'tau'.\n"),
-      'G/rho'   : Item(contents="This is the file 'rho'.\n"),
-      'gamma'   : Item(contents="This is the file 'gamma'.\n"),    
-    })
-
     svntest.actions.run_and_verify_checkout(repo_url + '/A/D', wc3_dir,
-                                            expected_output, expected_wc,
+                                            expected_output, None,
                                             None, None, None, None)
 
   finally:

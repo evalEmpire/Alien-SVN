@@ -75,6 +75,10 @@ svn_cache__get(void **value_p,
   /* In case any errors happen and are quelched, make sure we start
      out with FOUND set to false. */
   *found = FALSE;
+#ifdef SVN_DEBUG
+  if (getenv("SVN_X_DOES_NOT_MARK_THE_SPOT"))
+    return SVN_NO_ERROR;
+#endif
 
   cache->reads++;
   err = handle_error(cache,
@@ -114,6 +118,12 @@ svn_cache__iter(svn_boolean_t *completed,
                 void *user_baton,
                 apr_pool_t *scratch_pool)
 {
+#ifdef SVN_DEBUG
+  if (getenv("SVN_X_DOES_NOT_MARK_THE_SPOT"))
+    /* Pretend CACHE is empty. */
+    return SVN_NO_ERROR;
+#endif
+
   return (cache->vtable->iter)(completed,
                                cache->cache_internal,
                                user_cb,
@@ -135,6 +145,10 @@ svn_cache__get_partial(void **value,
   /* In case any errors happen and are quelched, make sure we start
   out with FOUND set to false. */
   *found = FALSE;
+#ifdef SVN_DEBUG
+  if (getenv("SVN_X_DOES_NOT_MARK_THE_SPOT"))
+    return SVN_NO_ERROR;
+#endif
 
   cache->reads++;
   err = handle_error(cache,
@@ -212,14 +226,14 @@ svn_cache__format_info(const svn_cache__info_t *info,
   enum { _1MB = 1024 * 1024 };
 
   apr_uint64_t misses = info->gets - info->hits;
-  double hit_rate = (100.0 * info->hits)
-                  / (info->gets ? info->gets : 1);
-  double write_rate = (100.0 * info->sets)
-                    / (misses ? misses : 1);
-  double data_usage_rate = (100.0 * info->used_size)
-                         / (info->data_size ? info->data_size : 1);
-  double data_entry_rate = (100.0 * info->used_entries)
-                         / (info->total_entries ? info->total_entries : 1);
+  double hit_rate = (100.0 * (double)info->hits)
+                  / (double)(info->gets ? info->gets : 1);
+  double write_rate = (100.0 * (double)info->sets)
+                    / (double)(misses ? misses : 1);
+  double data_usage_rate = (100.0 * (double)info->used_size)
+                         / (double)(info->data_size ? info->data_size : 1);
+  double data_entry_rate = (100.0 * (double)info->used_entries)
+                 / (double)(info->total_entries ? info->total_entries : 1);
 
   return svn_string_createf(result_pool,
 

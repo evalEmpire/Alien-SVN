@@ -26,6 +26,7 @@
 #include <apr_tables.h>
 #include <apr_strings.h>
 
+#include "svn_hash.h"
 #include "svn_types.h"
 #include "svn_string.h"
 #include "svn_error.h"
@@ -34,14 +35,26 @@
 #include "svn_private_config.h"
 #include "svn_dso.h"
 #include "svn_version.h"
+#include "private/svn_auth_private.h"
+#include "private/svn_dep_compat.h"
+#include "private/svn_subr_private.h"
 
-/* The good way to think of this machinery is as a set of tables.
+#include "auth.h"
 
-   - Each type of credentials selects a single table.
+/* AN OVERVIEW
+   ===========
 
-   - In a given table, each row is a 'provider' capable of returning
-     the same type of credentials.  Each column represents a
-     provider's repeated attempts to provide credentials.
+   A good way to think of this machinery is as a set of tables.
+
+     - Each type of credentials selects a single table.
+
+     - In a given table, each row is a 'provider' capable of returning
+       the same type of credentials.  Each column represents a
+       provider's repeated attempts to provide credentials.
+
+
+   Fetching Credentials from Providers
+   -----------------------------------
 
    When the caller asks for a particular type of credentials, the
    machinery in this file walks over the appropriate table.  It starts
@@ -55,6 +68,23 @@
 
    Note that the caller cannot see the table traversal, and thus has
    no idea when we switch providers.
+
+
+   Storing Credentials with Providers
+   ----------------------------------
+
+   When the server has validated a set of credentials, and when
+   credential caching is enabled, we have the chance to store those
+   credentials for later use.  The provider which provided the working
+   credentials is the first one given the opportunity to (re)cache
+   those credentials.  Its save_credentials() function is invoked with
+   the working credentials.  If that provider reports that it
+   successfully stored the credentials, we're done.  Otherwise, we
+   walk the providers (rows) for that type of credentials in order
+   from the top of the table, allowing each in turn the opportunity to
+   store the credentials.  When one reports that it has done so
+   successfully -- or when we run out of providers (rows) to try --
+   the table walk ends.
 */
 
 
@@ -125,17 +155,14 @@ svn_auth_open(svn_auth_baton_t **auth_baton,
       provider = APR_ARRAY_IDX(providers, i, svn_auth_provider_object_t *);
 
       /* Add it to the appropriate table in the auth_baton */
-      table = apr_hash_get(ab->tables,
-                           provider->vtable->cred_kind, APR_HASH_KEY_STRING);
+      table = svn_hash_gets(ab->tables, provider->vtable->cred_kind);
       if (! table)
         {
           table = apr_pcalloc(pool, sizeof(*table));
           table->providers
             = apr_array_make(pool, 1, sizeof(svn_auth_provider_object_t *));
 
-          apr_hash_set(ab->tables,
-                       provider->vtable->cred_kind, APR_HASH_KEY_STRING,
-                       table);
+          svn_hash_sets(ab->tables, provider->vtable->cred_kind, table);
         }
       APR_ARRAY_PUSH(table->providers, svn_auth_provider_object_t *)
         = provider;
@@ -151,17 +178,26 @@ svn_auth_set_parameter(svn_auth_baton_t *auth_baton,
                        const char *name,
                        const void *value)
 {
-  apr_hash_set(auth_baton->parameters, name, APR_HASH_KEY_STRING, value);
+  svn_hash_sets(auth_baton->parameters, name, value);
 }
 
 const void *
 svn_auth_get_parameter(svn_auth_baton_t *auth_baton,
                        const char *name)
 {
-  return apr_hash_get(auth_baton->parameters, name, APR_HASH_KEY_STRING);
+  return svn_hash_gets(auth_baton->parameters, name);
 }
 
 
+/* Return the key used to address the in-memory cache of auth
+   credentials of type CRED_KIND and associated with REALMSTRING. */
+static const char *
+make_cache_key(const char *cred_kind,
+               const char *realmstring,
+               apr_pool_t *pool)
+{
+  return apr_pstrcat(pool, cred_kind, ":", realmstring, (char *)NULL);
+}
 
 svn_error_t *
 svn_auth_first_credentials(void **credentials,
@@ -181,16 +217,15 @@ svn_auth_first_credentials(void **credentials,
   const char *cache_key;
 
   /* Get the appropriate table of providers for CRED_KIND. */
-  table = apr_hash_get(auth_baton->tables, cred_kind, APR_HASH_KEY_STRING);
+  table = svn_hash_gets(auth_baton->tables, cred_kind);
   if (! table)
     return svn_error_createf(SVN_ERR_AUTHN_NO_PROVIDER, NULL,
                              _("No provider registered for '%s' credentials"),
                              cred_kind);
 
   /* First, see if we have cached creds in the auth_baton. */
-  cache_key = apr_pstrcat(pool, cred_kind, ":", realmstring, (char *)NULL);
-  creds = apr_hash_get(auth_baton->creds_cache,
-                       cache_key, APR_HASH_KEY_STRING);
+  cache_key = make_cache_key(cred_kind, realmstring, pool);
+  creds = svn_hash_gets(auth_baton->creds_cache, cache_key);
   if (creds)
     {
        got_first = FALSE;
@@ -203,9 +238,11 @@ svn_auth_first_credentials(void **credentials,
         {
           provider = APR_ARRAY_IDX(table->providers, i,
                                    svn_auth_provider_object_t *);
-          SVN_ERR(provider->vtable->first_credentials
-                  (&creds, &iter_baton, provider->provider_baton,
-                   auth_baton->parameters, realmstring, auth_baton->pool));
+          SVN_ERR(provider->vtable->first_credentials(&creds, &iter_baton,
+                                                      provider->provider_baton,
+                                                      auth_baton->parameters,
+                                                      realmstring,
+                                                      auth_baton->pool));
 
           if (creds != NULL)
             {
@@ -231,10 +268,9 @@ svn_auth_first_credentials(void **credentials,
       *state = iterstate;
 
       /* Put the creds in the cache */
-      apr_hash_set(auth_baton->creds_cache,
-                   apr_pstrdup(auth_baton->pool, cache_key),
-                   APR_HASH_KEY_STRING,
-                   creds);
+      svn_hash_sets(auth_baton->creds_cache,
+                    apr_pstrdup(auth_baton->pool, cache_key),
+                    creds);
     }
 
   *credentials = creds;
@@ -263,27 +299,24 @@ svn_auth_next_credentials(void **credentials,
                                svn_auth_provider_object_t *);
       if (! state->got_first)
         {
-          SVN_ERR(provider->vtable->first_credentials
-                  (&creds, &(state->provider_iter_baton),
-                   provider->provider_baton, auth_baton->parameters,
-                   state->realmstring, auth_baton->pool));
+          SVN_ERR(provider->vtable->first_credentials(
+                      &creds, &(state->provider_iter_baton),
+                      provider->provider_baton, auth_baton->parameters,
+                      state->realmstring, auth_baton->pool));
           state->got_first = TRUE;
         }
-      else
+      else if (provider->vtable->next_credentials)
         {
-          if (provider->vtable->next_credentials)
-            SVN_ERR(provider->vtable->next_credentials
-                    (&creds, state->provider_iter_baton,
-                     provider->provider_baton, auth_baton->parameters,
-                     state->realmstring, auth_baton->pool));
+          SVN_ERR(provider->vtable->next_credentials(
+                      &creds, state->provider_iter_baton,
+                      provider->provider_baton, auth_baton->parameters,
+                      state->realmstring, auth_baton->pool));
         }
 
       if (creds != NULL)
         {
           /* Put the creds in the cache */
-          apr_hash_set(auth_baton->creds_cache,
-                       state->cache_key, APR_HASH_KEY_STRING,
-                       creds);
+          svn_hash_sets(auth_baton->creds_cache, state->cache_key, creds);
           break;
         }
 
@@ -311,15 +344,13 @@ svn_auth_save_credentials(svn_auth_iterstate_t *state,
     return SVN_NO_ERROR;
 
   auth_baton = state->auth_baton;
-  creds = apr_hash_get(state->auth_baton->creds_cache,
-                       state->cache_key, APR_HASH_KEY_STRING);
+  creds = svn_hash_gets(state->auth_baton->creds_cache, state->cache_key);
   if (! creds)
     return SVN_NO_ERROR;
 
   /* Do not save the creds if SVN_AUTH_PARAM_NO_AUTH_CACHE is set */
-  no_auth_cache = apr_hash_get(auth_baton->parameters,
-                               SVN_AUTH_PARAM_NO_AUTH_CACHE,
-                               APR_HASH_KEY_STRING);
+  no_auth_cache = svn_hash_gets(auth_baton->parameters,
+                                SVN_AUTH_PARAM_NO_AUTH_CACHE);
   if (no_auth_cache)
     return SVN_NO_ERROR;
 
@@ -362,6 +393,32 @@ svn_auth_save_credentials(svn_auth_iterstate_t *state,
   return SVN_NO_ERROR;
 }
 
+
+svn_error_t *
+svn_auth_forget_credentials(svn_auth_baton_t *auth_baton,
+                            const char *cred_kind,
+                            const char *realmstring,
+                            apr_pool_t *scratch_pool)
+{
+  SVN_ERR_ASSERT((cred_kind && realmstring) || (!cred_kind && !realmstring));
+
+  /* If we have a CRED_KIND and REALMSTRING, we clear out just the
+     cached item (if any).  Otherwise, empty the whole hash. */
+  if (cred_kind)
+    {
+      svn_hash_sets(auth_baton->creds_cache,
+                    make_cache_key(cred_kind, realmstring, scratch_pool),
+                    NULL);
+    }
+  else
+    {
+      apr_hash_clear(auth_baton->creds_cache);
+    }
+
+  return SVN_NO_ERROR;
+}
+
+
 svn_auth_ssl_server_cert_info_t *
 svn_auth_ssl_server_cert_info_dup
   (const svn_auth_ssl_server_cert_info_t *info, apr_pool_t *pool)
@@ -382,11 +439,10 @@ svn_auth_ssl_server_cert_info_dup
 }
 
 svn_error_t *
-svn_auth_get_platform_specific_provider
-  (svn_auth_provider_object_t **provider,
-   const char *provider_name,
-   const char *provider_type,
-   apr_pool_t *pool)
+svn_auth_get_platform_specific_provider(svn_auth_provider_object_t **provider,
+                                        const char *provider_name,
+                                        const char *provider_type,
+                                        apr_pool_t *pool)
 {
   *provider = NULL;
 
@@ -399,9 +455,9 @@ svn_auth_get_platform_specific_provider
       const char *library_label, *library_name;
       const char *provider_function_name, *version_function_name;
       library_name = apr_psprintf(pool,
-                                  "libsvn_auth_%s-%d.so.0",
+                                  "libsvn_auth_%s-%d.so.%d",
                                   provider_name,
-                                  SVN_VER_MAJOR);
+                                  SVN_VER_MAJOR, SVN_SOVERSION);
       library_label = apr_psprintf(pool, "svn_%s", provider_name);
       provider_function_name = apr_psprintf(pool,
                                             "svn_auth_get_%s_%s_provider",
@@ -424,7 +480,8 @@ svn_auth_get_platform_specific_provider
               check_list[0].version_query = version_function;
               check_list[1].label = NULL;
               check_list[1].version_query = NULL;
-              SVN_ERR(svn_ver_check_list(svn_subr_version(), check_list));
+              SVN_ERR(svn_ver_check_list2(svn_subr_version(), check_list,
+                                          svn_ver_equal));
             }
           if (apr_dso_sym(&provider_function_symbol,
                           dso,
@@ -448,6 +505,13 @@ svn_auth_get_platform_specific_provider
     }
   else
     {
+#if defined(SVN_HAVE_GPG_AGENT)
+      if (strcmp(provider_name, "gpg_agent") == 0 &&
+          strcmp(provider_type, "simple") == 0)
+        {
+          svn_auth_get_gpg_agent_simple_provider(provider, pool);
+        }
+#endif
 #ifdef SVN_HAVE_KEYCHAIN_SERVICES
       if (strcmp(provider_name, "keychain") == 0 &&
           strcmp(provider_type, "simple") == 0)
@@ -477,6 +541,11 @@ svn_auth_get_platform_specific_provider
         {
           svn_auth_get_windows_ssl_server_trust_provider(provider, pool);
         }
+      else if (strcmp(provider_name, "windows") == 0 &&
+          strcmp(provider_type, "ssl_server_authority") == 0)
+        {
+          svn_auth__get_windows_ssl_server_authority_provider(provider, pool);
+        }
 #endif
     }
 
@@ -484,10 +553,9 @@ svn_auth_get_platform_specific_provider
 }
 
 svn_error_t *
-svn_auth_get_platform_specific_client_providers
-  (apr_array_header_t **providers,
-   svn_config_t *config,
-   apr_pool_t *pool)
+svn_auth_get_platform_specific_client_providers(apr_array_header_t **providers,
+                                                svn_config_t *config,
+                                                apr_pool_t *pool)
 {
   svn_auth_provider_object_t *provider;
   const char *password_stores_config_option;
@@ -497,6 +565,9 @@ svn_auth_get_platform_specific_client_providers
 #define SVN__MAYBE_ADD_PROVIDER(list, p) \
   { if (p) APR_ARRAY_PUSH(list, svn_auth_provider_object_t *) = p; }
 
+#define SVN__DEFAULT_AUTH_PROVIDER_LIST \
+         "gnome-keyring,kwallet,keychain,gpg-agent,windows-cryptoapi"
+
   *providers = apr_array_make(pool, 12, sizeof(svn_auth_provider_object_t *));
 
   /* Fetch the configured list of password stores, and split them into
@@ -505,7 +576,7 @@ svn_auth_get_platform_specific_client_providers
                  &password_stores_config_option,
                  SVN_CONFIG_SECTION_AUTH,
                  SVN_CONFIG_OPTION_PASSWORD_STORES,
-                 "gnome-keyring,kwallet,keychain,windows-cryptoapi");
+                 SVN__DEFAULT_AUTH_PROVIDER_LIST);
   password_stores = svn_cstring_split(password_stores_config_option,
                                       " ,", TRUE, pool);
 
@@ -526,6 +597,15 @@ svn_auth_get_platform_specific_client_providers
           SVN_ERR(svn_auth_get_platform_specific_provider(&provider,
                                                           "gnome_keyring",
                                                           "ssl_client_cert_pw",
+                                                          pool));
+          SVN__MAYBE_ADD_PROVIDER(*providers, provider);
+        }
+      /* GPG-AGENT */
+      else if (apr_strnatcmp(password_store, "gpg-agent") == 0)
+        {
+          SVN_ERR(svn_auth_get_platform_specific_provider(&provider,
+                                                          "gpg_agent",
+                                                          "simple",
                                                           pool));
           SVN__MAYBE_ADD_PROVIDER(*providers, provider);
         }

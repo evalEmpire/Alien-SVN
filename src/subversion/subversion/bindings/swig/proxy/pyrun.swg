@@ -45,7 +45,7 @@
 
 /* Runtime API */
 
-#define SWIG_GetModule(clientdata)                      SWIG_Python_GetModule()
+#define SWIG_GetModule(clientdata)                      SWIG_Python_GetModule(clientdata)
 #define SWIG_SetModule(clientdata, pointer)             SWIG_Python_SetModule(pointer)
 #define SWIG_NewClientData(obj)                         SwigPyClientData_New(obj)
 
@@ -71,7 +71,7 @@ SWIG_Python_SetErrorObj(PyObject *errtype, PyObject *obj) {
 SWIGINTERN void 
 SWIG_Python_SetErrorMsg(PyObject *errtype, const char *msg) {
   SWIG_PYTHON_THREAD_BEGIN_BLOCK;
-  PyErr_SetString(errtype, (char *) msg);
+  PyErr_SetString(errtype, msg);
   SWIG_PYTHON_THREAD_END_BLOCK;
 }
 
@@ -90,7 +90,11 @@ SwigPyBuiltin_AddPublicSymbol(PyObject *seq, const char *key) {
 
 SWIGINTERN void
 SWIG_Python_SetConstant(PyObject *d, PyObject *public_interface, const char *name, PyObject *obj) {   
+#if PY_VERSION_HEX < 0x02030000
   PyDict_SetItemString(d, (char *)name, obj);
+#else
+  PyDict_SetItemString(d, name, obj);
+#endif
   Py_DECREF(obj);
   if (public_interface)
     SwigPyBuiltin_AddPublicSymbol(public_interface, name);
@@ -100,7 +104,11 @@ SWIG_Python_SetConstant(PyObject *d, PyObject *public_interface, const char *nam
 
 SWIGINTERN void
 SWIG_Python_SetConstant(PyObject *d, const char *name, PyObject *obj) {   
+#if PY_VERSION_HEX < 0x02030000
   PyDict_SetItemString(d, (char *)name, obj);
+#else
+  PyDict_SetItemString(d, name, obj);
+#endif
   Py_DECREF(obj);                            
 }
 
@@ -421,7 +429,7 @@ SwigPyObject_repr(SwigPyObject *v, PyObject *args)
 #endif
 {
   const char *name = SWIG_TypePrettyName(v->ty);
-  PyObject *repr = SWIG_Python_str_FromFormat("<Swig Object of type '%s' at %p>", name, (void *)v);
+  PyObject *repr = SWIG_Python_str_FromFormat("<Swig Object of type '%s' at %p>", (name ? name : "unknown"), (void *)v);
   if (v->next) {
 # ifdef METH_NOARGS
     PyObject *nrep = SwigPyObject_repr((SwigPyObject *)v->next);
@@ -625,8 +633,10 @@ SwigPyObject_own(PyObject *v, PyObject *args)
   PyObject *val = 0;
 #if (PY_VERSION_HEX < 0x02020000)
   if (!PyArg_ParseTuple(args,(char *)"|O:own",&val))
-#else
+#elif (PY_VERSION_HEX < 0x02050000)
   if (!PyArg_UnpackTuple(args, (char *)"own", 0, 1, &val)) 
+#else
+  if (!PyArg_UnpackTuple(args, "own", 0, 1, &val)) 
 #endif
     {
       return NULL;
@@ -1321,23 +1331,29 @@ SWIG_Python_NewShadowInstance(SwigPyClientData *data, PyObject *swig_this)
   } else {
 #if PY_VERSION_HEX >= 0x03000000
     inst = PyBaseObject_Type.tp_new((PyTypeObject*) data->newargs, Py_None, Py_None);
-    PyObject_SetAttr(inst, SWIG_This(), swig_this);
-    Py_TYPE(inst)->tp_flags &= ~Py_TPFLAGS_VALID_VERSION_TAG;
+    if (inst) {
+      PyObject_SetAttr(inst, SWIG_This(), swig_this);
+      Py_TYPE(inst)->tp_flags &= ~Py_TPFLAGS_VALID_VERSION_TAG;
+    }
 #else
     PyObject *dict = PyDict_New();
-    PyDict_SetItem(dict, SWIG_This(), swig_this);
-    inst = PyInstance_NewRaw(data->newargs, dict);
-    Py_DECREF(dict);
+    if (dict) {
+      PyDict_SetItem(dict, SWIG_This(), swig_this);
+      inst = PyInstance_NewRaw(data->newargs, dict);
+      Py_DECREF(dict);
+    }
 #endif
   }
   return inst;
 #else
 #if (PY_VERSION_HEX >= 0x02010000)
-  PyObject *inst;
+  PyObject *inst = 0;
   PyObject *dict = PyDict_New();
-  PyDict_SetItem(dict, SWIG_This(), swig_this);
-  inst = PyInstance_NewRaw(data->newargs, dict);
-  Py_DECREF(dict);
+  if (dict) {
+    PyDict_SetItem(dict, SWIG_This(), swig_this);
+    inst = PyInstance_NewRaw(data->newargs, dict);
+    Py_DECREF(dict);
+  }
   return (PyObject *) inst;
 #else
   PyInstanceObject *inst = PyObject_NEW(PyInstanceObject, &PyInstance_Type);
@@ -1388,7 +1404,7 @@ SWIG_Python_SetSwigThis(PyObject *inst, PyObject *swig_this)
 SWIGINTERN PyObject *
 SWIG_Python_InitShadowInstance(PyObject *args) {
   PyObject *obj[2];
-  if (!SWIG_Python_UnpackTuple(args,(char*)"swiginit", 2, 2, obj)) {
+  if (!SWIG_Python_UnpackTuple(args, "swiginit", 2, 2, obj)) {
     return NULL;
   } else {
     SwigPyObject *sthis = SWIG_Python_GetSwigThis(obj[0]);
@@ -1444,12 +1460,10 @@ SWIG_Python_NewPointerObj(PyObject *self, void *ptr, swig_type_info *type, int f
   assert(!(flags & SWIG_BUILTIN_TP_INIT));
 
   robj = SwigPyObject_New(ptr, type, own);
-  if (clientdata && !(flags & SWIG_POINTER_NOSHADOW)) {
+  if (robj && clientdata && !(flags & SWIG_POINTER_NOSHADOW)) {
     PyObject *inst = SWIG_Python_NewShadowInstance(clientdata, robj);
-    if (inst) {
-      Py_DECREF(robj);
-      robj = inst;
-    }
+    Py_DECREF(robj);
+    robj = inst;
   }
   return robj;
 }
@@ -1470,7 +1484,7 @@ void *SWIG_ReturnGlobalTypeList(void *);
 #endif
 
 SWIGRUNTIME swig_module_info *
-SWIG_Python_GetModule(void) {
+SWIG_Python_GetModule(void *SWIGUNUSEDPARM(clientdata)) {
   static void *type_pointer = (void *)0;
   /* first check if module already created */
   if (!type_pointer) {
@@ -1596,7 +1610,7 @@ SWIG_Python_TypeQuery(const char *type)
     descriptor = (swig_type_info *) PyCObject_AsVoidPtr(obj);
 #endif
   } else {
-    swig_module_info *swig_module = SWIG_Python_GetModule();
+    swig_module_info *swig_module = SWIG_GetModule(0);
     descriptor = SWIG_TypeQueryModule(swig_module, swig_module, type);
     if (descriptor) {
 #ifdef SWIGPY_USE_CAPSULE
@@ -1664,7 +1678,7 @@ SwigPyObject_GetDesc(PyObject *self)
 {
   SwigPyObject *v = (SwigPyObject *)self;
   swig_type_info *ty = v ? v->ty : 0;
-  return ty ? ty->str : (char*)"";
+  return ty ? ty->str : "";
 }
 
 SWIGRUNTIME void
@@ -1721,6 +1735,7 @@ SWIG_Python_MustGetPtr(PyObject *obj, swig_type_info *ty, int SWIGUNUSEDPARM(arg
   return result;
 }
 
+#ifdef SWIGPYTHON_BUILTIN
 SWIGRUNTIME int
 SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
   PyTypeObject *tp = obj->ob_type;
@@ -1729,15 +1744,15 @@ SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
   descrsetfunc f;
   int res;
 
-#ifdef Py_USING_UNICODE
+# ifdef Py_USING_UNICODE
   if (PyString_Check(name)) {
     name = PyUnicode_Decode(PyString_AsString(name), PyString_Size(name), NULL, NULL);
     if (!name)
       return -1;
   } else if (!PyUnicode_Check(name))
-#else
+# else
   if (!PyString_Check(name))
-#endif
+# endif
   {
     PyErr_Format(PyExc_TypeError, "attribute name must be string, not '%.200s'", name->ob_type->tp_name);
     return -1;
@@ -1772,6 +1787,7 @@ SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
   Py_DECREF(name);
   return res;
 }
+#endif
 
 
 #ifdef __cplusplus

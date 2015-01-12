@@ -3,7 +3,7 @@
                           A Quick Guide
                ======================================
 
-$LastChangedDate: 2011-10-19 03:51:28 +0000 (Wed, 19 Oct 2011) $
+$LastChangedDate: 2013-09-27 06:57:44 +0000 (Fri, 27 Sep 2013) $
 
 
 Contents:
@@ -96,29 +96,23 @@ I.    INTRODUCTION
          These diff streams are used everywhere -- over the network,
          in the repository, and in the client's working copy.
 
-      * libserf or libneon  (OPTIONAL for client)
+      * libserf  (OPTIONAL for client)
 
-         The Serf and Neon libraries both allow the Subversion client
-         to send HTTP requests.  This is necessary if you want your
-         client to access a repository served by the Apache HTTP
-         server.  There is an alternate 'svnserve' server as well,
-         though, and clients automatically know how to speak the
-         svnserve protocol.  Thus it's not strictly necessary for your
-         client to be able to speak HTTP... though we still recommend
-         that your client be built to speak both HTTP and svnserve
-         protocols.  Your client can be compiled against either
-         libserf or libneon (or both), as they offer competing
-         implementations.
+         The Serf library allows the Subversion client to send HTTP
+         requests.  This is necessary if you want your client to access
+         a repository served by the Apache HTTP server.  There is an
+         alternate 'svnserve' server as well, though, and clients
+         automatically know how to speak the svnserve protocol.
+         Thus it's not strictly necessary for your client to be able
+         to speak HTTP... though we still recommend that your client
+         be built to speak both HTTP and svnserve protocols.
 
       * OpenSSL (OPTIONAL for client and server)
 
          OpenSSL enables your client to access SSL-encrypted https://
-         URLs (using libserf or libneon) in addition to unencrypted
-         http:// URLs.  To use SSL with Subversion's WebDAV server,
-         Apache needs to be compiled with OpenSSL as well.
-
-         The Neon library can use the GnuTLS library as an alternative
-         to OpenSSL.
+         URLs (using libserf) in addition to unencrypted http:// URLs.
+         To use SSL with Subversion's WebDAV server, Apache needs to be
+         compiled with OpenSSL as well.
 
       * Berkeley DB (OPTIONAL for client and server)
 
@@ -177,14 +171,15 @@ I.    INTRODUCTION
       team has created a script that downloads the minimal prerequisite
       libraries (Apache Portable Runtime, Sqlite, and Zlib).  The script,
       'get-deps.sh', is available in the same directory as this file.
-      When run, it will place 'apr', 'apr-util', 'serf', 'neon',
-      'zlib', and 'sqlite-amalgamation' directories directly into your
-      unpacked Subversion distribution, where they will be automatically
-      configured and built by Subversion's build process.
+      When run, it will place 'apr', 'apr-util', 'serf', 'zlib', and
+      'sqlite-amalgamation' directories directly into your unpacked Subversion
+      distribution.  With the exception of sqlite-amalgamation, they will
+      still need to be configured, built and installed explicitly, and
+      Subversion's own configure script may need to be told where to find
+      them, if they were not installed in standard system locations.
 
       Note: there are optional dependencies (such as openssl, swig, and httpd)
-      which get-deps.sh does not download and Subversion does not attempt to
-      configure or build.
+      which get-deps.sh does not download.
 
       Note: Because previous builds of Subversion may have installed older
       versions of these libraries, you may want to run some of the cleanup
@@ -249,11 +244,10 @@ I.    INTRODUCTION
       be able to find them.
 
       There are a couple of options to "./configure" that tell it where
-      to look for the APR and APR-util libraries. By default, it will first
-      look for bundled versions of APR and APR-util, and then try to locate
-      already installed versions of the libraries using the apr-config and
-      apu-config scripts. These scripts provide all the relevant information
-      for the APR and APR-util installations.
+      to look for the APR and APR-util libraries. By default it will try
+      to locate the libraries using apr-config and apu-config scripts.
+      These scripts provide all the relevant information for the APR and
+      APR-util installations.
 
       If you want to specify the location of the APR library, you can use
       the "--with-apr=" option of "./configure". It should be able to find
@@ -270,10 +264,6 @@ I.    INTRODUCTION
           $ ./configure --with-apr=/usr/local/apache2 \
             --with-apr-util=/usr/local/apache2  ...
 
-      If you want Subversion to build the APR libraries from source
-      code as part of the Subversion build process, you can put their
-      source code into the "./apr" and "./apr-util" directories.
-
       Be sure to use a native Windows SVN client (as opposed to
       Cygwin's version) so that the .dsp files get carriage-returns at
       the ends of their lines.  Otherwise Visual Studio will complain
@@ -284,9 +274,12 @@ I.    INTRODUCTION
       library's directory, to regenerate the configure scripts and
       other files required for compiling the libraries:
 
-      $ cd apr; ./buildconf; cd ..
+      $ cd apr; ./buildconf; ./configure ...; make; make install; cd ..
 
-      $ cd apr-util; ./buildconf; cd ..
+      $ cd apr-util; ./buildconf; ./configure ...; make; make install; cd ..
+
+      Configure build and install both libraries before running Subversion's
+      configure script.
 
 
       2. Zlib  (REQUIRED)
@@ -313,44 +306,25 @@ I.    INTRODUCTION
       newer. The autogen.sh script knows about that.
 
 
-      5.  An HTTP client library:  serf or neon.  (OPTIONAL)
+      5.  Serf library 1.2.1 or newer (OPTIONAL)
 
       If you want your client to be able to speak to an Apache
       server (via a http:// or https:// URL), you must link against
-      at least one of these libraries.  Though optional, we strongly
-      recommend this.
+      serf.  Though optional, we strongly recommend this.
 
-      (If you link against both, Subversion will use ra_neon by
-      default.  Add "http-library = serf" to the [global] section of
-      your ~/.subversion/servers file to use ra_serf instead.)
-
-        a. Serf library 0.7.1 or newer (http://code.google.com/p/serf/)
-
-           In order to use ra_serf, you must install serf, and run
-           Subversion's ./configure with the argument --with-serf.  If
-           serf is installed in a non-standard place, you should use
+      In order to use ra_serf, you must install serf, and run Subversion's
+      ./configure with the argument --with-serf.  If serf is installed in a
+      non-standard place, you should use
 
                --with-serf=/path/to/serf/install
 
-           instead.
+      instead.
 
-           For more information on serf and Subversion's ra_serf, see
-           the file subversion/libsvn_ra_serf/README.
+      Serf can be obtained via your system's package distribution
+      system or directly from http://code.google.com/p/serf/.
 
-        b. Neon library 0.25 through 0.29 (http://www.webdav.org/neon/)
-
-           In order to use ra_neon, you must install neon, and run
-           Subversion's ./configure with the argument --with-neon.
-           Subversion's configuration mechanism should then detect the
-           installed Neon.  If it does not, you may need to set the
-           LDFLAGS environment variable when you run "./configure", or
-           specify Neon's location by passing the "--with-neon="
-           option to "./configure".  Look for the "neon-config" script
-           in a "bin/" subdirectory of the target of "--with-neon".
-           For example, if you pass "--with-neon=/usr/local/myneon/",
-           then there should be a file
-           "/usr/local/myneon/bin/neon-config".
-
+      For more information on serf and Subversion's ra_serf, see the file
+      subversion/libsvn_ra_serf/README.
 
       6. OpenSSL  (OPTIONAL)
 
@@ -358,28 +332,19 @@ I.    INTRODUCTION
       ### finding OpenSSL, but we may need more docco here. and w.r.t
       ### zlib.
 
-      The Serf and Neon libraries have support for SSL encryption by
-      relying on the OpenSSL library.
+      The Serf library has support for SSL encryption by relying on the
+      OpenSSL library.
 
         a. Using OpenSSL on the client through Serf
 
-        b. Using OpenSSL on the client through Neon
-
-          When Neon is created with this dependency, then the Subversion
-          client inherits the ability to support SSL connections.  Neon
-          also has support for sending compressed data using the zlib
-          library which a Subversion client can take advantage of.
-
-          On Unix systems, to build Neon with OpenSSL, you need OpenSSL
+          On Unix systems, to build Serf with OpenSSL, you need OpenSSL
           installed on your system, and you must add "--with-ssl" as a
           "./configure" parameter.  If your OpenSSL installation is hard
-          for Neon to find, you may need to use "--with-libs=/path/to/lib"
+          for Serf to find, you may need to use "--with-libs=/path/to/lib"
           in addition.  In particular, on Red Hat (but not Fedora Core) it
           is necessary to specify "--with-libs=/usr/kerberos" for OpenSSL
           to be found.  You can also specify a path to the zlib library
-          using "--with-libs".  Consult the Neon documentation for more
-          information on how to use these parameters and versions of
-          libraries you need.
+          using "--with-libs".
 
           Under Windows, you can specify the paths to these libraries by
           passing the options --with-zlib and --with-openssl to gen-make.py.
@@ -478,11 +443,11 @@ I.    INTRODUCTION
       is done: See section III for details.
 
 
-      10.  Python 2.4 or newer (http://www.python.org/)  (OPTIONAL)
+      10.  Python 2.5 or newer (http://www.python.org/)  (OPTIONAL)
 
       If you want to run "make check" or build from the latest source
       under Unix as described in section II.B and III.D, install
-      Python 2.4 or higher on your system. The majority of the test
+      Python 2.5 or higher on your system. The majority of the test
       suite is written in Python, as is part of Subversion's build
       system.
 
@@ -512,7 +477,7 @@ I.    INTRODUCTION
 
       13. SQLite  (REQUIRED)
 
-      Subversion 1.7 requires SQLite version 3.6.18 or above.  You can meet
+      Subversion 1.8 requires SQLite version 3.7.12 or above.  You can meet
       this dependency several ways:
         * Use an SQLite amalgamation file.
         * Specify an SQLite installation to use.
@@ -651,7 +616,6 @@ II.   INSTALLATION
           db*.i386.rpm     (Version 4.0.14 or greater; version 4.3.27 or
                             4.2.52 is preferred however)
           expat            (Comes with RedHat)
-          neon             (Version 0.25.5)
 
       After downloading, install it (as root user):
 
@@ -683,7 +647,7 @@ II.   INSTALLATION
           # rm -f /usr/local/lib/libsvn*
           # rm -f /usr/local/lib/libapr*
           # rm -f /usr/local/lib/libexpat*
-          # rm -f /usr/local/lib/libneon*
+          # rm -f /usr/local/lib/libserf*
 
       Start the process by running "autogen.sh":
 
@@ -733,19 +697,6 @@ II.   INSTALLATION
       It probably means that the dynamic loader/linker can't find all
       of the libsvn_* libraries.
 
-      Note that if you commonly build with the -jN option to make and
-      have used the get-deps.sh script to fetch dependencies, the make
-      step above may fail, because we don't ensure that third party
-      libraries in our source tree will finish building before
-      subversion itself.  If you want to use -jN, use the following
-      instead:
-
-          $ ./configure
-          $ make -jN external-all
-          $ make -jN local-all
-          $ make check
-          # make install
-
 
   C.  Building under Unix in Different Directories
       --------------------------------------------
@@ -755,7 +706,7 @@ II.   INSTALLATION
 
           $ svn co https://svn.apache.org/repos/asf/subversion/trunk svn
           $ cd svn
-          $ # get any dependencies to be built in-tree, if required
+          $ # get SQLite amalgamation if required
           $ chmod +x autogen.sh
           $ ./autogen.sh
           $ mkdir ../obj
@@ -842,18 +793,13 @@ II.   INSTALLATION
         is compatible with VC6, which is the one from february 2003.
         You can get it from MSDN:
         http://www.microsoft.com/msdownload/platformsdk/sdkupdate/psdk-full.htm
-      * Python 2.4 or higher, downloaded from http://www.python.org/ which is
+      * Python 2.5 or higher, downloaded from http://www.python.org/ which is
         used to generate the project files.
       * Perl 5.8 or higher from http://www.activestate.com/
-      * Awk (from http://cm.bell-labs.com/cm/cs/who/bwk/awk95.exe) is
+      * Awk (from http://www.cs.princeton.edu/~bwk/btl.mirror/awk95.exe) is
         needed to compile Apache or APR.  Note that this is the actual awk
         program, not an installer - just rename it to awk.exe and it is
         ready to use.
-      * Neon 0.26.1 or higher, downloaded from
-        http://www.webdav.org/neon/neon-0.26.1.tar.gz which is required
-        for building the client components.  Neon is included in the zip file
-        distribution.  (0.25.0+ compiles, but does not properly support all
-        HTTP auth types.)
       * Apache apr, apr-util, and optionally apr-iconv libraries, version
         0.9.12 or later. Included in both the Subversion dependencies ZIP file
         and the Apache 2 source zip.  If you are building from a Subversion
@@ -907,7 +853,7 @@ II.   INSTALLATION
 
   E.2 Notes
 
-      The Neon library supports secure connections with OpenSSL and
+      The Serf library supports secure connections with OpenSSL and
       on-the-wire compression with zlib. If you want to use the
       secure connections feature, you should pass the option
       "--with-openssl" to the gen-make.py script. See Section I.11 for
@@ -955,9 +901,8 @@ II.   INSTALLATION
         server dso modules and are using Visual Studio 6.  You must build
         and install it from source if you are not using Visual Studio 6 and
         want to build and/or test the server modules.
-      * If you checked out Subversion from the repository then extract neon
-        into SVN\src-trunk\neon, the zip file source distribution includes
-        neon.
+      * If you checked out Subversion from the repository then install the serf
+        sources into SVN\src-trunk\serf.
       * If you want BDB backend support, extract the Berkeley DB files
         into SVN\src-trunk\db4-win32. It's a good idea to add
         SVN\src-trunk\db4-win32\bin to your PATH, so that Subversion can find
@@ -1318,7 +1263,8 @@ III.  BUILDING A SUBVERSION SERVER
 
       After the make install, the Subversion shared libraries are in
       /usr/local/lib/.  mod_dav_svn.so should be installed in
-      /usr/local/apache2/modules/.
+      /usr/local/libexec/ (or elsewhere, such as /usr/local/apache2/modules/,
+      if you passed --with-apache-libexecdir to configure).
 
 
       Section II.E explains how to build the server on Windows.
@@ -1342,8 +1288,9 @@ III.  BUILDING A SUBVERSION SERVER
       http://httpd.apache.org/docs-2.0/
 
       First, your httpd.conf needs to load the mod_dav_svn module.
-      Subversion's 'make install' target should automatically add this
-      line for you.  But if apache gives you an error like "Unknown
+      If you pass --enable-mod-activation to Subversion's configure,
+      'make install' target should automatically add this line for you.
+      In any case, if Apache HTTPD gives you an error like "Unknown
       DAV provider: svn", then you may want to verify that this line
       exists in your httpd.conf:
 

@@ -97,10 +97,10 @@ if test -n "$APXS" && test "$APXS" != "no"; then
       apache_minor_version_wanted_regex="0"
       ;;
     1)
-      apache_minor_version_wanted_regex=["[1-4]"]
+      apache_minor_version_wanted_regex=["[1-5]"]
       ;;
     2)
-      apache_minor_version_wanted_regex=["[3-4]"]
+      apache_minor_version_wanted_regex=["[3-5]"]
       ;;
     *)
       AC_MSG_ERROR([unknown APR version])
@@ -141,33 +141,32 @@ fi
 
 AC_ARG_WITH(apache-libexecdir,
             [AS_HELP_STRING([[--with-apache-libexecdir[=PATH]]],
-                            [Install Apache modules to PATH instead of Apache's
-                             configured modules directory; PATH "no"
-                             or --without-apache-libexecdir means install
-                             to LIBEXECDIR.])],
-[
-    APACHE_LIBEXECDIR="$withval"
-])
+                            [Install Apache modules to Apache's configured
+                             modules directory instead of LIBEXECDIR;
+                             if PATH is given, install to PATH.])],
+[APACHE_LIBEXECDIR="$withval"],[APACHE_LIBEXECDIR='no'])
 
+INSTALL_APACHE_MODS=false
 if test -n "$APXS" && test "$APXS" != "no"; then
     APXS_CC="`$APXS -q CC`"
     APACHE_INCLUDES="$APACHE_INCLUDES -I$APXS_INCLUDE"
 
-    if test -z "$APACHE_LIBEXECDIR"; then
-        APACHE_LIBEXECDIR="`$APXS -q libexecdir`"
-    elif test "$APACHE_LIBEXECDIR" = 'no'; then
+    if test "$APACHE_LIBEXECDIR" = 'no'; then
         APACHE_LIBEXECDIR="$libexecdir"
+    elif test "$APACHE_LIBEXECDIR" = 'yes'; then
+        APACHE_LIBEXECDIR="`$APXS -q libexecdir`"
     fi
 
     BUILD_APACHE_RULE=apache-mod
     INSTALL_APACHE_RULE=install-mods-shared
+    INSTALL_APACHE_MODS=true
 
     case $host in
       *-*-cygwin*)
         APACHE_LDFLAGS="-shrext .so"
         ;;
     esac
-else
+elif test x"$APXS" != x"no"; then
     echo "=================================================================="
     echo "WARNING: skipping the build of mod_dav_svn"
     echo "         try using --with-apxs"
@@ -178,6 +177,7 @@ AC_SUBST(APXS)
 AC_SUBST(APACHE_LDFLAGS)
 AC_SUBST(APACHE_INCLUDES)
 AC_SUBST(APACHE_LIBEXECDIR)
+AC_SUBST(INSTALL_APACHE_MODS)
 
 # there aren't any flags that interest us ...
 #if test -n "$APXS" && test "$APXS" != "no"; then

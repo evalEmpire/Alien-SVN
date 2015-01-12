@@ -40,8 +40,7 @@
 #include "svn_props.h"
 
 #include "wc.h"
-#include "adm_files.h"
-#include "props.h"
+#include "conflicts.h"
 #include "translate.h"
 #include "wc_db.h"
 
@@ -149,26 +148,6 @@ compare_and_verify(svn_boolean_t *modified_p,
       return svn_error_trace(svn_stream_close(pristine_stream));
     }
 
-#if 0
-  /* ### On second thought, I think this needs more review before enabling
-     ### This case might break when we have a fixed "\r\n" EOL, because
-     ### we use a repair mode in the compare itself. */
-  if (need_translation
-      && !special
-      && !props_mod
-      && (keywords == NULL)
-      && (versioned_file_size < pristine_file_size))
-    {
-      *modified_p = TRUE; /* The file is < its repository normal form
-                             and the properties didn't change.
-
-                             That must be a change. */
-
-      /* ### Why did we open the pristine? */
-      return svn_error_trace(svn_stream_close(pristine_stream));
-    }
-#endif
-
   /* ### Other checks possible? */
 
   if (need_translation)
@@ -192,7 +171,8 @@ compare_and_verify(svn_boolean_t *modified_p,
                 eol_str = SVN_SUBST_NATIVE_EOL_STR;
               else if (eol_style != svn_subst_eol_style_fixed
                        && eol_style != svn_subst_eol_style_none)
-                return svn_error_create(SVN_ERR_IO_UNKNOWN_EOL, NULL, NULL);
+                return svn_error_create(SVN_ERR_IO_UNKNOWN_EOL,
+                                        svn_stream_close(v_stream), NULL);
 
               /* Wrap file stream to detranslate into normal form,
                * "repairing" the EOL style if it is inconsistent. */
@@ -244,7 +224,7 @@ svn_wc__internal_file_modified_p(svn_boolean_t *modified_p,
   svn_stream_t *pristine_stream;
   svn_filesize_t pristine_size;
   svn_wc__db_status_t status;
-  svn_wc__db_kind_t kind;
+  svn_node_kind_t kind;
   const svn_checksum_t *checksum;
   svn_filesize_t recorded_size;
   apr_time_t recorded_mod_time;
@@ -265,7 +245,7 @@ svn_wc__internal_file_modified_p(svn_boolean_t *modified_p,
   /* If we don't have a pristine or the node has a status that allows a
      pristine, just say that the node is modified */
   if (!checksum
-      || (kind != svn_wc__db_kind_file)
+      || (kind != svn_node_file)
       || ((status != svn_wc__db_status_normal)
           && (status != svn_wc__db_status_added)))
     {
@@ -273,8 +253,8 @@ svn_wc__internal_file_modified_p(svn_boolean_t *modified_p,
       return SVN_NO_ERROR;
     }
 
-  SVN_ERR(svn_io_stat_dirent(&dirent, local_abspath, TRUE,
-                             scratch_pool, scratch_pool));
+  SVN_ERR(svn_io_stat_dirent2(&dirent, local_abspath, FALSE, TRUE,
+                              scratch_pool, scratch_pool));
 
   if (dirent->kind != svn_node_file)
     {
@@ -374,17 +354,167 @@ svn_error_t *
 svn_wc_text_modified_p2(svn_boolean_t *modified_p,
                         svn_wc_context_t *wc_ctx,
                         const char *local_abspath,
-                        svn_boolean_t force_comparison,
+                        svn_boolean_t unused,
                         apr_pool_t *scratch_pool)
 {
-  /* ### We ignore FORCE_COMPARISON, but we also fixed its only
-         remaining use-case */
   return svn_wc__internal_file_modified_p(modified_p, wc_ctx->db,
                                           local_abspath, FALSE, scratch_pool);
 }
 
 
 
+static svn_error_t *
+internal_conflicted_p(svn_boolean_t *text_conflicted_p,
+                      svn_boolean_t *prop_conflicted_p,
+                      svn_boolean_t *tree_conflicted_p,
+                      svn_boolean_t *ignore_move_edit_p,
+                      svn_wc__db_t *db,
+                      const char *local_abspath,
+                      apr_pool_t *scratch_pool)
+{
+  svn_node_kind_t kind;
+  svn_skel_t *conflicts;
+  svn_boolean_t resolved_text = FALSE;
+  svn_boolean_t resolved_props = FALSE;
+
+  SVN_ERR(svn_wc__db_read_conflict(&conflicts, db, local_abspath,
+                                   scratch_pool, scratch_pool));
+
+  if (!conflicts)
+    {
+      if (text_conflicted_p)
+        *text_conflicted_p = FALSE;
+      if (prop_conflicted_p)
+        *prop_conflicted_p = FALSE;
+      if (tree_conflicted_p)
+        *tree_conflicted_p = FALSE;
+      if (ignore_move_edit_p)
+        *ignore_move_edit_p = FALSE;
+
+      return SVN_NO_ERROR;
+    }
+
+  SVN_ERR(svn_wc__conflict_read_info(NULL, NULL, text_conflicted_p,
+                                     prop_conflicted_p, tree_conflicted_p,
+                                     db, local_abspath, conflicts,
+                                     scratch_pool, scratch_pool));
+
+  if (text_conflicted_p && *text_conflicted_p)
+    {
+      const char *mine_abspath;
+      const char *their_old_abspath;
+      const char *their_abspath;
+      svn_boolean_t done = FALSE;
+
+      /* Look for any text conflict, exercising only as much effort as
+         necessary to obtain a definitive answer.  This only applies to
+         files, but we don't have to explicitly check that entry is a
+         file, since these attributes would never be set on a directory
+         anyway.  A conflict file entry notation only counts if the
+         conflict file still exists on disk.  */
+
+      SVN_ERR(svn_wc__conflict_read_text_conflict(&mine_abspath,
+                                                  &their_old_abspath,
+                                                  &their_abspath,
+                                                  db, local_abspath, conflicts,
+                                                  scratch_pool, scratch_pool));
+
+      if (mine_abspath)
+        {
+          SVN_ERR(svn_io_check_path(mine_abspath, &kind, scratch_pool));
+
+          *text_conflicted_p = (kind == svn_node_file);
+
+          if (*text_conflicted_p)
+            done = TRUE;
+        }
+
+      if (!done && their_abspath)
+        {
+          SVN_ERR(svn_io_check_path(their_abspath, &kind, scratch_pool));
+
+          *text_conflicted_p = (kind == svn_node_file);
+
+          if (*text_conflicted_p)
+            done = TRUE;
+        }
+
+        if (!done && their_old_abspath)
+        {
+          SVN_ERR(svn_io_check_path(their_old_abspath, &kind, scratch_pool));
+
+          *text_conflicted_p = (kind == svn_node_file);
+
+          if (*text_conflicted_p)
+            done = TRUE;
+        }
+
+        if (!done && (mine_abspath || their_abspath || their_old_abspath))
+          resolved_text = TRUE; /* Remove in-db conflict marker */
+    }
+
+  if (prop_conflicted_p && *prop_conflicted_p)
+    {
+      const char *prej_abspath;
+
+      SVN_ERR(svn_wc__conflict_read_prop_conflict(&prej_abspath,
+                                                  NULL, NULL, NULL, NULL,
+                                                  db, local_abspath, conflicts,
+                                                  scratch_pool, scratch_pool));
+
+      if (prej_abspath)
+        {
+          SVN_ERR(svn_io_check_path(prej_abspath, &kind, scratch_pool));
+
+          *prop_conflicted_p = (kind == svn_node_file);
+
+          if (! *prop_conflicted_p)
+            resolved_props = TRUE; /* Remove in-db conflict marker */
+        }
+    }
+
+  if (ignore_move_edit_p)
+    {
+      *ignore_move_edit_p = FALSE;
+      if (tree_conflicted_p && *tree_conflicted_p)
+        {
+          svn_wc_conflict_reason_t reason;
+          svn_wc_conflict_action_t action;
+
+          SVN_ERR(svn_wc__conflict_read_tree_conflict(&reason, &action, NULL,
+                                                      db, local_abspath,
+                                                      conflicts,
+                                                      scratch_pool,
+                                                      scratch_pool));
+
+          if (reason == svn_wc_conflict_reason_moved_away
+              && action == svn_wc_conflict_action_edit)
+            {
+              *tree_conflicted_p = FALSE;
+              *ignore_move_edit_p = TRUE;
+            }
+        }
+    }
+
+  if (resolved_text || resolved_props)
+    {
+      svn_boolean_t own_lock;
+
+      /* The marker files are missing, so "repair" wc.db if we can */
+      SVN_ERR(svn_wc__db_wclock_owns_lock(&own_lock, db, local_abspath, FALSE,
+                                          scratch_pool));
+      if (own_lock)
+        SVN_ERR(svn_wc__db_op_mark_resolved(db, local_abspath,
+                                            resolved_text,
+                                            resolved_props,
+                                            FALSE /* resolved_tree */,
+                                            NULL /* work_items */,
+                                            scratch_pool));
+    }
+
+  return SVN_NO_ERROR;
+}
+
 svn_error_t *
 svn_wc__internal_conflicted_p(svn_boolean_t *text_conflicted_p,
                               svn_boolean_t *prop_conflicted_p,
@@ -393,109 +523,38 @@ svn_wc__internal_conflicted_p(svn_boolean_t *text_conflicted_p,
                               const char *local_abspath,
                               apr_pool_t *scratch_pool)
 {
-  svn_node_kind_t kind;
-  svn_wc__db_kind_t node_kind;
-  const apr_array_header_t *conflicts;
-  int i;
-  svn_boolean_t conflicted;
-
-  if (text_conflicted_p)
-    *text_conflicted_p = FALSE;
-  if (prop_conflicted_p)
-    *prop_conflicted_p = FALSE;
-  if (tree_conflicted_p)
-    *tree_conflicted_p = FALSE;
-
-  SVN_ERR(svn_wc__db_read_info(NULL, &node_kind, NULL, NULL, NULL, NULL, NULL,
-                               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                               NULL, NULL, NULL, NULL, NULL, &conflicted,
-                               NULL, NULL, NULL, NULL, NULL, NULL,
-                               db, local_abspath, scratch_pool,
-                               scratch_pool));
-
-  if (!conflicted)
-    return SVN_NO_ERROR;
-
-
-  SVN_ERR(svn_wc__db_read_conflicts(&conflicts, db, local_abspath,
-                                    scratch_pool, scratch_pool));
-
-  for (i = 0; i < conflicts->nelts; i++)
-    {
-      const svn_wc_conflict_description2_t *cd;
-      cd = APR_ARRAY_IDX(conflicts, i, const svn_wc_conflict_description2_t *);
-
-      switch (cd->kind)
-        {
-          case svn_wc_conflict_kind_text:
-            /* Look for any text conflict, exercising only as much effort as
-               necessary to obtain a definitive answer.  This only applies to
-               files, but we don't have to explicitly check that entry is a
-               file, since these attributes would never be set on a directory
-               anyway.  A conflict file entry notation only counts if the
-               conflict file still exists on disk.  */
-
-            if (!text_conflicted_p || *text_conflicted_p)
-              break;
-
-            if (cd->base_abspath)
-              {
-                SVN_ERR(svn_io_check_path(cd->base_abspath, &kind,
-                                          scratch_pool));
-
-                *text_conflicted_p = (kind == svn_node_file);
-
-                if (*text_conflicted_p)
-                  break;
-              }
-
-            if (cd->their_abspath)
-              {
-                SVN_ERR(svn_io_check_path(cd->their_abspath, &kind,
-                                          scratch_pool));
-
-                *text_conflicted_p = (kind == svn_node_file);
-
-                if (*text_conflicted_p)
-                  break;
-              }
-
-            if (cd->my_abspath)
-              {
-                SVN_ERR(svn_io_check_path(cd->my_abspath, &kind,
-                                          scratch_pool));
-
-                *text_conflicted_p = (kind == svn_node_file);
-              }
-            break;
-
-          case svn_wc_conflict_kind_property:
-            if (!prop_conflicted_p || *prop_conflicted_p)
-              break;
-
-            if (cd->their_abspath)
-              {
-                SVN_ERR(svn_io_check_path(cd->their_abspath, &kind,
-                                          scratch_pool));
-
-                *prop_conflicted_p = (kind == svn_node_file);
-              }
-
-            break;
-
-          case svn_wc_conflict_kind_tree:
-            if (tree_conflicted_p)
-              *tree_conflicted_p = TRUE;
-
-            break;
-
-          default:
-            /* Ignore other conflict types */
-            break;
-        }
-    }
+  SVN_ERR(internal_conflicted_p(text_conflicted_p, prop_conflicted_p,
+                                tree_conflicted_p, NULL,
+                                db, local_abspath, scratch_pool));
   return SVN_NO_ERROR;
 }
+
+svn_error_t *
+svn_wc__conflicted_for_update_p(svn_boolean_t *conflicted_p,
+                                svn_boolean_t *conflict_ignored_p,
+                                svn_wc__db_t *db,
+                                const char *local_abspath,
+                                svn_boolean_t tree_only,
+                                apr_pool_t *scratch_pool)
+{
+  svn_boolean_t text_conflicted, prop_conflicted, tree_conflicted;
+  svn_boolean_t conflict_ignored;
+
+  if (!conflict_ignored_p)
+    conflict_ignored_p = &conflict_ignored;
+
+  SVN_ERR(internal_conflicted_p(tree_only ? NULL: &text_conflicted,
+                                tree_only ? NULL: &prop_conflicted,
+                                &tree_conflicted, conflict_ignored_p,
+                                db, local_abspath, scratch_pool));
+  if (tree_only)
+    *conflicted_p = tree_conflicted;
+  else
+    *conflicted_p = text_conflicted || prop_conflicted || tree_conflicted;
+
+  return SVN_NO_ERROR;
+}
+
 
 svn_error_t *
 svn_wc_conflicted_p3(svn_boolean_t *text_conflicted_p,
@@ -527,19 +586,6 @@ svn_wc__min_max_revisions(svn_revnum_t *min_revision,
                                                       local_abspath,
                                                       committed,
                                                       scratch_pool));
-}
-
-
-svn_error_t *
-svn_wc__is_sparse_checkout(svn_boolean_t *is_sparse_checkout,
-                           svn_wc_context_t *wc_ctx,
-                           const char *local_abspath,
-                           apr_pool_t *scratch_pool)
-{
-  return svn_error_trace(svn_wc__db_is_sparse_checkout(is_sparse_checkout,
-                                                       wc_ctx->db,
-                                                       local_abspath,
-                                                       scratch_pool));
 }
 
 

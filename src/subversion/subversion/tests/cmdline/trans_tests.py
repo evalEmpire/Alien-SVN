@@ -25,7 +25,9 @@
 ######################################################################
 
 # General modules
-import os, re
+import os, re, logging, sys
+
+logger = logging.getLogger()
 
 # Our testing module
 import svntest
@@ -92,13 +94,13 @@ def check_keywords(actual_kw, expected_kw, name):
   """A Helper function to compare two keyword lists"""
 
   if len(actual_kw) != len(expected_kw):
-    print("Keyword lists are different by size")
+    logger.warn("Keyword lists are different by size")
     raise svntest.Failure
 
   for i in range(0,len(actual_kw)):
     if actual_kw[i] != expected_kw[i]:
-      print('%s item %s, Expected: %s' % (name, i, expected_kw[i][:-1]))
-      print('%s item %s, Got:      %s' % (name, i, actual_kw[i][:-1]))
+      logger.warn('%s item %s, Expected: %s', name, i, expected_kw[i][:-1])
+      logger.warn('%s item %s, Got:      %s', name, i, actual_kw[i][:-1])
       raise svntest.Failure
 
 def setup_working_copy(wc_dir, value_len):
@@ -304,7 +306,7 @@ def keywords_from_birth(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$URL: (http|https|file|svn|svn\\+ssh)://",
                         lines[0]))):
-    print("URL expansion failed for %s" % url_unexp_path)
+    logger.warn("URL expansion failed for %s", url_unexp_path)
     raise svntest.Failure
   fp.close()
 
@@ -314,7 +316,7 @@ def keywords_from_birth(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$URL: (http|https|file|svn|svn\\+ssh)://",
                         lines[0]))):
-    print("URL expansion failed for %s" % url_exp_path)
+    logger.warn("URL expansion failed for %s", url_exp_path)
     raise svntest.Failure
   fp.close()
 
@@ -323,7 +325,7 @@ def keywords_from_birth(sbox):
   lines = fp.readlines()
   if not ((len(lines) == 1)
           and (re.match("\$Id: id_unexp", lines[0]))):
-    print("Id expansion failed for %s" % id_exp_path)
+    logger.warn("Id expansion failed for %s", id_exp_path)
     raise svntest.Failure
   fp.close()
 
@@ -332,7 +334,7 @@ def keywords_from_birth(sbox):
   lines = fp.readlines()
   if not ((len(lines) == 1)
           and (re.match("\$Id: id_exp", lines[0]))):
-    print("Id expansion failed for %s" % id_exp_path)
+    logger.warn("Id expansion failed for %s", id_exp_path)
     raise svntest.Failure
   fp.close()
 
@@ -342,7 +344,7 @@ def keywords_from_birth(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$Header: (https?|file|svn|svn\\+ssh)://.* jrandom",
                         lines[0]))):
-    print("Header expansion failed for %s" % header_unexp_path)
+    logger.warn("Header expansion failed for %s", header_unexp_path)
     raise svntest.Failure
   fp.close()
 
@@ -352,7 +354,7 @@ def keywords_from_birth(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$Header: (https?|file|svn|svn\\+ssh)://.* jrandom",
                         lines[0]))):
-    print("Header expansion failed for %s" % header_exp_path)
+    logger.warn("Header expansion failed for %s", header_exp_path)
     raise svntest.Failure
   fp.close()
 
@@ -401,7 +403,7 @@ def keywords_from_birth(sbox):
   lines = fp.readlines()
   if not ((len(lines) == 1)
           and (re.match("\$Id: .*id with space", lines[0]))):
-    print("Id expansion failed for %s" % id_with_space_path)
+    logger.warn("Id expansion failed for %s", id_with_space_path)
     raise svntest.Failure
   fp.close()
 
@@ -411,7 +413,7 @@ def keywords_from_birth(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$Id: .*id_exp with_\$_sign [^$]* jrandom \$",
                         lines[0]))):
-    print("Id expansion failed for %s" % id_exp_with_dollar_path)
+    logger.warn("Id expansion failed for %s", id_exp_with_dollar_path)
 
     raise svntest.Failure
   fp.close()
@@ -627,7 +629,7 @@ def keyword_expanded_on_checkout(sbox):
   if not ((len(lines) == 1)
           and (re.match("\$URL: (http|https|file|svn|svn\\+ssh)://",
                         lines[0]))):
-    print("URL expansion failed for %s" % other_url_path)
+    logger.warn("URL expansion failed for %s", other_url_path)
     raise svntest.Failure
   fp.close()
 
@@ -764,7 +766,7 @@ def propset_commit_checkout_nocrash(sbox):
 
   mu_other_contents = open(mu_other_path).read()
   if mu_other_contents != "This is the file 'mu'.\n$Rev: 3 $":
-    print("'%s' does not have the expected contents" % mu_other_path)
+    logger.warn("'%s' does not have the expected contents", mu_other_path)
     raise svntest.Failure
 
 
@@ -878,8 +880,78 @@ def props_only_file_update(sbox):
     temps.remove('prop-base')
     temps.remove('props')
   if temps:
-    print('Temporary files leftover: %s' % (', '.join(temps),))
+    logger.warn('Temporary files leftover: %s', (', '.join(temps),))
     raise svntest.Failure
+
+@XFail()
+@Issues(4327)
+def autoprops_inconsistent_eol(sbox):
+  "able to handle inconsistent eols on add"
+
+  sbox.build(read_only = True)
+  wc_dir = sbox.wc_dir
+
+  text = 'line with NL\n' + \
+         'line with CR\r' + \
+         'line with CRLF\r\n' + \
+         'line with LFCR (or is that not a line? ;-)\n\r'
+
+  # Compensate for python smartness
+  if sys.platform == 'win32':
+    expected_text = text.replace('\r\n', '\n')
+  else:
+    expected_text = text
+
+  sbox.simple_add_text(text, 'add.c')
+  sbox.simple_add_text(text, 'add-force.c')
+
+  svntest.actions.run_and_verify_svn(None, None, '.*inconsistent newlines.*',
+                                     'ps', 'svn:eol-style', 'native',
+                                     sbox.ospath('add.c'))
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'ps', 'svn:eol-style', 'native', '--force',
+                                     sbox.ospath('add.c'))
+
+  expected_disk = svntest.main.greek_state.copy()
+
+  expected_disk.add({
+    'add-force.c'  : Item(contents=expected_text),
+    'add.c'        : Item(contents=expected_text),
+  })
+
+  # Verify that both add and add-force haven't been changed
+  svntest.actions.verify_disk(wc_dir, expected_disk)
+
+  sbox.simple_propset('svn:auto-props', '*.c = svn:eol-style=native', '')
+
+
+  svntest.main.file_write(sbox.ospath('auto.c'), text, mode='wb')
+
+  expected_output = ['A         %s\n' % sbox.ospath('auto.c')]
+
+  # Fails with svn: E200009: File '.*auto.c' has inconsistent newlines
+  svntest.actions.run_and_verify_svn(None, expected_output,
+                                     [], 'add', sbox.ospath('auto.c'))
+
+@XFail()
+@Issues(4327)
+def autoprops_inconsistent_mime(sbox):
+  "able to handle inconsistent mime on add"
+
+  sbox.build(read_only = True)
+
+  sbox.simple_propset('svn:auto-props',
+                      '*.c = svn:eol-style=native\n'
+                      'c.* = svn:mime-type=application/octet-stream', '')
+
+  sbox.simple_append('c.iota.c', '')
+
+  expected_output = ['A         %s\n' % sbox.ospath('c.iota.c')]
+
+  # Fails with svn: E200009: File '.*c.iota.c' has binary mime type property
+  svntest.actions.run_and_verify_svn(None, expected_output,
+                                     [], 'add', sbox.ospath('c.iota.c'))
 
 
 ########################################################################
@@ -900,6 +972,8 @@ test_list = [ None,
               propset_commit_checkout_nocrash,
               propset_revert_noerror,
               props_only_file_update,
+              autoprops_inconsistent_eol,
+              autoprops_inconsistent_mime,
              ]
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 package Alien::SVN;
 
-use version;  our $VERSION = qw(1.7.19.0);
+use version;  our $VERSION = qw(1.8.11.0);
 
 =head1 NAME
 
@@ -14,7 +14,7 @@ depend on L<Alien::SVN> instead and then the CPAN shell can handle
 automatic installation.  This is particularly useful for programs like
 SVK.
 
-It comes with a copy of Subversion 1.7.19 which it will compile but
+It comes with a copy of Subversion 1.8.11 which it will compile but
 only installs the Perl and Subversion libraries.  They will be
 installed to your Perl library, not your system library.  B<The
 subversion binaries will not be installed>.

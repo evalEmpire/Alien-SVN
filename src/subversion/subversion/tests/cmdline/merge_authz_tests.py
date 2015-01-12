@@ -73,7 +73,10 @@ from svntest.actions import inject_conflict_into_expected_state
 #         This is *not* a full test of issue #2829, see also merge_tests.py,
 #         search for "2829".  This tests the problem where a merge adds a path
 #         with a missing sibling and so needs its own explicit mergeinfo.
-@Issues(2893,2997,2829)
+#
+# #4056 - Don't record non-inheritable mergeinfo if missing subtrees are not
+#         touched by the full-depth diff
+@Issues(2893,2997,2829,4056)
 @SkipUnless(svntest.main.server_has_mergeinfo)
 @Skip(svntest.main.is_ra_type_file)
 def mergeinfo_and_skipped_paths(sbox):
@@ -119,7 +122,7 @@ def mergeinfo_and_skipped_paths(sbox):
   A_COPY_2_H_path = os.path.join(wc_restricted, "A_COPY_2", "D", "H")
   A_COPY_3_path = os.path.join(wc_restricted, "A_COPY_3")
   omega_path = os.path.join(wc_restricted, "A_COPY", "D", "H", "omega")
-  zeta_path = os.path.join(wc_dir, "A", "D", "H", "zeta")
+  zeta_path = sbox.ospath("A/D/H/zeta")
 
   # Merge r4:8 into the restricted WC's A_COPY.
   #
@@ -181,7 +184,7 @@ def mergeinfo_and_skipped_paths(sbox):
     'C'         : Item(),
     })
   expected_skip = wc.State(A_COPY_path, {
-    'B/E'       : Item(),
+    'B/E'       : Item(verb='Skipped missing target'),
     })
   svntest.actions.run_and_verify_merge(A_COPY_path, '4', '8',
                                        sbox.repo_url + '/A', None,
@@ -209,6 +212,8 @@ def mergeinfo_and_skipped_paths(sbox):
   # always takes precedence in terms of getting *non*-inheritable mergeinfo.
   expected_output = wc.State(A_COPY_2_path, {
     'D/H/omega' : Item(status='U '),
+    # Below the skip
+    'D/G/rho'   : Item(status='  ', treeconflict='U'),
     })
   expected_mergeinfo_output = wc.State(A_COPY_2_path, {
     ''          : Item(status=' U'),
@@ -253,9 +258,9 @@ def mergeinfo_and_skipped_paths(sbox):
     'C'         : Item(),
     })
   expected_skip = wc.State(A_COPY_2_path, {
-    'B/E'     : Item(),
-    'D/G'       : Item(),
-    'D/H/psi'   : Item(),
+    'B/E'     : Item(verb='Skipped missing target'),
+    'D/G'     : Item(verb='Skipped missing target'),
+    'D/H/psi' : Item(verb='Skipped missing target'),
     })
   svntest.actions.run_and_verify_merge(A_COPY_2_path, '4', '8',
                                        sbox.repo_url + '/A', None,
@@ -320,7 +325,8 @@ def mergeinfo_and_skipped_paths(sbox):
     'mu'        : Item("This is the file 'mu'.\n"),
     'C'         : Item(),
     })
-  expected_skip = wc.State(A_COPY_3_path, {'B/E' : Item()})
+  expected_skip = wc.State(A_COPY_3_path,
+                           {'B/E' : Item(verb='Skipped missing target')})
   svntest.actions.run_and_verify_merge(A_COPY_3_path, '5', '7',
                                        sbox.repo_url + '/A', None,
                                        expected_output,
@@ -358,7 +364,7 @@ def mergeinfo_and_skipped_paths(sbox):
     'chi'   : Item("This is the file 'chi'.\n"),
     })
   expected_skip = wc.State(A_COPY_2_H_path, {
-    'psi'   : Item(),
+    'psi'   : Item(verb='Skipped missing target'),
     })
   # Note we don't bother checking expected mergeinfo output because the
   # multiple merges being performed here, -c5 and -c8, will result in
@@ -393,10 +399,54 @@ def mergeinfo_and_skipped_paths(sbox):
 
   # Merge -r7:9 to the restricted WC's A_COPY_2/D/H.
   #
+  # r9 adds a path, 'A_COPY_2/D/H/zeta', which has a missing sibling 'psi',
+  # but since 'psi' is untouched by the merge it isn't skipped, and since it
+  # isn't skipped, its parent 'A_COPY_2/D/H' won't get non-inheritable
+  # mergeinfo set on it to describe the merge, so none of the parent's
+  # children will get explicit mergeinfo -- see issue #4056.
+  expected_output = wc.State(A_COPY_2_H_path, {
+    'omega' : Item(status='U '),
+    'zeta'  : Item(status='A '),
+    })
+  expected_mergeinfo_output = wc.State(A_COPY_2_H_path, {
+    ''      : Item(status=' U'),
+    'omega' : Item(status=' U'),
+    })
+  expected_elision_output = wc.State(A_COPY_2_H_path, {
+    'omega' : Item(status=' U'),
+    })
+  expected_status = wc.State(A_COPY_2_H_path, {
+    ''      : Item(status=' M', wc_rev=8),
+    'chi'   : Item(status='  ', wc_rev=8),
+    'omega' : Item(status='M ', wc_rev=8),
+    'zeta'  : Item(status='A ', copied='+', wc_rev='-'),
+    })
+  expected_disk = wc.State('', {
+    ''      : Item(props={SVN_PROP_MERGEINFO : '/A/D/H:8-9'}),
+    'omega' : Item("New content"),
+    'chi'   : Item("This is the file 'chi'.\n"),
+    'zeta'  : Item("This is the file 'zeta'.\n"),
+    })
+  expected_skip = wc.State(A_COPY_2_H_path, {})
+  svntest.actions.run_and_verify_merge(A_COPY_2_H_path, '7', '9',
+                                       sbox.repo_url + '/A/D/H', None,
+                                       expected_output,
+                                       expected_mergeinfo_output,
+                                       expected_elision_output,
+                                       expected_disk,
+                                       expected_status,
+                                       expected_skip,
+                                       None, None, None, None,
+                                       None, 1, 0)
+
+  # Merge -r4:9 to the restricted WC's A_COPY_2/D/H.
+  #
   # r9 adds a path, 'A_COPY_2/D/H/zeta', which has a parent with
-  # non-inheritable mergeinfo (due to the fact 'A_COPY_2/D/H/psi' is missing).
-  # 'A_COPY_2/D/H/zeta' must therefore get its own explicit mergeinfo from
-  # this merge.
+  # non-inheritable mergeinfo (due to the fact 'A_COPY_2/D/H/psi' is missing
+  # and skipped). 'A_COPY_2/D/H/zeta' must therefore get its own explicit
+  # mergeinfo from this merge.
+  svntest.actions.run_and_verify_svn(None, None, [], 'revert', '--recursive',
+                                     wc_restricted)
   expected_output = wc.State(A_COPY_2_H_path, {
     'omega' : Item(status='U '),
     'zeta'  : Item(status='A '),
@@ -415,15 +465,17 @@ def mergeinfo_and_skipped_paths(sbox):
     'zeta'  : Item(status='A ', copied='+', wc_rev='-'),
     })
   expected_disk = wc.State('', {
-    ''      : Item(props={SVN_PROP_MERGEINFO : '/A/D/H:8-9*'}),
+    ''      : Item(props={SVN_PROP_MERGEINFO : '/A/D/H:5-9*'}),
     'omega' : Item("New content",
-                   props={SVN_PROP_MERGEINFO : '/A/D/H/omega:8-9'}),
+                   props={SVN_PROP_MERGEINFO : '/A/D/H/omega:5-9'}),
     'chi'   : Item("This is the file 'chi'.\n"),
     'zeta'  : Item("This is the file 'zeta'.\n",
                    props={SVN_PROP_MERGEINFO : '/A/D/H/zeta:9'}),
     })
-  expected_skip = wc.State(A_COPY_2_H_path, {})
-  svntest.actions.run_and_verify_merge(A_COPY_2_H_path, '7', '9',
+  expected_skip = wc.State(A_COPY_2_H_path, {
+    'psi' : Item(verb='Skipped missing target'),
+    })
+  svntest.actions.run_and_verify_merge(A_COPY_2_H_path, '4', '9',
                                        sbox.repo_url + '/A/D/H', None,
                                        expected_output,
                                        expected_mergeinfo_output,
@@ -451,10 +503,10 @@ def merge_fails_if_subtree_is_deleted_on_src(sbox):
                              svntest.main.wc_author2 + " = rw")})
 
   # Some paths we'll care about
-  Acopy_path = os.path.join(wc_dir, 'A_copy')
-  gamma_path = os.path.join(wc_dir, 'A', 'D', 'gamma')
-  Acopy_gamma_path = os.path.join(wc_dir, 'A_copy', 'D', 'gamma')
-  Acopy_D_path = os.path.join(wc_dir, 'A_copy', 'D')
+  Acopy_path = sbox.ospath('A_copy')
+  gamma_path = sbox.ospath('A/D/gamma')
+  Acopy_gamma_path = sbox.ospath('A_copy/D/gamma')
+  Acopy_D_path = sbox.ospath('A_copy/D')
   A_url = sbox.repo_url + '/A'
   Acopy_url = sbox.repo_url + '/A_copy'
 
@@ -572,12 +624,12 @@ def reintegrate_fails_if_no_root_access(sbox):
 
   # Some paths we'll care about
   wc_dir = sbox.wc_dir
-  A_path          = os.path.join(wc_dir, 'A')
-  A_COPY_path     = os.path.join(wc_dir, 'A_COPY')
-  beta_COPY_path  = os.path.join(wc_dir, 'A_COPY', 'B', 'E', 'beta')
-  rho_COPY_path   = os.path.join(wc_dir, 'A_COPY', 'D', 'G', 'rho')
-  omega_COPY_path = os.path.join(wc_dir, 'A_COPY', 'D', 'H', 'omega')
-  psi_COPY_path   = os.path.join(wc_dir, 'A_COPY', 'D', 'H', 'psi')
+  A_path          = sbox.ospath('A')
+  A_COPY_path     = sbox.ospath('A_COPY')
+  beta_COPY_path  = sbox.ospath('A_COPY/B/E/beta')
+  rho_COPY_path   = sbox.ospath('A_COPY/D/G/rho')
+  omega_COPY_path = sbox.ospath('A_COPY/D/H/omega')
+  psi_COPY_path   = sbox.ospath('A_COPY/D/H/psi')
 
   # Copy A@1 to A_COPY in r2, and then make some changes to A in r3-6.
   sbox.build()
@@ -585,7 +637,7 @@ def reintegrate_fails_if_no_root_access(sbox):
   expected_disk, expected_status = set_up_branch(sbox)
 
   # Make a change on the branch, to A_COPY/mu, commit in r7.
-  svntest.main.file_write(os.path.join(wc_dir, "A_COPY", "mu"),
+  svntest.main.file_write(sbox.ospath("A_COPY/mu"),
                           "Changed on the branch.")
   expected_output = wc.State(wc_dir, {'A_COPY/mu' : Item(verb='Sending')})
   expected_status.tweak('A_COPY/mu', wc_rev=7)

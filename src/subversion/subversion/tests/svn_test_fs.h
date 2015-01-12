@@ -102,25 +102,6 @@ svn_test__get_file_contents(svn_fs_root_t *root,
 
 /* The Helper Functions to End All Helper Functions */
 
-/* Structure used for testing integrity of the filesystem's revision
-   using validate_tree(). */
-typedef struct svn_test__tree_entry_t
-{
-  const char *path;     /* full path of this node */
-  const char *contents; /* text contents (NULL for directories) */
-}
-svn_test__tree_entry_t;
-
-
-/* Wrapper for an array of the above svn_test__tree_entry_t's.  */
-typedef struct svn_test__tree_t
-{
-  svn_test__tree_entry_t *entries;
-  int num_entries;
-}
-svn_test__tree_t;
-
-
 /* Given a transaction or revision root (ROOT), check to see if the
    tree that grows from that root has all the path entries, and only
    those entries, passed in the array ENTRIES (which is an array of
@@ -130,6 +111,14 @@ svn_test__validate_tree(svn_fs_root_t *root,
                         svn_test__tree_entry_t *entries,
                         int num_entries,
                         apr_pool_t *pool);
+
+/* Verify that svn_fs_paths_changed2(ROOT) returns a hash with exactly
+   the same keys as EXPECTED_KEYS.  Values are not currently verified.
+ */
+svn_error_t *
+svn_test__validate_changes(svn_fs_root_t *root,
+                           apr_hash_t *expected_keys,
+                           apr_pool_t *pool);
 
 /* Structure for describing script-ish commands to perform on a
    transaction using svn_test__txn_script_exec().  */
@@ -168,7 +157,10 @@ svn_error_t *
 svn_test__create_greek_tree(svn_fs_root_t *txn_root,
                             apr_pool_t *pool);
 
-/* Create the Greek Tree under TXN_ROOT at dir ROOT_DIR.  */
+/* Create the Greek Tree under TXN_ROOT at dir ROOT_DIR.
+ * ROOT_DIR should be created by the caller.
+ *
+ * Note: this function will not commit the transaction.  */
 svn_error_t *
 svn_test__create_greek_tree_at(svn_fs_root_t *txn_root,
                                const char *root_dir,

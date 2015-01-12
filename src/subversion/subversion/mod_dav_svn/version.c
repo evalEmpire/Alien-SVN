@@ -28,6 +28,7 @@
 #include <http_log.h>
 #include <mod_dav.h>
 
+#include "svn_hash.h"
 #include "svn_fs.h"
 #include "svn_xml.h"
 #include "svn_repos.h"
@@ -37,7 +38,9 @@
 #include "svn_props.h"
 #include "svn_dav.h"
 #include "svn_base64.h"
+#include "svn_version.h"
 #include "private/svn_repos_private.h"
+#include "private/svn_subr_private.h"
 #include "private/svn_dav_protocol.h"
 #include "private/svn_log.h"
 #include "private/svn_fspath.h"
@@ -146,6 +149,9 @@ get_vsn_options(apr_pool_t *p, apr_text_header *phdr)
   apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_LOG_REVPROPS);
   apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_ATOMIC_REVPROPS);
   apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_PARTIAL_REPLAY);
+  apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_INHERITED_PROPS);
+  apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_INLINE_PROPS);
+  apr_text_append(p, phdr, SVN_DAV_NS_DAV_SVN_REVERSE_FILE_REVS);
   /* Mergeinfo is a special case: here we merely say that the server
    * knows how to handle mergeinfo -- whether the repository does too
    * is a separate matter.
@@ -192,6 +198,14 @@ get_option(const dav_resource *resource,
         }
     }
 
+  /* If we're allowed (by configuration) to do so, advertise support
+     for ephemeral transaction properties. */
+  if (dav_svn__check_ephemeral_txnprops_support(r))
+    {
+      apr_table_addn(r->headers_out, "DAV",
+                     SVN_DAV_NS_DAV_SVN_EPHEMERAL_TXNPROPS);
+    }
+
   if (resource->info->repos->fs)
     {
       svn_error_t *serr;
@@ -230,10 +244,56 @@ get_option(const dav_resource *resource,
         }
     }
 
+  if (resource->info->repos->repos)
+    {
+        svn_error_t *serr;
+        svn_boolean_t has;
+
+        serr = svn_repos_has_capability(resource->info->repos->repos, &has,
+                                        SVN_REPOS_CAPABILITY_MERGEINFO,
+                                        r->pool);
+        if (serr)
+        return dav_svn__convert_err
+                    (serr, HTTP_INTERNAL_SERVER_ERROR,
+                    "Error fetching repository capabilities",
+                    resource->pool);
+
+        apr_table_set(r->headers_out, SVN_DAV_REPOSITORY_MERGEINFO,
+                    has ? "yes" : "no");
+    }
+
   /* Welcome to the 2nd generation of the svn HTTP protocol, now
      DeltaV-free!  If we're configured to advise this support, do so.  */
   if (resource->info->repos->v2_protocol)
     {
+      int i;
+      svn_version_t *master_version = dav_svn__get_master_version(r);
+      dav_svn__bulk_upd_conf bulk_upd_conf = dav_svn__get_bulk_updates_flag(r);
+
+      /* The list of Subversion's custom POSTs and which versions of
+         Subversion support them.  We need this latter information
+         when acting as a WebDAV slave -- we don't want to claim
+         support for a POST type if the master server which will
+         actually have to handle it won't recognize it.
+
+         Keep this in sync with what's handled in handle_post_request().
+      */
+      struct posts_versions_t {
+        const char *post_name;
+        svn_version_t min_version;
+      } posts_versions[] = {
+        { "create-txn",             { 1, 7, 0, "" } },
+        { "create-txn-with-props",  { 1, 8, 0, "" } },
+      };
+
+      /* Add the header which indicates that this server can handle
+         replay REPORTs submitted against an HTTP v2 revision resource. */
+      apr_table_addn(r->headers_out, "DAV",
+                     SVN_DAV_NS_DAV_SVN_REPLAY_REV_RESOURCE);
+
+      /* Add a bunch of HTTP v2 headers which carry resource and
+         resource stub URLs that the client can use to naively build
+         addressable resources. */
       apr_table_set(r->headers_out, SVN_DAV_ROOT_URI_HEADER, repos_root_uri);
       apr_table_set(r->headers_out, SVN_DAV_ME_RESOURCE_HEADER,
                     apr_pstrcat(resource->pool, repos_root_uri, "/",
@@ -256,6 +316,26 @@ get_option(const dav_resource *resource,
       apr_table_set(r->headers_out, SVN_DAV_VTXN_STUB_HEADER,
                     apr_pstrcat(resource->pool, repos_root_uri, "/",
                                 dav_svn__get_vtxn_stub(r), (char *)NULL));
+      apr_table_set(r->headers_out, SVN_DAV_ALLOW_BULK_UPDATES,
+                    bulk_upd_conf == CONF_BULKUPD_ON ? "On" :
+                      bulk_upd_conf == CONF_BULKUPD_OFF ? "Off" : "Prefer");
+
+      /* Report the supported POST types. */
+      for (i = 0; i < sizeof(posts_versions)/sizeof(posts_versions[0]); ++i)
+        {
+          /* If we're proxying to a master server and its version
+             number is declared, we can selectively filter out POST
+             types that it doesn't support. */
+          if (master_version
+              && (! svn_version__at_least(master_version,
+                                          posts_versions[i].min_version.major,
+                                          posts_versions[i].min_version.minor,
+                                          posts_versions[i].min_version.patch)))
+            continue;
+
+          apr_table_addn(r->headers_out, SVN_DAV_SUPPORTED_POSTS_HEADER,
+                         apr_pstrdup(resource->pool, posts_versions[i].post_name));
+        }
     }
 
   return NULL;
@@ -398,7 +478,7 @@ dav_svn__checkout(dav_resource *resource,
           shared_activity = apr_pstrdup(resource->info->r->pool, uuid_buf);
 
           derr = dav_svn__create_txn(resource->info->repos, &shared_txn_name,
-                                     resource->info->r->pool);
+                                     NULL, resource->info->r->pool);
           if (derr) return derr;
 
           derr = dav_svn__store_activity(resource->info->repos,
@@ -1098,6 +1178,10 @@ deliver_report(request_rec *r,
         {
           return dav_svn__get_deleted_rev_report(resource, doc, output);
         }
+      else if (strcmp(doc->root->name, SVN_DAV__INHERITED_PROPS_REPORT) == 0)
+        {
+          return dav_svn__get_inherited_props_report(resource, doc, output);
+        }
       /* NOTE: if you add a report, don't forget to add it to the
        *       dav_svn__reports_list[] array.
        */
@@ -1143,7 +1227,8 @@ make_activity(dav_resource *resource)
                                   SVN_DAV_ERROR_NAMESPACE,
                                   SVN_DAV_ERROR_TAG);
 
-  err = dav_svn__create_txn(resource->info->repos, &txn_name, resource->pool);
+  err = dav_svn__create_txn(resource->info->repos, &txn_name,
+                            NULL, resource->pool);
   if (err != NULL)
     return err;
 
@@ -1185,7 +1270,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
   if (! doc)
     {
       *locks = hash;
-      return SVN_NO_ERROR;
+      return NULL;
     }
 
   /* Sanity check. */
@@ -1196,7 +1281,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
          definitely no lock-tokens to harvest.  This is likely a
          request from an old client. */
       *locks = hash;
-      return SVN_NO_ERROR;
+      return NULL;
     }
 
   if ((doc->root->ns == ns)
@@ -1222,7 +1307,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
   if (! child)
     {
       *locks = hash;
-      return SVN_NO_ERROR;
+      return NULL;
     }
 
   /* Then look for N different <lock> structures within. */
@@ -1248,7 +1333,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
               lockpath = svn_fspath__join(path_prefix, cdata, pool);
               if (lockpath && locktoken)
                 {
-                  apr_hash_set(hash, lockpath, APR_HASH_KEY_STRING, locktoken);
+                  svn_hash_sets(hash, lockpath, locktoken);
                   lockpath = NULL;
                   locktoken = NULL;
                 }
@@ -1258,7 +1343,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
               locktoken = dav_xml_get_cdata(lfchild, pool, 1);
               if (lockpath && *locktoken)
                 {
-                  apr_hash_set(hash, lockpath, APR_HASH_KEY_STRING, locktoken);
+                  svn_hash_sets(hash, lockpath, locktoken);
                   lockpath = NULL;
                   locktoken = NULL;
                 }
@@ -1267,7 +1352,7 @@ dav_svn__build_lock_hash(apr_hash_t **locks,
     }
 
   *locks = hash;
-  return SVN_NO_ERROR;
+  return NULL;
 }
 
 

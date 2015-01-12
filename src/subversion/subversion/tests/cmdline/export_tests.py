@@ -166,7 +166,7 @@ def export_working_copy_with_mods(sbox):
     'A/D/G/tau'         : Item(status='A '),
     'A/mu'              : Item(status='A '),
     'A/B'               : Item(status='A '),
-    'A/B/E'             : Item(status='A '),
+    #'A/B/E'             : Item(status='A '), # Used to be reported as added
     'A/B/lambda'        : Item(status='A '),
     'A/B/F'             : Item(status='A '),
     'A/C'               : Item(status='A '),
@@ -356,6 +356,7 @@ def export_working_copy_with_property_mods(sbox):
                                         expected_disk)
 
 @XFail()
+@Issue(3798)
 def export_working_copy_at_base_revision(sbox):
   "export working copy at base revision"
   sbox.build(read_only = True)
@@ -369,9 +370,12 @@ def export_working_copy_at_base_revision(sbox):
   gamma_path = os.path.join(wc_dir, 'A', 'D', 'gamma')
   E_path = os.path.join(wc_dir, 'A', 'B', 'E')
   rho_path = os.path.join(wc_dir, 'A', 'D', 'G', 'rho')
+  H_path = os.path.join(wc_dir, 'A', 'D', 'H')
+  phi_path = os.path.join(wc_dir, 'A', 'D', 'H', 'phi')
+  chi_path = os.path.join(wc_dir, 'A', 'D', 'H', 'chi')
 
   # Make some local modifications: modify mu and C, add kappa and K, delete
-  # gamma and E, and replace rho.  (Directories can't yet be replaced.)
+  # gamma and E, and replace rho and H.
   # These modifications should *not* get exported at the base revision.
   svntest.main.file_append(mu_path, 'Appended text')
   svntest.main.run_svn(None, 'propset', 'p', 'v', mu_path, C_path)
@@ -382,6 +386,12 @@ def export_working_copy_at_base_revision(sbox):
   svntest.main.run_svn(None, 'rm', rho_path)
   svntest.main.file_append(rho_path, "Replacement file 'rho'.")
   svntest.main.run_svn(None, 'add', rho_path)
+  svntest.main.run_svn(None, 'rm', H_path)
+  svntest.main.run_svn(None, 'mkdir', H_path)
+  svntest.main.file_append(phi_path, "This is the file 'phi'.")
+  svntest.main.run_svn(None, 'add', phi_path)
+  svntest.main.file_append(chi_path, "Replacement file 'chi'.")
+  svntest.main.run_svn(None, 'add', chi_path)
 
   # Note that we don't tweak the expected disk tree at all,
   # since the modifications should not be present.
@@ -908,6 +918,160 @@ def export_file_overwrite_with_force(sbox):
                                      iota_url, tmpdir)
   svntest.actions.verify_disk(tmpdir, expected_disk)
 
+def export_custom_keywords(sbox):
+  """export with custom keywords"""
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # 248=SVN_KEYWORD_MAX_LEN-7 where 7 is '$', 'Q', 'q', ':', ' ', ' ', '$'
+  alpha_content = ('[$Qq: %s $ $Pp: %s $]\n'
+                   % (sbox.repo_url[:248],
+                      (sbox.repo_url + '/A/B/E/alpha')[:248]))
+
+  sbox.simple_append('A/B/E/alpha', '[$Qq$ $Pp$]\n', truncate=True)
+  sbox.simple_propset('svn:keywords', 'Qq=%R Pp=%u', 'A/B/E/alpha')
+  sbox.simple_commit()
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.tweak('A/B/E/alpha', contents=alpha_content)
+  svntest.actions.verify_disk(sbox.wc_dir, expected_disk)
+
+  # Export a tree
+  export_target = sbox.add_wc_path('export')
+  expected_output = svntest.wc.State(export_target, {
+    ''             : Item(status='A '),
+    'alpha'       : Item(status='A '),
+    'beta'        : Item(status='A '),
+  })
+  expected_disk = svntest.wc.State('', {
+      'alpha': Item(contents=alpha_content),
+      'beta' : Item(contents="This is the file 'beta'.\n"),
+      })
+  svntest.actions.run_and_verify_export(sbox.repo_url + '/A/B/E',
+                                        export_target,
+                                        expected_output,
+                                        expected_disk)
+
+  # Export a file
+  export_file = os.path.join(export_target, 'alpha')
+  os.remove(export_file)
+  expected_output = ['A    %s\n' % export_file, 'Export complete.\n']
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'export', '--force',
+                                     sbox.repo_url + '/A/B/E/alpha',
+                                     export_target)
+
+  if open(export_file).read() != ''.join(alpha_content):
+    raise svntest.Failure("wrong keyword expansion")
+
+@Issue(4427)
+def export_file_external(sbox):
+  "export file external from WC and URL"
+  sbox.build()
+
+  wc_dir = sbox.wc_dir
+
+  # Set 'svn:externals' property in 'A/C' to 'A/B/E/alpha'(file external),
+  C_path = os.path.join(wc_dir, 'A', 'C')
+  externals_prop = "^/A/B/E/alpha exfile_alpha"
+
+  tmp_f = sbox.get_tempname('prop')
+  svntest.main.file_append(tmp_f, externals_prop)
+  svntest.main.run_svn(None, 'ps', '-F', tmp_f, 'svn:externals', C_path)
+  svntest.main.run_svn(None,'ci', '-m', 'log msg', '--quiet', C_path)
+
+  # Update the working copy to receive file external
+  svntest.main.run_svn(None, 'up', wc_dir)
+
+  # Update the expected disk tree to include the external.
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.add({
+      'A/C/exfile_alpha'  : Item("This is the file 'alpha'.\n"),
+      })
+
+  # Export from URL
+  export_target = sbox.add_wc_path('export_url')
+  expected_output = svntest.main.greek_state.copy()
+  expected_output.add({
+      'A/C/exfile_alpha'  : Item("This is the file 'alpha'.\r"),
+      })
+  expected_output.wc_dir = export_target
+  expected_output.desc[''] = Item()
+  expected_output.tweak(contents=None, status='A ')
+  svntest.actions.run_and_verify_export(sbox.repo_url,
+                                        export_target,
+                                        expected_output,
+                                        expected_disk)
+
+  # Export from WC
+  export_target = sbox.add_wc_path('export_wc')
+  expected_output = svntest.main.greek_state.copy()
+  expected_output.add({
+      'A/C/exfile_alpha'  : Item("This is the file 'alpha'.\r"),
+      })
+  expected_output.wc_dir = export_target
+  expected_output.desc['A'] = Item()
+  expected_output.tweak(contents=None, status='A ')
+  svntest.actions.run_and_verify_export(wc_dir,
+                                        export_target,
+                                        expected_output,
+                                        expected_disk)
+
+@Issue(4427)
+def export_file_externals2(sbox):
+  "exporting file externals"
+  
+  sbox.build()
+  sbox.simple_mkdir('DIR', 'DIR2')
+  
+  sbox.simple_propset('svn:externals', '^/iota file', 'DIR')
+  sbox.simple_propset('svn:externals', '^/DIR TheDir', 'DIR2')
+  sbox.simple_commit()
+  sbox.simple_update()
+  
+  tmp = sbox.add_wc_path('tmp')
+  os.mkdir(tmp)
+  
+  expected_output = svntest.wc.State(tmp, {
+    'file'          : Item(status='A '),
+  })
+  expected_disk = svntest.wc.State('', {
+    'file': Item(contents="This is the file 'iota'.\n")
+  })
+  # Fails in 1.8.8 and r1575909.
+  # Direct export of file external was just skipped
+  svntest.actions.run_and_verify_export(sbox.ospath('DIR/file'),
+                                        tmp,
+                                        expected_output,
+                                        expected_disk)
+  
+  expected_output = svntest.wc.State(tmp, {
+    'DIR/file'           : Item(status='A '),
+  })
+  expected_disk = svntest.wc.State('', {
+    'file': Item(contents="This is the file 'iota'.\n")
+  })
+  # Fails in 1.8.8 (doesn't export file), passes in r1575909
+  svntest.actions.run_and_verify_export(sbox.ospath('DIR'),
+                                        os.path.join(tmp, 'DIR'),
+                                        expected_output,
+                                        expected_disk)
+                                        
+  expected_output = svntest.wc.State(tmp, {
+    'DIR2/TheDir/file' : Item(status='A '),
+  })
+  expected_disk = svntest.wc.State('', {
+    'TheDir'      : Item(),
+    'TheDir/file' : Item(contents="This is the file 'iota'.\n")
+  })
+  # Fails in 1.8.8 (doesn't export anything),
+  # Fails in r1575909 (exports file twice; once as file; once as external)
+  svntest.actions.run_and_verify_export(sbox.ospath('DIR2'),
+                                        os.path.join(tmp, 'DIR2'),
+                                        expected_output,
+                                        expected_disk)
+
+
 ########################################################################
 # Run the tests
 
@@ -941,6 +1105,9 @@ test_list = [ None,
               export_externals_with_native_eol,
               export_to_current_dir,
               export_file_overwrite_with_force,
+              export_custom_keywords,
+              export_file_external,
+              export_file_externals2
              ]
 
 if __name__ == '__main__':

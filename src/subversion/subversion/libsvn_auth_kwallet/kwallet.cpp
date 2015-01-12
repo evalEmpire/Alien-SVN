@@ -33,6 +33,17 @@
 
 #include <apr_pools.h>
 #include <apr_strings.h>
+
+#include <dbus/dbus.h>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QString>
+
+#include <kaboutdata.h>
+#include <kcmdlineargs.h>
+#include <kcomponentdata.h>
+#include <klocalizedstring.h>
+#include <kwallet.h>
+
 #include "svn_auth.h"
 #include "svn_config.h"
 #include "svn_error.h"
@@ -45,17 +56,7 @@
 
 #include "svn_private_config.h"
 
-#include <dbus/dbus.h>
-#include <QtCore/QCoreApplication>
-#include <QtCore/QString>
 
-#include <kaboutdata.h>
-#include <kcmdlineargs.h>
-#include <kcomponentdata.h>
-#include <klocalizedstring.h>
-#include <kwallet.h>
-
-
 /*-----------------------------------------------------------------------*/
 /* KWallet simple provider, puts passwords in KWallet                    */
 /*-----------------------------------------------------------------------*/
@@ -343,14 +344,14 @@ kwallet_simple_first_creds(void **credentials,
                            const char *realmstring,
                            apr_pool_t *pool)
 {
-  return svn_auth__simple_first_creds_helper(credentials,
-                                             iter_baton,
-                                             provider_baton,
-                                             parameters,
-                                             realmstring,
-                                             kwallet_password_get,
-                                             SVN_AUTH__KWALLET_PASSWORD_TYPE,
-                                             pool);
+  return svn_auth__simple_creds_cache_get(credentials,
+                                          iter_baton,
+                                          provider_baton,
+                                          parameters,
+                                          realmstring,
+                                          kwallet_password_get,
+                                          SVN_AUTH__KWALLET_PASSWORD_TYPE,
+                                          pool);
 }
 
 /* Save encrypted credentials to the simple provider's cache. */
@@ -362,13 +363,13 @@ kwallet_simple_save_creds(svn_boolean_t *saved,
                           const char *realmstring,
                           apr_pool_t *pool)
 {
-  return svn_auth__simple_save_creds_helper(saved, credentials,
-                                            provider_baton,
-                                            parameters,
-                                            realmstring,
-                                            kwallet_password_set,
-                                            SVN_AUTH__KWALLET_PASSWORD_TYPE,
-                                            pool);
+  return svn_auth__simple_creds_cache_set(saved, credentials,
+                                          provider_baton,
+                                          parameters,
+                                          realmstring,
+                                          kwallet_password_set,
+                                          SVN_AUTH__KWALLET_PASSWORD_TYPE,
+                                          pool);
 }
 
 static const svn_auth_provider_t kwallet_simple_provider = {
@@ -408,13 +409,12 @@ kwallet_ssl_client_cert_pw_first_creds(void **credentials,
                                        const char *realmstring,
                                        apr_pool_t *pool)
 {
-  return svn_auth__ssl_client_cert_pw_file_first_creds_helper
-           (credentials,
-            iter_baton, provider_baton,
-            parameters, realmstring,
-            kwallet_password_get,
-            SVN_AUTH__KWALLET_PASSWORD_TYPE,
-            pool);
+  return svn_auth__ssl_client_cert_pw_cache_get(credentials,
+                                                iter_baton, provider_baton,
+                                                parameters, realmstring,
+                                                kwallet_password_get,
+                                                SVN_AUTH__KWALLET_PASSWORD_TYPE,
+                                                pool);
 }
 
 /* Save encrypted credentials to the ssl client cert password provider's
@@ -427,13 +427,12 @@ kwallet_ssl_client_cert_pw_save_creds(svn_boolean_t *saved,
                                       const char *realmstring,
                                       apr_pool_t *pool)
 {
-  return svn_auth__ssl_client_cert_pw_file_save_creds_helper
-           (saved, credentials,
-            provider_baton, parameters,
-            realmstring,
-            kwallet_password_set,
-            SVN_AUTH__KWALLET_PASSWORD_TYPE,
-            pool);
+  return svn_auth__ssl_client_cert_pw_cache_set(saved, credentials,
+                                                provider_baton, parameters,
+                                                realmstring,
+                                                kwallet_password_set,
+                                                SVN_AUTH__KWALLET_PASSWORD_TYPE,
+                                                pool);
 }
 
 static const svn_auth_provider_t kwallet_ssl_client_cert_pw_provider = {

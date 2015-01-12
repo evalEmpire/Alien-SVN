@@ -355,10 +355,38 @@ typedef struct svn_client_proplist_item_t
 } svn_client_proplist_item_t;
 
 /**
- * The callback invoked by svn_client_proplist3().  Each invocation
- * provides the regular properties of @a path which is either a WC path or
- * a URL.  @a prop_hash maps property names (char *) to property
-   values (svn_string_t *).  Use @a pool for all temporary allocation.
+ * The callback invoked by svn_client_proplist4().  Each invocation
+ * provides the regular and/or inherited properties of @a path, which is
+ * either a working copy path or a URL.  If @a prop_hash is not @c NULL, then
+ * it maps explicit <tt>const char *</tt> property names to
+ * <tt>svn_string_t *</tt> explicit property values.  If @a inherited_props
+ * is not @c NULL, then it is a depth-first ordered array of
+ * #svn_prop_inherited_item_t * structures representing the
+ * properties inherited by @a path.  Use @a scratch_pool for all temporary
+ * allocations.
+ *
+ * The #svn_prop_inherited_item_t->path_or_url members of the
+ * #svn_prop_inherited_item_t * structures in @a inherited_props are
+ * URLs if @a path is a URL or if @a path is a working copy path but the
+ * property represented by the structure is above the working copy root (i.e.
+ * the inherited property is from the cache).  In all other cases the
+ * #svn_prop_inherited_item_t->path_or_url members are absolute working copy
+ * paths.
+ *
+ * @since New in 1.8.
+ */
+typedef svn_error_t *(*svn_proplist_receiver2_t)(
+  void *baton,
+  const char *path,
+  apr_hash_t *prop_hash,
+  apr_array_header_t *inherited_props,
+  apr_pool_t *scratch_pool);
+
+/**
+ * Similar to #svn_proplist_receiver2_t, but doesn't return inherited
+ * properties.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
  *
  * @since New in 1.5.
  */
@@ -411,8 +439,18 @@ typedef struct svn_client_commit_info_t
 #define SVN_CLIENT_COMMIT_ITEM_TEXT_MODS   0x04
 #define SVN_CLIENT_COMMIT_ITEM_PROP_MODS   0x08
 #define SVN_CLIENT_COMMIT_ITEM_IS_COPY     0x10
-/** @since New in 1.2. */
+/** One of the flags for a commit item.  The node has a lock token that
+ * should be released after a successful commit and, if the node is also
+ * modified, transferred to the server as part of the commit process.
+ *
+ * @since New in 1.2. */
 #define SVN_CLIENT_COMMIT_ITEM_LOCK_TOKEN  0x20
+/** One of the flags for a commit item.  The node is the 'moved here'
+ * side of a local move.  This is used to check and enforce that the
+ * other side of the move is also included in the commit.
+ *
+ * @since New in 1.8. */
+#define SVN_CLIENT_COMMIT_ITEM_MOVED_HERE  0x40
 /** @} */
 
 /** The commit candidate structure.
@@ -477,8 +515,19 @@ typedef struct svn_client_commit_item3_t
   /**
    * When processing the commit this contains the relative path for
    * the commit session. #NULL until the commit item is preprocessed.
+   * @since New in 1.7.
    */
   const char *session_relpath;
+
+  /**
+   * When committing a move, this contains the absolute path where
+   * the node was directly moved from. (If an ancestor at the original
+   * location was moved then it points to where the node itself was
+   * moved from; not the original location.)
+   * @since New in 1.8.
+   */
+  const char *moved_from_abspath;
+
 } svn_client_commit_item3_t;
 
 /** The commit candidate structure.
@@ -969,7 +1018,10 @@ typedef struct svn_client_ctx_t
 
 /** Initialize a client context.
  * Set @a *ctx to a client context object, allocated in @a pool, that
- * represents a particular instance of an svn client.
+ * represents a particular instance of an svn client. @a cfg_hash is used
+ * to initialise the config member of the returned context object and should
+ * remain valid for the lifetime of the object. @a cfg_hash may be @c NULL,
+ * in which case it is ignored.
  *
  * In order to avoid backwards compatibility problems, clients must
  * use this function to initialize and allocate the
@@ -978,7 +1030,20 @@ typedef struct svn_client_ctx_t
  *
  * The current implementation never returns error, but callers should
  * still check for error, for compatibility with future versions.
+ *
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_create_context2(svn_client_ctx_t **ctx,
+                           apr_hash_t *cfg_hash,
+                           apr_pool_t *pool);
+
+
+/** Similar to svn_client_create_context2 but passes a NULL @a cfg_hash.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_create_context(svn_client_ctx_t **ctx,
                           apr_pool_t *pool);
@@ -1045,7 +1110,7 @@ svn_client_args_to_target_array2(apr_array_header_t **targets_p,
                                  svn_boolean_t keep_last_origpath_on_truepath_collision,
                                  apr_pool_t *pool);
 
-/*
+/**
  * Similar to svn_client_args_to_target_array2() but with
  * @a keep_last_origpath_on_truepath_collision always set to FALSE.
  *
@@ -1464,16 +1529,15 @@ svn_client_switch(svn_revnum_t *result_rev,
  * @a path and everything under it fully recursively.
  *
  * @a path's parent must be under revision control already (unless
- * @a add_parents is TRUE), but @a path is not.  If @a recursive is
- * set, then assuming @a path is a directory, all of its contents will
- * be scheduled for addition as well.
+ * @a add_parents is TRUE), but @a path is not.
  *
  * If @a force is not set and @a path is already under version
  * control, return the error #SVN_ERR_ENTRY_EXISTS.  If @a force is
  * set, do not error on already-versioned items.  When used on a
- * directory in conjunction with the @a recursive flag, this has the
- * effect of scheduling for addition unversioned files and directories
- * scattered deep within a versioned tree.
+ * directory in conjunction with a @a depth value greater than
+ * #svn_depth_empty, this has the effect of scheduling for addition
+ * any unversioned files and directories scattered within even a
+ * versioned tree (up to @a depth).
  *
  * If @a ctx->notify_func2 is non-NULL, then for each added item, call
  * @a ctx->notify_func2 with @a ctx->notify_baton2 and the path of the
@@ -1488,17 +1552,42 @@ svn_client_switch(svn_revnum_t *result_rev,
  * behaviour only when recursing into an already versioned directory with @a
  * force.)
  *
+ * If @a no_autoprops is TRUE, don't set any autoprops on added files. If
+ * @a no_autoprops is FALSE then all added files have autprops set as per
+ * the auto-props list in @a ctx->config and the value of any
+ * @c SVN_PROP_INHERITABLE_AUTO_PROPS properties inherited by the nearest
+ * parents of @a path which are already under version control.
+ *
  * If @a add_parents is TRUE, recurse up @a path's directory and look for
  * a versioned directory.  If found, add all intermediate paths between it
  * and @a path.  If not found, return #SVN_ERR_CLIENT_NO_VERSIONED_PARENT.
+ *
+ * @a scratch_pool is used for temporary allocations only.
  *
  * @par Important:
  * This is a *scheduling* operation.  No changes will
  * happen to the repository until a commit occurs.  This scheduling
  * can be removed with svn_client_revert2().
  *
- * @since New in 1.5.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_add5(const char *path,
+                svn_depth_t depth,
+                svn_boolean_t force,
+                svn_boolean_t no_ignore,
+                svn_boolean_t no_autoprops,
+                svn_boolean_t add_parents,
+                svn_client_ctx_t *ctx,
+                apr_pool_t *scratch_pool);
+
+/**
+ * Similar to svn_client_add5(), but with @a no_autoprops always set to
+ * FALSE.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_add4(const char *path,
                 svn_depth_t depth,
@@ -1559,6 +1648,9 @@ svn_client_add(const char *path,
  */
 
 /** Create a directory, either in a repository or a working copy.
+ *
+ * @a paths is an array of (const char *) paths, either all local WC paths
+ * or all URLs.
  *
  * If @a paths contains URLs, use the authentication baton in @a ctx
  * and @a message to immediately attempt to commit the creation of the
@@ -1654,6 +1746,9 @@ svn_client_mkdir(svn_client_commit_info_t **commit_info_p,
  */
 
 /** Delete items from a repository or working copy.
+ *
+ * @a paths is an array of (const char *) paths, either all local WC paths
+ * or all URLs.
  *
  * If the paths in @a paths are URLs, use the authentication baton in
  * @a ctx and @a ctx->log_msg_func3/@a ctx->log_msg_baton3 to
@@ -1761,6 +1856,31 @@ svn_client_delete(svn_client_commit_info_t **commit_info_p,
  * @{
  */
 
+/**
+ * The callback invoked by svn_client_import5() before adding a node to the
+ * list of nodes to be imported.
+ *
+ * @a baton is the value passed to @a svn_client_import5 as filter_baton.
+ *
+ * The callback receives the @a local_abspath for each node and the @a dirent
+ * for it when walking the directory tree. Only the kind of node, including
+ * special status is available in @a dirent.
+ *
+ * Implementations can set @a *filtered to TRUE, to make the import
+ * process omit the node and (if the node is a directory) all its
+ * descendants.
+ *
+ * @a scratch_pool can be used for temporary allocations.
+ *
+ * @since New in 1.8.
+ */
+typedef svn_error_t *(*svn_client_import_filter_func_t)(
+  void *baton,
+  svn_boolean_t *filtered,
+  const char *local_abspath,
+  const svn_io_dirent2_t *dirent,
+  apr_pool_t *scratch_pool);
+
 /** Import file or directory @a path into repository directory @a url at
  * head, authenticating with the authentication baton cached in @a ctx,
  * and using @a ctx->log_msg_func3/@a ctx->log_msg_baton3 to get a log message
@@ -1786,7 +1906,7 @@ svn_client_delete(svn_client_commit_info_t **commit_info_p,
  * actions: #svn_wc_notify_commit_added,
  * #svn_wc_notify_commit_postfix_txdelta.
  *
- * Use @a pool for any temporary allocation.
+ * Use @a scratch_pool for any temporary allocation.
  *
  * If non-NULL, @a revprop_table is a hash table holding additional,
  * custom revision properties (<tt>const char *</tt> names mapped to
@@ -1813,15 +1933,49 @@ svn_client_delete(svn_client_commit_info_t **commit_info_p,
  * if the target is part of a WC the import ignores any existing
  * properties.)
  *
+ * If @a no_autoprops is TRUE, don't set any autoprops on imported files. If
+ * @a no_autoprops is FALSE then all imported files have autprops set as per
+ * the auto-props list in @a ctx->config and the value of any
+ * @c SVN_PROP_INHERITABLE_AUTO_PROPS properties inherited by and explicitly set
+ * on @a url if @a url is already under versioned control, or the nearest parents
+ * of @a path which are already under version control if not.
+ *
  * If @a ignore_unknown_node_types is @c FALSE, ignore files of which the
  * node type is unknown, such as device files and pipes.
+ *
+ * If @a filter_callback is non-NULL, call it for each node that isn't ignored
+ * for other reasons with @a filter_baton, to allow third party to ignore
+ * specific nodes during importing.
  *
  * If @a commit_callback is non-NULL, then for each successful commit, call
  * @a commit_callback with @a commit_baton and a #svn_commit_info_t for
  * the commit.
  *
- * @since New in 1.7.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_import5(const char *path,
+                   const char *url,
+                   svn_depth_t depth,
+                   svn_boolean_t no_ignore,
+                   svn_boolean_t no_autoprops,
+                   svn_boolean_t ignore_unknown_node_types,
+                   const apr_hash_t *revprop_table,
+                   svn_client_import_filter_func_t filter_callback,
+                   void *filter_baton,
+                   svn_commit_callback2_t commit_callback,
+                   void *commit_baton,
+                   svn_client_ctx_t *ctx,
+                   apr_pool_t *scratch_pool);
+
+/**
+ * Similar to svn_client_import5(), but without support for an optional
+ * @a filter_callback and @a no_autoprops always set to FALSE.
+ *
+ * @since New in 1.7.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_import4(const char *path,
                    const char *url,
@@ -1947,6 +2101,22 @@ svn_client_import(svn_client_commit_info_t **commit_info_p,
  * #TRUE, changes to descendants are only committed if they are itself
  * included via @a depth and targets.
  *
+ * If @a include_file_externals and/or @a include_dir_externals are #TRUE,
+ * also commit all file and/or dir externals (respectively) that are reached
+ * by recursion, except for those externals which:
+ *     - have a fixed revision, or
+ *     - come from a different repository root URL (dir externals).
+ * These flags affect only recursion; externals that directly appear in @a
+ * targets are always included in the commit.
+ *
+ * ### TODO: currently, file externals hidden inside an unversioned dir are
+ *     skipped deliberately, because we can't commit those yet.
+ *     See STMT_SELECT_COMMITTABLE_EXTERNALS_BELOW.
+ *
+ * ### TODO: With @c depth_immediates, this function acts as if
+ *     @a include_dir_externals was passed #FALSE, but caller expects
+ *     immediate child dir externals to be included @c depth_empty.
+ *
  * When @a commit_as_operations is #TRUE it is possible to delete a node and
  * all its descendants by selecting just the root of the deletion. If it is
  * set to #FALSE this will raise an error.
@@ -1960,8 +2130,31 @@ svn_client_import(svn_client_commit_info_t **commit_info_p,
  *
  * Use @a pool for any temporary allocations.
  *
- * @since New in 1.7.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_commit6(const apr_array_header_t *targets,
+                   svn_depth_t depth,
+                   svn_boolean_t keep_locks,
+                   svn_boolean_t keep_changelists,
+                   svn_boolean_t commit_as_operations,
+                   svn_boolean_t include_file_externals,
+                   svn_boolean_t include_dir_externals,
+                   const apr_array_header_t *changelists,
+                   const apr_hash_t *revprop_table,
+                   svn_commit_callback2_t commit_callback,
+                   void *commit_baton,
+                   svn_client_ctx_t *ctx,
+                   apr_pool_t *pool);
+
+/**
+ * Similar to svn_client_commit6(), but passes @a include_file_externals as
+ * FALSE and @a include_dir_externals as FALSE.
+ *
+ * @since New in 1.7.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_commit5(const apr_array_header_t *targets,
                    svn_depth_t depth,
@@ -2104,11 +2297,11 @@ typedef struct svn_client_status_t
    * svn_wc_status_modified and svn_wc_status_conflicted. */
   enum svn_wc_status_kind prop_status;
 
-  /** a node can be 'locked' if a working copy update is in progress or
+  /** A node can be 'locked' if a working copy update is in progress or
    * was interrupted. */
   svn_boolean_t wc_is_locked;
 
-  /** a file or directory can be 'copied' if it's scheduled for
+  /** A file or directory can be 'copied' if it's scheduled for
    * addition-with-history (or part of a subtree that is scheduled as such.).
    */
   svn_boolean_t copied;
@@ -2134,7 +2327,7 @@ typedef struct svn_client_status_t
   /** Last commit author of this item */
   const char *changed_author;
 
-    /** a file or directory can be 'switched' if the switch command has been
+  /** A file or directory can be 'switched' if the switch command has been
    * used.  If this is TRUE, then file_external will be FALSE.
    */
   svn_boolean_t switched;
@@ -2200,10 +2393,43 @@ typedef struct svn_client_status_t
 
   /** @} */
 
-  /** Reserved for libsvn_client's internal use; this value is only to be used for
-   * libsvn_client backwards compatibility wrappers. This value may be NULL or
-   * to other data in future versions. */
+  /** Reserved for libsvn_client's internal use; this value is only to be used
+   * for libsvn_client backwards compatibility wrappers. This value may be NULL
+   * or to other data in future versions. */
   const void *backwards_compatibility_baton;
+
+  /** Set to the local absolute path that this node was moved from, if this
+   * file or directory has been moved here locally and is the root of that
+   * move. Otherwise set to NULL.
+   *
+   * This will be NULL for moved-here nodes that are just part of a subtree
+   * that was moved along (and are not themselves a root of a different move
+   * operation).
+   *
+   * @since New in 1.8. */
+  const char *moved_from_abspath;
+
+  /** Set to the local absolute path that this node was moved to, if this file
+   * or directory has been moved away locally and corresponds to the root
+   * of the destination side of the move. Otherwise set to NULL.
+   *
+   * Note: Saying just "root" here could be misleading. For example:
+   *   svn mv A AA;
+   *   svn mv AA/B BB;
+   * creates a situation where A/B is moved-to BB, but one could argue that
+   * the move source's root actually was AA/B. Note that, as far as the
+   * working copy is concerned, above case is exactly identical to:
+   *   svn mv A/B BB;
+   *   svn mv A AA;
+   * In both situations, @a moved_to_abspath would be set for nodes A (moved
+   * to AA) and A/B (moved to BB), only.
+   *
+   * This will be NULL for moved-away nodes that were just part of a subtree
+   * that was moved along (and are not themselves a root of a different move
+   * operation).
+   *
+   * @since New in 1.8. */
+  const char *moved_to_abspath;
 
   /* NOTE! Please update svn_client_status_dup() when adding new fields here. */
 } svn_client_status_t;
@@ -2226,11 +2452,6 @@ svn_client_status_dup(const svn_client_status_t *status,
  * implementation, and passed by the caller.
  *
  * @a scratch_pool will be cleared between invocations to the callback.
- *
- * ### we might be revamping the status infrastructure, and this callback
- * ### could totally disappear by the end of 1.7 development. however, we
- * ### need to mark the STATUS parameter as "const" so that it is easier
- * ### to reason about who/what can modify those structures.
  *
  * @since New in 1.7.
  */
@@ -2423,8 +2644,11 @@ svn_client_status(svn_revnum_t *result_rev,
  * If @a limit is non-zero only invoke @a receiver on the first @a limit
  * logs.
  *
- * If @a discover_changed_paths is set, then the `@a changed_paths' argument
- * to @a receiver will be passed on each invocation.
+ * If @a discover_changed_paths is set, then the @c changed_paths and @c
+ * changed_paths2 fields in the @c log_entry argument to @a receiver will be
+ * populated on each invocation.  @note The @c text_modified and @c
+ * props_modified fields of the changed paths structure may have the value
+ * #svn_tristate_unknown if the repository does not report that information.
  *
  * If @a strict_node_history is set, copy history (if any exists) will
  * not be traversed while harvesting revision logs for each target.
@@ -2432,17 +2656,11 @@ svn_client_status(svn_revnum_t *result_rev,
  * If @a include_merged_revisions is set, log information for revisions
  * which have been merged to @a targets will also be returned.
  *
- * If @a revprops is NULL, retrieve all revprops; else, retrieve only the
- * revprops named in the array (i.e. retrieve none if the array is empty).
+ * If @a revprops is NULL, retrieve all revision properties; else, retrieve
+ * only the revision properties named by the (const char *) array elements
+ * (i.e. retrieve none if the array is empty).
  *
  * Use @a pool for any temporary allocation.
- *
- * @par Important:
- * A special case for the revision range HEAD:1, which was present
- * in svn_client_log(), has been removed from svn_client_log2().  Instead, it
- * is expected that callers will specify the range HEAD:0, to avoid a
- * #SVN_ERR_FS_NO_SUCH_REVISION error when invoked against an empty repository
- * (i.e. one not containing a revision 1).
  *
  * If @a ctx->notify_func2 is non-NULL, then call @a ctx->notify_func2/baton2
  * with a 'skip' signal on any unversioned targets.
@@ -2513,6 +2731,13 @@ svn_client_log3(const apr_array_header_t *targets,
 /**
  * Similar to svn_client_log3(), but with the @c kind field of
  * @a peg_revision set to #svn_opt_revision_unspecified.
+ *
+ * @par Important:
+ * A special case for the revision range HEAD:1, which was present
+ * in svn_client_log(), has been removed from svn_client_log2().  Instead, it
+ * is expected that callers will specify the range HEAD:0, to avoid a
+ * #SVN_ERR_FS_NO_SUCH_REVISION error when invoked against an empty repository
+ * (i.e. one not containing a revision 1).
  *
  * @deprecated Provided for compatibility with the 1.3 API.
  * @since New in 1.2.
@@ -2702,12 +2927,13 @@ svn_client_blame(const char *path_or_url,
 
 /**
  * Produce diff output which describes the delta between
- * @a path1/@a revision1 and @a path2/@a revision2.  Print the output
- * of the diff to @a outfile, and any errors to @a errfile.  @a path1
- * and @a path2 can be either working-copy paths or URLs.
+ * @a path_or_url1/@a revision1 and @a path_or_url2/@a revision2.  Print
+ * the output of the diff to @a outstream, and any errors to @a
+ * errstream.  @a path_or_url1 and @a path_or_url2 can be either
+ * working-copy paths or URLs.
  *
- * If @a relative_to_dir is not @c NULL, the @a original_path and
- * @a modified_path will have the @a relative_to_dir stripped from the
+ * If @a relative_to_dir is not @c NULL, the original path and
+ * modified path will have the @a relative_to_dir stripped from the
  * front of the respective paths.  If @a relative_to_dir is @c NULL,
  * paths will not be modified.  If @a relative_to_dir is not
  * @c NULL but @a relative_to_dir is not a parent path of the target,
@@ -2717,9 +2943,10 @@ svn_client_blame(const char *path_or_url,
  * If either @a revision1 or @a revision2 has an `unspecified' or
  * unrecognized `kind', return #SVN_ERR_CLIENT_BAD_REVISION.
  *
- * @a path1 and @a path2 must both represent the same node kind -- that
- * is, if @a path1 is a directory, @a path2 must also be, and if @a path1
- * is a file, @a path2 must also be.
+ * @a path_or_url1 and @a path_or_url2 must both represent the same node
+ * kind -- that is, if @a path_or_url1 is a directory, @a path_or_url2
+ * must also be, and if @a path_or_url1 is a file, @a path_or_url2 must
+ * also be.
  *
  * If @a depth is #svn_depth_infinity, diff fully recursively.
  * Else if it is #svn_depth_immediates, diff the named paths and
@@ -2736,16 +2963,28 @@ svn_client_blame(const char *path_or_url,
  * and the addition of another, but if this flag is TRUE, unrelated
  * items will be diffed as if they were related.
  *
+ * If @a no_diff_added is TRUE, then no diff output will be generated
+ * on added files.
+ *
  * If @a no_diff_deleted is TRUE, then no diff output will be
  * generated on deleted files.
  *
  * If @a show_copies_as_adds is TRUE, then copied files will not be diffed
  * against their copyfrom source, and will appear in the diff output
  * in their entirety, as if they were newly added.
+ * ### BUGS: For a repos-repos diff, this is ignored. Instead, a file is
+ *     diffed against its copyfrom source iff the file is the diff target
+ *     and not if some parent directory is the diff target. For a repos-WC
+ *     diff, this is ignored if the file is the diff target.
  *
  * If @a use_git_diff_format is TRUE, then the git's extended diff format
  * will be used.
  * ### Do we need to say more about the format? A reference perhaps?
+ *
+ * If @a ignore_properties is TRUE, do not show property differences.
+ * If @a properties_only is TRUE, show only property changes.
+ * The above two options are mutually exclusive. It is an error to set
+ * both to TRUE.
  *
  * Generated headers are encoded using @a header_encoding.
  *
@@ -2777,8 +3016,41 @@ svn_client_blame(const char *path_or_url,
  * @note @a relative_to_dir doesn't affect the path index generated by
  * external diff programs.
  *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_diff6(const apr_array_header_t *diff_options,
+                 const char *path_or_url1,
+                 const svn_opt_revision_t *revision1,
+                 const char *path_or_url2,
+                 const svn_opt_revision_t *revision2,
+                 const char *relative_to_dir,
+                 svn_depth_t depth,
+                 svn_boolean_t ignore_ancestry,
+                 svn_boolean_t no_diff_added,
+                 svn_boolean_t no_diff_deleted,
+                 svn_boolean_t show_copies_as_adds,
+                 svn_boolean_t ignore_content_type,
+                 svn_boolean_t ignore_properties,
+                 svn_boolean_t properties_only,
+                 svn_boolean_t use_git_diff_format,
+                 const char *header_encoding,
+                 svn_stream_t *outstream,
+                 svn_stream_t *errstream,
+                 const apr_array_header_t *changelists,
+                 svn_client_ctx_t *ctx,
+                 apr_pool_t *pool);
+
+/** Similar to svn_client_diff6(), but with @a outfile and @a errfile,
+ * instead of @a outstream and @a errstream, and with @a
+ * no_diff_added, @a ignore_properties, and @a properties_only always
+ * passed as @c FALSE (which means that additions and property changes
+ * are always transmitted).
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
  * @since New in 1.7.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_diff5(const apr_array_header_t *diff_options,
                  const char *path1,
@@ -2897,19 +3169,52 @@ svn_client_diff(const apr_array_header_t *diff_options,
                 apr_pool_t *pool);
 
 /**
- * Produce diff output which describes the delta between the
- * filesystem object @a path in peg revision @a peg_revision, as it
- * changed between @a start_revision and @a end_revision.  @a path can
+ * Produce diff output which describes the delta between the filesystem
+ * object @a path_or_url in peg revision @a peg_revision, as it changed
+ * between @a start_revision and @a end_revision.  @a path_or_url can
  * be either a working-copy path or URL.
  *
  * If @a peg_revision is #svn_opt_revision_unspecified, behave
- * identically to svn_client_diff5(), using @a path for both of that
- * function's @a path1 and @a path2 arguments.
+ * identically to svn_client_diff6(), using @a path_or_url for both of that
+ * function's @a path_or_url1 and @a path_or_url2 arguments.
  *
- * All other options are handled identically to svn_client_diff5().
+ * All other options are handled identically to svn_client_diff6().
  *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_diff_peg6(const apr_array_header_t *diff_options,
+                     const char *path_or_url,
+                     const svn_opt_revision_t *peg_revision,
+                     const svn_opt_revision_t *start_revision,
+                     const svn_opt_revision_t *end_revision,
+                     const char *relative_to_dir,
+                     svn_depth_t depth,
+                     svn_boolean_t ignore_ancestry,
+                     svn_boolean_t no_diff_added,
+                     svn_boolean_t no_diff_deleted,
+                     svn_boolean_t show_copies_as_adds,
+                     svn_boolean_t ignore_content_type,
+                     svn_boolean_t ignore_properties,
+                     svn_boolean_t properties_only,
+                     svn_boolean_t use_git_diff_format,
+                     const char *header_encoding,
+                     svn_stream_t *outstream,
+                     svn_stream_t *errstream,
+                     const apr_array_header_t *changelists,
+                     svn_client_ctx_t *ctx,
+                     apr_pool_t *pool);
+
+/** Similar to svn_client_diff6_peg6(), but with @a outfile and @a errfile,
+ * instead of @a outstream and @a errstream, and with @a
+ * no_diff_added, @a ignore_properties, and @a properties_only always
+ * passed as @c FALSE (which means that additions and property changes
+ * are always transmitted).
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
  * @since New in 1.7.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_diff_peg5(const apr_array_header_t *diff_options,
                      const char *path,
@@ -3029,8 +3334,9 @@ svn_client_diff_peg(const apr_array_header_t *diff_options,
 
 /**
  * Produce a diff summary which lists the changed items between
- * @a path1/@a revision1 and @a path2/@a revision2 without creating text
- * deltas. @a path1 and @a path2 can be either working-copy paths or URLs.
+ * @a path_or_url1/@a revision1 and @a path_or_url2/@a revision2 without
+ * creating text deltas. @a path_or_url1 and @a path_or_url2 can be
+ * either working-copy paths or URLs.
  *
  * The function may report false positives if @a ignore_ancestry is false,
  * since a file might have been modified between two revisions, but still
@@ -3039,14 +3345,14 @@ svn_client_diff_peg(const apr_array_header_t *diff_options,
  * Calls @a summarize_func with @a summarize_baton for each difference
  * with a #svn_client_diff_summarize_t structure describing the difference.
  *
- * See svn_client_diff5() for a description of the other parameters.
+ * See svn_client_diff6() for a description of the other parameters.
  *
  * @since New in 1.5.
  */
 svn_error_t *
-svn_client_diff_summarize2(const char *path1,
+svn_client_diff_summarize2(const char *path_or_url1,
                            const svn_opt_revision_t *revision1,
-                           const char *path2,
+                           const char *path_or_url2,
                            const svn_opt_revision_t *revision2,
                            svn_depth_t depth,
                            svn_boolean_t ignore_ancestry,
@@ -3081,13 +3387,13 @@ svn_client_diff_summarize(const char *path1,
 
 /**
  * Produce a diff summary which lists the changed items between the
- * filesystem object @a path in peg revision @a peg_revision, as it
- * changed between @a start_revision and @a end_revision. @a path can
+ * filesystem object @a path_or_url in peg revision @a peg_revision, as it
+ * changed between @a start_revision and @a end_revision. @a path_or_url can
  * be either a working-copy path or URL.
  *
  * If @a peg_revision is #svn_opt_revision_unspecified, behave
- * identically to svn_client_diff_summarize2(), using @a path for both
- * of that function's @a path1 and @a path2 arguments.
+ * identically to svn_client_diff_summarize2(), using @a path_or_url for
+ * both of that function's @a path_or_url1 and @a path_or_url2 arguments.
  *
  * The function may report false positives if @a ignore_ancestry is false,
  * as described in the documentation for svn_client_diff_summarize2().
@@ -3100,7 +3406,7 @@ svn_client_diff_summarize(const char *path1,
  * @since New in 1.5.
  */
 svn_error_t *
-svn_client_diff_summarize_peg2(const char *path,
+svn_client_diff_summarize_peg2(const char *path_or_url,
                                const svn_opt_revision_t *peg_revision,
                                const svn_opt_revision_t *start_revision,
                                const svn_opt_revision_t *end_revision,
@@ -3144,6 +3450,46 @@ svn_client_diff_summarize_peg(const char *path,
  * @{
  */
 
+/** Get information about the state of merging between two branches.
+ *
+ * The source is specified by @a source_path_or_url at @a source_revision.
+ * The target is specified by @a target_path_or_url at @a target_revision,
+ * which refers to either a WC or a repository location.
+ *
+ * Set @a *needs_reintegration to true if an automatic merge from source
+ * to target would be a reintegration merge: that is, if the last automatic
+ * merge was in the opposite direction; or to false otherwise.
+ *
+ * Set @a *yca_url, @a *yca_rev, @a *base_url, @a *base_rev, @a *right_url,
+ * @a *right_rev, @a *target_url, @a *target_rev to the repository locations
+ * of, respectively: the youngest common ancestor of the branches, the base
+ * chosen for 3-way merge, the right-hand side of the source diff, and the
+ * target.
+ *
+ * Set @a repos_root_url to the URL of the repository root.  This is a
+ * common prefix of all four URL outputs.
+ *
+ * Allocate the results in @a result_pool.  Any of the output pointers may
+ * be NULL if not wanted.
+ *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_get_merging_summary(svn_boolean_t *needs_reintegration,
+                               const char **yca_url, svn_revnum_t *yca_rev,
+                               const char **base_url, svn_revnum_t *base_rev,
+                               const char **right_url, svn_revnum_t *right_rev,
+                               const char **target_url, svn_revnum_t *target_rev,
+                               const char **repos_root_url,
+                               const char *source_path_or_url,
+                               const svn_opt_revision_t *source_revision,
+                               const char *target_path_or_url,
+                               const svn_opt_revision_t *target_revision,
+                               svn_client_ctx_t *ctx,
+                               apr_pool_t *result_pool,
+                               apr_pool_t *scratch_pool);
+
+
 /** Merge changes from @a source1/@a revision1 to @a source2/@a revision2 into
  * the working-copy path @a target_wcpath.
  *
@@ -3171,16 +3517,19 @@ svn_client_diff_summarize_peg(const char *path,
  *
  * If @a depth is #svn_depth_unknown, use the depth of @a target_wcpath.
  *
- * Use @a ignore_ancestry to control whether or not items being
- * diffed will be checked for relatedness first.  Unrelated items
- * are typically transmitted to the editor as a deletion of one thing
- * and the addition of another, but if this flag is TRUE, unrelated
- * items will be diffed as if they were related.
+ * If @a ignore_mergeinfo is true, disable merge tracking, by treating the
+ * two sources as unrelated even if they actually have a common ancestor.
  *
- * If @a force is false and the merge involves deleting a file whose
+ * If @a diff_ignore_ancestry is true, diff unrelated nodes as if related:
+ * that is, diff the 'left' and 'right' versions of a node as if they were
+ * related (if they are the same kind) even if they are not related.
+ * Otherwise, diff unrelated items as a deletion of one thing and the
+ * addition of another.
+ *
+ * If @a force_delete is false and the merge involves deleting a file whose
  * content differs from the source-left version, or a locally modified
  * directory, or an unversioned item, then the operation will fail.  If
- * @a force is true then all such items will be deleted.
+ * @a force_delete is true then all such items will be deleted.
  *
  * @a merge_options (an array of <tt>const char *</tt>), if non-NULL,
  * is used to pass additional command line arguments to the merge
@@ -3206,8 +3555,33 @@ svn_client_diff_summarize_peg(const char *path,
  * The authentication baton cached in @a ctx is used to communicate with the
  * repository.
  *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_merge5(const char *source1,
+                  const svn_opt_revision_t *revision1,
+                  const char *source2,
+                  const svn_opt_revision_t *revision2,
+                  const char *target_wcpath,
+                  svn_depth_t depth,
+                  svn_boolean_t ignore_mergeinfo,
+                  svn_boolean_t diff_ignore_ancestry,
+                  svn_boolean_t force_delete,
+                  svn_boolean_t record_only,
+                  svn_boolean_t dry_run,
+                  svn_boolean_t allow_mixed_rev,
+                  const apr_array_header_t *merge_options,
+                  svn_client_ctx_t *ctx,
+                  apr_pool_t *pool);
+
+/**
+ * Similar to svn_client_merge5(), but the single @a ignore_ancestry
+ * parameter maps to both @c ignore_mergeinfo and @c diff_ignore_ancestry.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
  * @since New in 1.7.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_merge4(const char *source1,
                   const svn_opt_revision_t *revision1,
@@ -3216,7 +3590,7 @@ svn_client_merge4(const char *source1,
                   const char *target_wcpath,
                   svn_depth_t depth,
                   svn_boolean_t ignore_ancestry,
-                  svn_boolean_t force,
+                  svn_boolean_t force_delete,
                   svn_boolean_t record_only,
                   svn_boolean_t dry_run,
                   svn_boolean_t allow_mixed_rev,
@@ -3226,7 +3600,8 @@ svn_client_merge4(const char *source1,
 
 /**
  * Similar to svn_client_merge4(), but with @a allow_mixed_rev set to
- * @c TRUE.
+ * @c TRUE.  The @a force parameter maps to the @c force_delete parameter
+ * of svn_client_merge4().
  *
  * @deprecated Provided for backward compatibility with the 1.6 API.
  *
@@ -3294,25 +3669,26 @@ svn_client_merge(const char *source1,
                  apr_pool_t *pool);
 
 
-
 /**
- * Perform a reintegration merge of @a source at @a peg_revision
+ * Perform a reintegration merge of @a source_path_or_url at @a source_peg_revision
  * into @a target_wcpath.
  * @a target_wcpath must be a single-revision, #svn_depth_infinity,
  * pristine, unswitched working copy -- in other words, it must
  * reflect a single revision tree, the "target".  The mergeinfo on @a
- * source must reflect that all of the target has been merged into it.
- * Then this behaves like a merge with svn_client_merge3() from the
+ * source_path_or_url must reflect that all of the target has been merged into it.
+ * Then this behaves like a merge with svn_client_merge5() from the
  * target's URL to the source.
  *
- * All other options are handled identically to svn_client_merge3().
+ * All other options are handled identically to svn_client_merge5().
  * The depth of the merge is always #svn_depth_infinity.
  *
  * @since New in 1.5.
+ * @deprecated Provided for backwards compatibility with the 1.7 API.
  */
+SVN_DEPRECATED
 svn_error_t *
-svn_client_merge_reintegrate(const char *source,
-                             const svn_opt_revision_t *peg_revision,
+svn_client_merge_reintegrate(const char *source_path_or_url,
+                             const svn_opt_revision_t *source_peg_revision,
                              const char *target_wcpath,
                              svn_boolean_t dry_run,
                              const apr_array_header_t *merge_options,
@@ -3320,10 +3696,21 @@ svn_client_merge_reintegrate(const char *source,
                              apr_pool_t *pool);
 
 /**
- * Merge the changes between the filesystem object @a source in peg
- * revision @a peg_revision, as it changed between the ranges described
- * in @a ranges_to_merge.
+ * Merge changes from the source branch identified by
+ * @a source_path_or_url in peg revision @a source_peg_revision,
+ * into the target branch working copy at @a target_wcpath.
  *
+ * If @a ranges_to_merge is NULL then perform an automatic merge of
+ * all the eligible changes up to @a source_peg_revision.  If the merge
+ * required is a reintegrate merge, then return an error if the WC has
+ * mixed revisions, local modifications and/or switched subtrees; if
+ * the merge is determined to be of the non-reintegrate kind, then
+ * return an error if @a allow_mixed_rev is false and the WC contains
+ * mixed revisions.
+ *
+ * If @a ranges_to_merge is not NULL then merge the changes specified
+ * by the revision ranges in @a ranges_to_merge, or, when honouring
+ * mergeinfo, only the eligible parts of those revision ranges.
  * @a ranges_to_merge is an array of <tt>svn_opt_revision_range_t
  * *</tt> ranges.  These ranges may describe additive and/or
  * subtractive merge ranges, they may overlap fully or partially,
@@ -3332,18 +3719,45 @@ svn_client_merge_reintegrate(const char *source,
  * list of provided ranges has an `unspecified' or unrecognized
  * `kind', return #SVN_ERR_CLIENT_BAD_REVISION.
  *
- * All other options are handled identically to svn_client_merge4().
+ * If @a ranges_to_merge is an empty array, then do nothing.
  *
- * @since New in 1.7.
+ * All other options are handled identically to svn_client_merge5().
+ *
+ * @since New in 1.8.
  */
 svn_error_t *
-svn_client_merge_peg4(const char *source,
+svn_client_merge_peg5(const char *source_path_or_url,
                       const apr_array_header_t *ranges_to_merge,
-                      const svn_opt_revision_t *peg_revision,
+                      const svn_opt_revision_t *source_peg_revision,
+                      const char *target_wcpath,
+                      svn_depth_t depth,
+                      svn_boolean_t ignore_mergeinfo,
+                      svn_boolean_t diff_ignore_ancestry,
+                      svn_boolean_t force_delete,
+                      svn_boolean_t record_only,
+                      svn_boolean_t dry_run,
+                      svn_boolean_t allow_mixed_rev,
+                      const apr_array_header_t *merge_options,
+                      svn_client_ctx_t *ctx,
+                      apr_pool_t *pool);
+
+/**
+ * Similar to svn_client_merge_peg5(), but automatic merge is not available
+ * (@a ranges_to_merge must not be NULL), and the single @a ignore_ancestry
+ * parameter maps to both @c ignore_mergeinfo and @c diff_ignore_ancestry.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ * @since New in 1.7.
+ */
+SVN_DEPRECATED
+svn_error_t *
+svn_client_merge_peg4(const char *source_path_or_url,
+                      const apr_array_header_t *ranges_to_merge,
+                      const svn_opt_revision_t *source_peg_revision,
                       const char *target_wcpath,
                       svn_depth_t depth,
                       svn_boolean_t ignore_ancestry,
-                      svn_boolean_t force,
+                      svn_boolean_t force_delete,
                       svn_boolean_t record_only,
                       svn_boolean_t dry_run,
                       svn_boolean_t allow_mixed_rev,
@@ -3353,7 +3767,8 @@ svn_client_merge_peg4(const char *source,
 
 /**
  * Similar to svn_client_merge_peg4(), but with @a allow_mixed_rev set to
- * @c TRUE.
+ * @c TRUE.  The @a force parameter maps to the @c force_delete parameter
+ * of svn_client_merge_peg4().
  *
  * @deprecated Provided for backward compatibility with the 1.6 API.
  *
@@ -3440,9 +3855,10 @@ svn_client_suggest_merge_sources(apr_array_header_t **suggestions,
 
 
 /**
- * Set @a *mergeinfo to a hash mapping <tt>const char *</tt> merge
- * source URLs to <tt>apr_array_header_t *</tt> rangelists (arrays of
- * <tt>svn_merge_range_t *</tt> ranges) describing the ranges which
+ * Get the mergeinfo for a single target node (ignoring any subtrees).
+ *
+ * Set @a *mergeinfo to a hash mapping <tt>const char *</tt> merge source
+ * URLs to <tt>svn_rangelist_t *</tt> rangelists describing the ranges which
  * have been merged into @a path_or_url as of @a peg_revision, per
  * @a path_or_url's explicit mergeinfo or inherited mergeinfo if no
  * explicit mergeinfo if found.  If no explicit or inherited mergeinfo
@@ -3469,16 +3885,37 @@ svn_client_mergeinfo_get_merged(apr_hash_t **mergeinfo,
 
 
 /**
+ * Describe the revisions that either have or have not been merged from
+ * one source branch (or subtree) into another.
+ *
  * If @a finding_merged is TRUE, then drive log entry callbacks
  * @a receiver / @a receiver_baton with the revisions merged from
- * @a merge_source_path_or_url (as of @a src_peg_revision) into
- * @a path_or_url (as of @a peg_revision).  If @a finding_merged is FALSE
- * then find the revisions eligible for merging.
+ * @a source_path_or_url (as of @a source_peg_revision) into
+ * @a target_path_or_url (as of @a target_peg_revision).  If @a
+ * finding_merged is FALSE then find the revisions eligible for merging.
+ *
+ * If both @a source_start_revision and @a source_end_revision are
+ * unspecified (that is, of kind @c svn_opt_revision_unspecified),
+ * @a receiver will be called the requested revisions from 0 to
+ * @a source_peg_revision and in that order (that is, oldest to
+ * youngest).  Otherwise, both @a source_start_revision and
+ * @a source_end_revision must be specified, which has two effects:
+ *
+ *   - @a receiver will be called only with revisions which fall
+ *     within range of @a source_start_revision to
+ *     @a source_end_revision, inclusive, and
+ *
+ *   - those revisions will be ordered in the same "direction" as the
+ *     walk from @a source_start_revision to @a source_end_revision.
+ *     (If @a source_start_revision is the younger of the two, @a
+ *     receiver will be called with revisions in youngest-to-oldest
+ *     order; otherwise, the reverse occurs.)
  *
  * If @a depth is #svn_depth_empty consider only the explicit or
- * inherited mergeinfo on @a path_or_url when calculating merged revisions
- * from @a merge_source_path_or_url.  If @a depth is #svn_depth_infinity
- * then also consider the explicit subtree mergeinfo under @a path_or_url.
+ * inherited mergeinfo on @a target_path_or_url when calculating merged
+ * revisions from @a source_path_or_url.  If @a depth is #svn_depth_infinity
+ * then also consider the explicit subtree mergeinfo under @a
+ * target_path_or_url.
  * If a depth other than #svn_depth_empty or #svn_depth_infinity is
  * requested then return a #SVN_ERR_UNSUPPORTED_FEATURE error.
  *
@@ -3490,14 +3927,38 @@ svn_client_mergeinfo_get_merged(apr_hash_t **mergeinfo,
  * If the server doesn't support retrieval of mergeinfo, return an
  * #SVN_ERR_UNSUPPORTED_FEATURE error.
  *
- * @since New in 1.7.
+ * @since New in 1.8.
  */
 svn_error_t *
+svn_client_mergeinfo_log2(svn_boolean_t finding_merged,
+                          const char *target_path_or_url,
+                          const svn_opt_revision_t *target_peg_revision,
+                          const char *source_path_or_url,
+                          const svn_opt_revision_t *source_peg_revision,
+                          const svn_opt_revision_t *source_start_revision,
+                          const svn_opt_revision_t *source_end_revision,
+                          svn_log_entry_receiver_t receiver,
+                          void *receiver_baton,
+                          svn_boolean_t discover_changed_paths,
+                          svn_depth_t depth,
+                          const apr_array_header_t *revprops,
+                          svn_client_ctx_t *ctx,
+                          apr_pool_t *scratch_pool);
+
+/**
+ * Similar to svn_client_mergeinfo_log2(), but with @a source_start_revision
+ * and @a source_end_revision always of kind @c svn_opt_revision_unspecified;
+ *
+ * @deprecated Provided for backwards compatibility with the 1.7 API.
+ * @since New in 1.7.
+ */
+SVN_DEPRECATED
+svn_error_t *
 svn_client_mergeinfo_log(svn_boolean_t finding_merged,
-                         const char *path_or_url,
-                         const svn_opt_revision_t *peg_revision,
-                         const char *merge_source_path_or_url,
-                         const svn_opt_revision_t *src_peg_revision,
+                         const char *target_path_or_url,
+                         const svn_opt_revision_t *target_peg_revision,
+                         const char *source_path_or_url,
+                         const svn_opt_revision_t *source_peg_revision,
                          svn_log_entry_receiver_t receiver,
                          void *receiver_baton,
                          svn_boolean_t discover_changed_paths,
@@ -3652,10 +4113,12 @@ svn_client_relocate(const char *dir,
  */
 
 /**
- * Restore the pristine version of a working copy @a paths,
+ * Restore the pristine version of working copy @a paths,
  * effectively undoing any local mods.  For each path in @a paths,
  * revert it if it is a file.  Else if it is a directory, revert
  * according to @a depth:
+ *
+ * @a paths is an array of (const char *) local WC paths.
  *
  * If @a depth is #svn_depth_empty, revert just the properties on
  * the directory; else if #svn_depth_files, revert the properties
@@ -3732,21 +4195,31 @@ svn_client_resolved(const char *path,
 
 /** Perform automatic conflict resolution on a working copy @a path.
  *
- * If @a depth is #svn_depth_empty, act only on @a path; if
- * #svn_depth_files, resolve @a path and its conflicted file
- * children (if any); if #svn_depth_immediates, resolve @a path and
- * all its immediate conflicted children (both files and directories,
- * if any); if #svn_depth_infinity, resolve @a path and every
- * conflicted file or directory anywhere beneath it.
- * Note that this operation will try to lock the parent directory of
- * @a path in order to be able to resolve tree-conflicts on @a path.
+ * If @a conflict_choice is
  *
- * If @a conflict_choice is #svn_wc_conflict_choose_base, resolve the
- * conflict with the old file contents; if
- * #svn_wc_conflict_choose_mine_full, use the original working contents;
- * if #svn_wc_conflict_choose_theirs_full, the new contents; and if
- * #svn_wc_conflict_choose_merged, don't change the contents at all,
- * just remove the conflict status, which is the pre-1.5 behavior.
+ *   - #svn_wc_conflict_choose_base:
+ *     resolve the conflict with the old file contents
+ *
+ *   - #svn_wc_conflict_choose_mine_full:
+ *     use the original working contents
+ *
+ *   - #svn_wc_conflict_choose_theirs_full:
+ *     use the new contents
+ *
+ *   - #svn_wc_conflict_choose_merged:
+ *     don't change the contents at all, just remove the conflict
+ *     status, which is the pre-1.5 behavior.
+ *
+ *   - #svn_wc_conflict_choose_theirs_conflict
+ *     ###...
+ *
+ *   - #svn_wc_conflict_choose_mine_conflict
+ *     ###...
+ *
+ *   - svn_wc_conflict_choose_unspecified
+ *     invoke @a ctx->conflict_func2 with @a ctx->conflict_baton2 to obtain
+ *     a resolution decision for each conflict.  This can be used to
+ *     implement interactive conflict resolution.
  *
  * #svn_wc_conflict_choose_theirs_conflict and
  * #svn_wc_conflict_choose_mine_conflict are not legal for binary
@@ -3755,6 +4228,17 @@ svn_client_resolved(const char *path,
  * If @a path is not in a state of conflict to begin with, do nothing.
  * If @a path's conflict state is removed and @a ctx->notify_func2 is non-NULL,
  * call @a ctx->notify_func2 with @a ctx->notify_baton2 and @a path.
+ * ### with what notification parameters?
+ *
+ * If @a depth is #svn_depth_empty, act only on @a path; if
+ * #svn_depth_files, resolve @a path and its conflicted file
+ * children (if any); if #svn_depth_immediates, resolve @a path and
+ * all its immediate conflicted children (both files and directories,
+ * if any); if #svn_depth_infinity, resolve @a path and every
+ * conflicted file or directory anywhere beneath it.
+ *
+ * Note that this operation will try to lock the parent directory of
+ * @a path in order to be able to resolve tree-conflicts on @a path.
  *
  * @since New in 1.5.
  */
@@ -3792,20 +4276,14 @@ typedef struct svn_client_copy_source_t
     const svn_opt_revision_t *peg_revision;
 } svn_client_copy_source_t;
 
-/** Copy each @a src in @a sources to @a dst_path.
+/** Copy each source in @a sources to @a dst_path.
  *
  * If multiple @a sources are given, @a dst_path must be a directory,
  * and @a sources will be copied as children of @a dst_path.
  *
- * @a sources must be an array of elements of type
- * <tt>svn_client_copy_source_t *</tt>.
- *
- * Each @a src in @a sources must be files or directories under version control,
- * or URLs of a versioned item in the repository.  If @a sources has multiple
- * items, the @a src members must be all repository URLs or all working copy
- * paths.
- *
- * The parent of @a dst_path must already exist.
+ * @a sources is an array of <tt>svn_client_copy_source_t *</tt> elements,
+ * either all referring to local WC items or all referring to versioned
+ * items in the repository.
  *
  * If @a sources has only one item, attempt to copy it to @a dst_path.  If
  * @a copy_as_child is TRUE and @a dst_path already exists, attempt to copy the
@@ -3833,7 +4311,7 @@ typedef struct svn_client_copy_source_t
  * This scheduling can be removed with svn_client_revert2().
  *
  * If @a make_parents is TRUE, create any non-existent parent directories
- * also.
+ * also.  Otherwise the parent of @a dst_path must already exist.
  *
  * If @a ignore_externals is set, don't process externals definitions
  * as part of this operation.
@@ -3973,10 +4451,10 @@ svn_client_copy(svn_client_commit_info_t **commit_info_p,
 /**
  * Move @a src_paths to @a dst_path.
  *
- * @a src_paths must be files or directories under version control, or
- * URLs of versioned items in the repository.  All @a src_paths must be of
- * the same type.  If multiple @a src_paths are given, @a dst_path must be
- * a directory and @a src_paths will be moved as children of @a dst_path.
+ * @a src_paths is an array of (const char *) paths -- either all WC paths
+ * or all URLs -- of versioned items.  If multiple @a src_paths are given,
+ * @a dst_path must be a directory and @a src_paths will be moved as
+ * children of @a dst_path.
  *
  * If @a src_paths are repository URLs:
  *
@@ -4000,8 +4478,6 @@ svn_client_copy(svn_client_commit_info_t **commit_info_p,
  *     is a directory it will remain in the working copy but all the files,
  *     and unversioned items, it contains will be removed.
  *
- * The parent of @a dst_path must already exist.
- *
  * If @a src_paths has only one item, attempt to move it to @a dst_path.  If
  * @a move_as_child is TRUE and @a dst_path already exists, attempt to move the
  * item as a child of @a dst_path.  If @a move_as_child is FALSE and
@@ -4019,7 +4495,20 @@ svn_client_copy(svn_client_commit_info_t **commit_info_p,
  * with #SVN_ERR_CLIENT_MULTIPLE_SOURCES_DISALLOWED.
  *
  * If @a make_parents is TRUE, create any non-existent parent directories
- * also.
+ * also.  Otherwise, the parent of @a dst_path must already exist.
+ *
+ * If @a allow_mixed_revisions is @c FALSE, #SVN_ERR_WC_MIXED_REVISIONS
+ * will be raised if the move source is a mixed-revision subtree.
+ * If @a allow_mixed_revisions is TRUE, a mixed-revision move source is
+ * allowed but the move will degrade to a copy and a delete without local
+ * move tracking. This parameter should be set to FALSE except where backwards
+ * compatibility to svn_client_move6() is required.
+ *
+ * If @a metadata_only is @c TRUE and moving a file in a working copy,
+ * everything in the metadata is updated as if the node is moved, but the
+ * actual disk move operation is not performed. This feature is useful for
+ * clients that want to keep the working copy in sync while the actual working
+ * copy is updated by some other task.
  *
  * If non-NULL, @a revprop_table is a hash table holding additional,
  * custom revision properties (<tt>const char *</tt> names mapped to
@@ -4041,8 +4530,29 @@ svn_client_copy(svn_client_commit_info_t **commit_info_p,
  * @a commit_callback with @a commit_baton and a #svn_commit_info_t for
  * the commit.
  *
- * @since New in 1.7.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_move7(const apr_array_header_t *src_paths,
+                 const char *dst_path,
+                 svn_boolean_t move_as_child,
+                 svn_boolean_t make_parents,
+                 svn_boolean_t allow_mixed_revisions,
+                 svn_boolean_t metadata_only,
+                 const apr_hash_t *revprop_table,
+                 svn_commit_callback2_t commit_callback,
+                 void *commit_baton,
+                 svn_client_ctx_t *ctx,
+                 apr_pool_t *pool);
+
+/**
+ * Similar to svn_client_move7(), but with @a allow_mixed_revisions always
+ * set to @c TRUE and @a metadata_only always to @c FALSE.
+ *
+ * @since New in 1.7.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_move6(const apr_array_header_t *src_paths,
                  const char *dst_path,
@@ -4392,12 +4902,34 @@ svn_client_revprop_set(const char *propname,
 
 /**
  * Set @a *props to a hash table whose keys are absolute paths or URLs
- * of items on which property @a propname is set, and whose values are
- * `#svn_string_t *' representing the property value for @a propname
- * at that path.
+ * of items on which property @a propname is explicitly set, and whose
+ * values are <tt>svn_string_t *</tt> representing the property value for
+ * @a propname at that path.
  *
- * Allocate @a *props, its keys, and its values in @a pool, use
- * @a scratch_pool for temporary allocations.
+ * If @a inherited_props is not @c NULL, then set @a *inherited_props to a
+ * depth-first ordered array of #svn_prop_inherited_item_t * structures
+ * representing the properties inherited by @a target.  If @a target is a
+ * working copy path, then properties inherited by @a target as far as the
+ * root of the working copy are obtained from the working copy's actual
+ * property values.  Properties inherited from above the working copy root
+ * come from the inherited properties cache.  If @a target is a URL, then
+ * the inherited properties come from the repository.  If @a inherited_props
+ * is not @c NULL and no inheritable properties are found, then set
+ * @a *inherited_props to an empty array.
+ *
+ * The #svn_prop_inherited_item_t->path_or_url members of the
+ * #svn_prop_inherited_item_t * structures in @a *inherited_props are
+ * URLs if @a target is a URL or if @a target is a working copy path but the
+ * property represented by the structure is above the working copy root (i.e.
+ * the inherited property is from the cache).  In all other cases the
+ * #svn_prop_inherited_item_t->path_or_url members are absolute working copy
+ * paths.
+ *
+ * Allocate @a *props (including keys and values) and @a *inherited_props
+ * (including its elements) in @a result_pool, use @a scratch_pool for
+ * temporary allocations.
+ *
+ * @a target is a WC absolute path or a URL.
  *
  * Don't store any path, not even @a target, if it does not have a
  * property named @a propname.
@@ -4432,12 +4964,34 @@ svn_client_revprop_set(const char *propname,
  * This function returns SVN_ERR_UNVERSIONED_RESOURCE when it is called on
  * unversioned nodes.
  *
- * @since New in 1.7.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_propget5(apr_hash_t **props,
+                    apr_array_header_t **inherited_props,
+                    const char *propname,
+                    const char *target,  /* abspath or URL */
+                    const svn_opt_revision_t *peg_revision,
+                    const svn_opt_revision_t *revision,
+                    svn_revnum_t *actual_revnum,
+                    svn_depth_t depth,
+                    const apr_array_header_t *changelists,
+                    svn_client_ctx_t *ctx,
+                    apr_pool_t *result_pool,
+                    apr_pool_t *scratch_pool);
+
+/**
+ * Similar to svn_client_propget5 but with @a inherited_props always
+ * passed as NULL.
+ *
+ * @since New in 1.7.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_propget4(apr_hash_t **props,
                     const char *propname,
-                    const char *target,
+                    const char *target,  /* abspath or URL */
                     const svn_opt_revision_t *peg_revision,
                     const svn_opt_revision_t *revision,
                     svn_revnum_t *actual_revnum,
@@ -4527,20 +5081,22 @@ svn_client_revprop_get(const char *propname,
                        apr_pool_t *pool);
 
 /**
- * Invoke @a receiver with @a receiver_baton to return the regular properties
- * of @a target, a URL or working copy path.  @a receiver will be called
- * for each path encountered.
+ * Invoke @a receiver with @a receiver_baton to return the regular explicit, and
+ * possibly the inherited, properties of @a target, a URL or working copy path.
+ * @a receiver will be called for each path encountered.
  *
- * If @a revision->kind is #svn_opt_revision_unspecified, then get
- * properties from the working copy, if @a target is a working copy
- * path, or from the repository head if @a target is a URL.  Else get
- * the properties as of @a revision.  The actual node revision
- * selected is determined by the path as it exists in @a peg_revision.
- * If @a peg_revision->kind is #svn_opt_revision_unspecified, then it
- * defaults to #svn_opt_revision_head for URLs or
- * #svn_opt_revision_working for WC targets.  Use the authentication
- * baton cached in @a ctx for authentication if contacting the
- * repository.
+ * @a target is a WC path or a URL.
+ *
+ * If @a revision->kind is #svn_opt_revision_unspecified, then get the
+ * explicit (and possibly the inherited) properties from the working copy,
+ * if @a target is a working copy path, or from the repository head if
+ * @a target is a URL.  Else get the properties as of @a revision.
+ * The actual node revision selected is determined by the path as it exists
+ * in @a peg_revision.  If @a peg_revision->kind is
+ * #svn_opt_revision_unspecified, then it defaults to #svn_opt_revision_head
+ * for URLs or #svn_opt_revision_working for WC targets.  Use the
+ * authentication baton cached in @a ctx for authentication if contacting
+ * the repository.
  *
  * If @a depth is #svn_depth_empty, list only the properties of
  * @a target itself.  If @a depth is #svn_depth_files, and
@@ -4558,10 +5114,41 @@ svn_client_revprop_get(const char *propname,
  * of one of those changelists.  If @a changelists is empty (or
  * altogether @c NULL), no changelist filtering occurs.
  *
+ * If @a get_target_inherited_props is true, then also return any inherited
+ * properties when @a receiver is called for @a target.  If @a target is a
+ * working copy path, then properties inherited by @a target as far as the
+ * root of the working copy are obtained from the working copy's actual
+ * property values.  Properties inherited from above the working copy
+ * root come from the inherited properties cache.  If @a target is a URL,
+ * then the inherited properties come from the repository.
+ * If @a get_target_inherited_props is false, then no inherited properties
+ * are returned to @a receiver.
+ *
  * If @a target is not found, return the error #SVN_ERR_ENTRY_NOT_FOUND.
  *
- * @since New in 1.5.
+ * @since New in 1.8.
  */
+svn_error_t *
+svn_client_proplist4(const char *target,
+                     const svn_opt_revision_t *peg_revision,
+                     const svn_opt_revision_t *revision,
+                     svn_depth_t depth,
+                     const apr_array_header_t *changelists,
+                     svn_boolean_t get_target_inherited_props,
+                     svn_proplist_receiver2_t receiver,
+                     void *receiver_baton,
+                     svn_client_ctx_t *ctx,
+                     apr_pool_t *scratch_pool);
+
+/**
+ * Similar to svn_client_proplist4(), except that the @a receiver type
+ * is a #svn_proplist_receiver_t, @a get_target_inherited_props is
+ * always passed NULL, and there is no separate scratch pool.
+ *
+ * @since New in 1.5.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_proplist3(const char *target,
                      const svn_opt_revision_t *peg_revision,
@@ -4805,7 +5392,7 @@ svn_client_export(svn_revnum_t *result_rev,
  * @{
  */
 
-/** The type of function invoked by svn_client_list2() to report the details
+/** The type of function invoked by svn_client_list3() to report the details
  * of each directory entry being listed.
  *
  * @a baton is the baton that was passed to the caller.  @a path is the
@@ -4815,11 +5402,45 @@ svn_client_export(svn_revnum_t *result_rev,
  * the entry's lock, if it is locked and if lock information is being
  * reported by the caller; otherwise @a lock is NULL.  @a abs_path is the
  * repository path of the top node of the list operation; it is relative to
- * the repository root and begins with "/".  @a pool may be used for
- * temporary allocations.
+ * the repository root and begins with "/".
  *
- * @since New in 1.4.
+ * If svn_client_list3() was called with @a include_externals set to TRUE,
+ * @a external_parent_url and @a external_target will be set.
+ * @a external_parent_url is url of the directory which has the
+ * externals definitions. @a external_target is the target subdirectory of
+ * externals definitions which is relative to the parent directory that holds
+ * the external item.
+ *
+ * If external_parent_url and external_target are defined, the item being
+ * listed is part of the external described by external_parent_url and
+ * external_target. Else, the item is not part of any external.
+ * Moreover, we will never mix items which are part of separate
+ * externals, and will always finish listing an external before listing
+ * the next one.
+ *
+ * @a scratch_pool may be used for temporary allocations.
+ *
+ * @since New in 1.8.
  */
+typedef svn_error_t *(*svn_client_list_func2_t)(
+  void *baton,
+  const char *path,
+  const svn_dirent_t *dirent,
+  const svn_lock_t *lock,
+  const char *abs_path,
+  const char *external_parent_url,
+  const char *external_target,
+  apr_pool_t *scratch_pool);
+
+/**
+ * Similar to #svn_client_list_func2_t, but without any information about
+ * externals definitions.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API.
+ *
+ * @since New in 1.4
+ *
+ * */
 typedef svn_error_t *(*svn_client_list_func_t)(void *baton,
                                                const char *path,
                                                const svn_dirent_t *dirent,
@@ -4843,6 +5464,10 @@ typedef svn_error_t *(*svn_client_list_func_t)(void *baton,
  *
  * If @a fetch_locks is TRUE, include locks when reporting directory entries.
  *
+ * If @a include_externals is TRUE, also list all external items
+ * reached by recursion. @a depth value passed to the original list target
+ * applies for the externals also.
+ *
  * Use @a pool for temporary allocations.
  *
  * Use authentication baton cached in @a ctx to authenticate against the
@@ -4859,8 +5484,30 @@ typedef svn_error_t *(*svn_client_list_func_t)(void *baton,
  * otherwise simply bitwise OR together the combination of @c SVN_DIRENT_
  * fields you care about.
  *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_list3(const char *path_or_url,
+                 const svn_opt_revision_t *peg_revision,
+                 const svn_opt_revision_t *revision,
+                 svn_depth_t depth,
+                 apr_uint32_t dirent_fields,
+                 svn_boolean_t fetch_locks,
+                 svn_boolean_t include_externals,
+                 svn_client_list_func2_t list_func,
+                 void *baton,
+                 svn_client_ctx_t *ctx,
+                 apr_pool_t *pool);
+
+
+/** Similar to svn_client_list3(), but with @a include_externals set
+ * to FALSE, and using a #svn_client_list_func_t as callback.
+ *
+ * @deprecated Provided for backwards compatibility with the 1.7 API.
+ *
  * @since New in 1.5.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_list2(const char *path_or_url,
                  const svn_opt_revision_t *peg_revision,
@@ -5041,6 +5688,8 @@ svn_client_cat(svn_stream_t *out,
  * @a changelist.  (For now, a path cannot belong to two changelists
  * at once.)
  *
+ * @a paths is an array of (const char *) local WC paths.
+ *
  * @a changelists is an array of <tt>const char *</tt> changelist
  * names, used as a restrictive filter on items whose changelist
  * assignments are adjusted; that is, don't tweak the changeset of any
@@ -5064,6 +5713,8 @@ svn_client_add_to_changelist(const apr_array_header_t *paths,
 /**
  * Remove each path in @a paths (recursing to @a depth as necessary)
  * from changelists to which they are currently assigned.
+ *
+ * @a paths is an array of (const char *) local WC paths.
  *
  * @a changelists is an array of <tt>const char *</tt> changelist
  * names, used as a restrictive filter on items whose changelist
@@ -5094,6 +5745,8 @@ svn_client_remove_from_changelists(const apr_array_header_t *paths,
  * Call @a callback_func (with @a callback_baton) each time a
  * changelist-having path is discovered.
  *
+ * @a path is a local WC path.
+ *
  * If @a ctx->cancel_func is not @c NULL, invoke it passing @a
  * ctx->cancel_baton during the recursive walk.
  *
@@ -5120,8 +5773,8 @@ svn_client_get_changelists(const char *path,
 
 /**
  * Lock @a targets in the repository.  @a targets is an array of
- * <tt>const char *</tt> paths - either all working copy paths or URLs.  All
- * @a targets must be in the same repository.
+ * <tt>const char *</tt> paths - either all working copy paths or all URLs.
+ * All targets must be in the same repository.
  *
  * If a target is already locked in the repository, no lock will be
  * acquired unless @a steal_lock is TRUE, in which case the locks are
@@ -5151,10 +5804,10 @@ svn_client_lock(const apr_array_header_t *targets,
 /**
  * Unlock @a targets in the repository.  @a targets is an array of
  * <tt>const char *</tt> paths - either all working copy paths or all URLs.
- * All @a targets must be in the same repository.
+ * All targets must be in the same repository.
  *
  * If the targets are WC paths, and @a break_lock is FALSE, the working
- * copy must contain a locks for each target.
+ * copy must contain a lock for each target.
  * If this is not the case, or the working copy lock doesn't match the
  * lock token in the repository, an error will be signaled.
  *
@@ -5691,22 +6344,46 @@ svn_client_url_from_path(const char **url,
                          apr_pool_t *pool);
 
 
+
+/* Fetching a repository's root URL and UUID. */
+
+/** Set @a *repos_root_url and @a *repos_uuid, to the root URL and UUID of
+ * the repository in which @a abspath_or_url is versioned. Use the
+ * authentication baton and working copy context cached in @a ctx as
+ * necessary. @a repos_root_url and/or @a repos_uuid may be NULL if not
+ * wanted.
+ *
+ * This function will open a temporary RA session to the repository if
+ * necessary to get the information.
+ *
+ * Allocate @a *repos_root_url and @a *repos_uuid in @a result_pool.
+ * Use @a scratch_pool for temporary allocations.
+ *
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_get_repos_root(const char **repos_root_url,
+                          const char **repos_uuid,
+                          const char *abspath_or_url,
+                          svn_client_ctx_t *ctx,
+                          apr_pool_t *result_pool,
+                          apr_pool_t *scratch_pool);
+
 /** Set @a *url to the repository root URL of the repository in which
  * @a path_or_url is versioned (or scheduled to be versioned),
  * allocated in @a pool.  @a ctx is required for possible repository
  * authentication.
  *
  * @since New in 1.5.
+ * @deprecated Provided for backward compatibility with the 1.7 API. Use
+ * svn_client_get_repos_root() instead, with an absolute path.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_root_url_from_path(const char **url,
                               const char *path_or_url,
                               svn_client_ctx_t *ctx,
                               apr_pool_t *pool);
-
-
-
-/* Fetching repository UUIDs. */
 
 /** Get repository @a uuid for @a url.
  *
@@ -5714,7 +6391,11 @@ svn_client_root_url_from_path(const char **url,
  * repository uuid, and free the session.  Return the uuid in @a uuid,
  * allocated in @a pool.  @a ctx is required for possible repository
  * authentication.
+ *
+ * @deprecated Provided for backward compatibility with the 1.7 API. Use
+ * svn_client_get_repos_root() instead.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_uuid_from_url(const char **uuid,
                          const char *url,
@@ -5729,7 +6410,10 @@ svn_client_uuid_from_url(const char **uuid,
  * Use @a scratch_pool for temporary allocations.
  *
  * @since New in 1.7.
+ * @deprecated Provided for backward compatibility with the 1.7 API. Use
+ * svn_client_get_repos_root() instead.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_uuid_from_path2(const char **uuid,
                            const char *local_abspath,
@@ -5756,13 +6440,31 @@ svn_client_uuid_from_path(const char **uuid,
 /** Open an RA session rooted at @a url, and return it in @a *session.
  *
  * Use the authentication baton stored in @a ctx for authentication.
- * @a *session is allocated in @a pool.
+ * @a *session is allocated in @a result_pool.
+ *
+ * If @a wri_abspath is not NULL, use the working copy identified by @a
+ * wri_abspath to potentially avoid transferring unneeded data.
+ *
+ * @note This function is similar to svn_ra_open4(), but the caller avoids
+ * having to providing its own callback functions.
+ * @since New in 1.8.
+ */
+svn_error_t *
+svn_client_open_ra_session2(svn_ra_session_t **session,
+                           const char *url,
+                           const char *wri_abspath,
+                           svn_client_ctx_t *ctx,
+                           apr_pool_t *result_pool,
+                           apr_pool_t *scratch_pool);
+
+/** Similar to svn_client_open_ra_session2(), but with @ wri_abspath
+ * always passed as NULL, and with the same pool used as both @a
+ * result_pool and @a scratch_pool.
  *
  * @since New in 1.3.
- *
- * @note This function is similar to svn_ra_open3(), but the caller avoids
- * having to providing its own callback functions.
+ * @deprecated Provided for backward compatibility with the 1.7 API.
  */
+SVN_DEPRECATED
 svn_error_t *
 svn_client_open_ra_session(svn_ra_session_t **session,
                            const char *url,

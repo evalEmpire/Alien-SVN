@@ -49,13 +49,7 @@
 %apply const char *MAY_BE_NULL {
     const char *native_eol,
     const char *comment,
-    const char *relative_to_dir,
-    apr_hash_t *revprop_table,
-    apr_array_header_t *changelists
-};
-
-%apply apr_hash_t *PROPHASH {
-    apr_hash_t *revprop_table
+    const char *relative_to_dir
 };
 
 #ifdef SWIGRUBY
@@ -70,12 +64,10 @@
 }
 #endif
 
-#if defined(SWIGRUBY) || defined(SWIGPYTHON)
 %apply apr_array_header_t *REVISION_RANGE_LIST {
   const apr_array_header_t *ranges_to_merge,
   const apr_array_header_t *revision_ranges
 }
-#endif
 
 #ifdef SWIGRUBY
 %apply const char *NOT_NULL {
@@ -393,7 +385,8 @@ Callback: svn_client_diff_summarize_func_t
 /* provide Python with access to some thunks. */
 %constant svn_cancel_func_t svn_swig_py_cancel_func;
 %constant svn_client_get_commit_log3_t svn_swig_py_get_commit_log_func;
-%constant svn_wc_notify_func2_t svn_swig_py_notify_func;
+%constant svn_wc_notify_func_t svn_swig_py_notify_func;
+%constant svn_wc_notify_func2_t svn_swig_py_notify_func2;
 
 #endif
 
@@ -403,7 +396,13 @@ Callback: svn_client_diff_summarize_func_t
   svn_client_ctx_t(apr_pool_t *pool) {
     svn_error_t *err;
     svn_client_ctx_t *self;
-    err = svn_client_create_context(&self, pool);
+    apr_hash_t *cfg_hash;
+
+    err = svn_config_get_config(&cfg_hash, NULL, pool);
+    if (err)
+      svn_swig_rb_handle_svn_error(err);
+
+    err = svn_client_create_context2(&self, cfg_hash, pool);
     if (err)
       svn_swig_rb_handle_svn_error(err);
     return self;
@@ -520,7 +519,13 @@ svn_client_set_config(svn_client_ctx_t *ctx,
                       apr_hash_t *config,
                       apr_pool_t *pool)
 {
-  ctx->config = config;
+  svn_error_t *err;
+
+  apr_hash_clear(ctx->config);
+  err = svn_config_copy_config(&ctx->config, config,
+                               apr_hash_pool_get(ctx->config));
+  if (err)
+    svn_swig_rb_handle_svn_error(err);
   return Qnil;
 }
 

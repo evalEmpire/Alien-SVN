@@ -22,6 +22,7 @@
 
 
 #include "svn_private_config.h"
+#include "svn_hash.h"
 #include "svn_pools.h"
 #include "svn_error.h"
 #include "svn_fs.h"
@@ -127,7 +128,7 @@ read_header_block(svn_stream_t *stream,
       value = header_str->data + i;
 
       /* Store name/value in hash. */
-      apr_hash_set(*headers, name, APR_HASH_KEY_STRING, value);
+      svn_hash_sets(*headers, name, value);
     }
 
   return SVN_NO_ERROR;
@@ -181,7 +182,7 @@ read_key_or_val(char **pbuf,
 static svn_error_t *
 parse_property_block(svn_stream_t *stream,
                      svn_filesize_t content_length,
-                     const svn_repos_parse_fns2_t *parse_fns,
+                     const svn_repos_parse_fns3_t *parse_fns,
                      void *record_baton,
                      void *parse_baton,
                      svn_boolean_t is_node,
@@ -299,7 +300,7 @@ static svn_error_t *
 parse_text_block(svn_stream_t *stream,
                  svn_filesize_t content_length,
                  svn_boolean_t is_delta,
-                 const svn_repos_parse_fns2_t *parse_fns,
+                 const svn_repos_parse_fns3_t *parse_fns,
                  void *record_baton,
                  char *buffer,
                  apr_size_t buflen,
@@ -336,7 +337,7 @@ parse_text_block(svn_stream_t *stream,
      need to read it. */
   while (content_length)
     {
-      if (content_length >= buflen)
+      if (content_length >= (svn_filesize_t)buflen)
         rlen = buflen;
       else
         rlen = (apr_size_t) content_length;
@@ -373,7 +374,8 @@ parse_text_block(svn_stream_t *stream,
 /* Parse VERSIONSTRING and verify that we support the dumpfile format
    version number, setting *VERSION appropriately. */
 static svn_error_t *
-parse_format_version(const char *versionstring, int *version)
+parse_format_version(int *version,
+                     const char *versionstring)
 {
   static const int magic_len = sizeof(SVN_REPOS_DUMPFILE_MAGIC_HEADER) - 1;
   const char *p = strchr(versionstring, ':');
@@ -406,9 +408,10 @@ parse_format_version(const char *versionstring, int *version)
 /** The public routines **/
 
 svn_error_t *
-svn_repos_parse_dumpstream2(svn_stream_t *stream,
-                            const svn_repos_parse_fns2_t *parse_fns,
+svn_repos_parse_dumpstream3(svn_stream_t *stream,
+                            const svn_repos_parse_fns3_t *parse_fns,
                             void *parse_baton,
+                            svn_boolean_t deltas_are_text,
                             svn_cancel_func_t cancel_func,
                             void *cancel_baton,
                             apr_pool_t *pool)
@@ -428,16 +431,11 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
     return stream_ran_dry();
 
   /* The first two lines of the stream are the dumpfile-format version
-     number, and a blank line. */
-  SVN_ERR(parse_format_version(linebuf->data, &version));
-
-  /* If we were called from svn_repos_parse_dumpstream(), the
-     callbacks to handle delta contents will be NULL, so we have to
-     reject dumpfiles with the current version. */
-  if (version == SVN_REPOS_DUMPFILE_FORMAT_VERSION
-      && (!parse_fns->delete_node_property || !parse_fns->apply_textdelta))
-    return svn_error_createf(SVN_ERR_STREAM_MALFORMED_DATA, NULL,
-                             _("Unsupported dumpfile version: %d"), version);
+     number, and a blank line.  To preserve backward compatibility,
+     don't assume the existence of newer parser-vtable functions. */
+  SVN_ERR(parse_format_version(&version, linebuf->data));
+  if (parse_fns->magic_header_record != NULL)
+    SVN_ERR(parse_fns->magic_header_record(version, parse_baton, pool));
 
   /* A dumpfile "record" is defined to be a header-block of
      rfc822-style headers, possibly followed by a content-block.
@@ -496,8 +494,7 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
       /*** Handle the various header blocks. ***/
 
       /* Is this a revision record? */
-      if (apr_hash_get(headers, SVN_REPOS_DUMPFILE_REVISION_NUMBER,
-                       APR_HASH_KEY_STRING))
+      if (svn_hash_gets(headers, SVN_REPOS_DUMPFILE_REVISION_NUMBER))
         {
           /* If we already have a rev_baton open, we need to close it
              and clear the per-revision subpool. */
@@ -512,8 +509,7 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
                                                  revpool));
         }
       /* Or is this, perhaps, a node record? */
-      else if (apr_hash_get(headers, SVN_REPOS_DUMPFILE_NODE_PATH,
-                            APR_HASH_KEY_STRING))
+      else if (svn_hash_gets(headers, SVN_REPOS_DUMPFILE_NODE_PATH))
         {
           SVN_ERR(parse_fns->new_node_record(&node_baton,
                                              headers,
@@ -522,15 +518,14 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
           found_node = TRUE;
         }
       /* Or is this the repos UUID? */
-      else if ((value = apr_hash_get(headers, SVN_REPOS_DUMPFILE_UUID,
-                                     APR_HASH_KEY_STRING)))
+      else if ((value = svn_hash_gets(headers, SVN_REPOS_DUMPFILE_UUID)))
         {
           SVN_ERR(parse_fns->uuid_record(value, parse_baton, pool));
         }
       /* Or perhaps a dumpfile format? */
-      else if ((value = apr_hash_get(headers,
-                                     SVN_REPOS_DUMPFILE_MAGIC_HEADER,
-                                     APR_HASH_KEY_STRING)))
+      /* ### TODO: use parse_format_version */
+      else if ((value = svn_hash_gets(headers,
+                                      SVN_REPOS_DUMPFILE_MAGIC_HEADER)))
         {
           /* ### someday, switch modes of operation here. */
           SVN_ERR(svn_cstring_atoi(&version, value));
@@ -549,24 +544,18 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
          and Text-content-length fields, but always have a properties
          block in a block with Content-Length > 0 */
 
-      content_length = apr_hash_get(headers,
-                                    SVN_REPOS_DUMPFILE_CONTENT_LENGTH,
-                                    APR_HASH_KEY_STRING);
-      prop_cl = apr_hash_get(headers,
-                             SVN_REPOS_DUMPFILE_PROP_CONTENT_LENGTH,
-                             APR_HASH_KEY_STRING);
-      text_cl = apr_hash_get(headers,
-                             SVN_REPOS_DUMPFILE_TEXT_CONTENT_LENGTH,
-                             APR_HASH_KEY_STRING);
+      content_length = svn_hash_gets(headers,
+                                     SVN_REPOS_DUMPFILE_CONTENT_LENGTH);
+      prop_cl = svn_hash_gets(headers, SVN_REPOS_DUMPFILE_PROP_CONTENT_LENGTH);
+      text_cl = svn_hash_gets(headers, SVN_REPOS_DUMPFILE_TEXT_CONTENT_LENGTH);
       old_v1_with_cl =
         version == 1 && content_length && ! prop_cl && ! text_cl;
 
       /* Is there a props content-block to parse? */
       if (prop_cl || old_v1_with_cl)
         {
-          const char *delta = apr_hash_get(headers,
-                                           SVN_REPOS_DUMPFILE_PROP_DELTA,
-                                           APR_HASH_KEY_STRING);
+          const char *delta = svn_hash_gets(headers,
+                                            SVN_REPOS_DUMPFILE_PROP_DELTA);
           svn_boolean_t is_delta = (delta && strcmp(delta, "true") == 0);
 
           /* First, remove all node properties, unless this is a delta
@@ -588,10 +577,11 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
       /* Is there a text content-block to parse? */
       if (text_cl)
         {
-          const char *delta = apr_hash_get(headers,
-                                           SVN_REPOS_DUMPFILE_TEXT_DELTA,
-                                           APR_HASH_KEY_STRING);
-          svn_boolean_t is_delta = (delta && strcmp(delta, "true") == 0);
+          const char *delta = svn_hash_gets(headers,
+                                            SVN_REPOS_DUMPFILE_TEXT_DELTA);
+          svn_boolean_t is_delta = FALSE;
+          if (! deltas_are_text)
+            is_delta = (delta && strcmp(delta, "true") == 0);
 
           SVN_ERR(parse_text_block(stream,
                                    svn__atoui64(text_cl),
@@ -623,9 +613,8 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
                                     - actual_prop_length;
 
           if (cl_value ||
-              ((node_kind = apr_hash_get(headers,
-                                         SVN_REPOS_DUMPFILE_NODE_KIND,
-                                         APR_HASH_KEY_STRING))
+              ((node_kind = svn_hash_gets(headers,
+                                          SVN_REPOS_DUMPFILE_NODE_KIND))
                && strcmp(node_kind, "file") == 0)
              )
             SVN_ERR(parse_text_block(stream,
@@ -659,7 +648,7 @@ svn_repos_parse_dumpstream2(svn_stream_t *stream,
           /* Consume remaining bytes in this content block */
           while (remaining > 0)
             {
-              if (remaining >= buflen)
+              if (remaining >= (svn_filesize_t)buflen)
                 rlen = buflen;
               else
                 rlen = (apr_size_t) remaining;

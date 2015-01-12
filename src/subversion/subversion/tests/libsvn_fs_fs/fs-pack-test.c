@@ -30,12 +30,23 @@
 #include "svn_pools.h"
 #include "svn_props.h"
 #include "svn_fs.h"
+#include "private/svn_string_private.h"
 
 #include "../svn_test_fs.h"
 
 
 
 /*** Helper Functions ***/
+
+static void
+ignore_fs_warnings(void *baton, svn_error_t *err)
+{
+#ifdef SVN_DEBUG
+  SVN_DBG(("Ignoring FS warning %s\n",
+           svn_error_symbolic_name(err ? err->apr_err : 0)));
+#endif
+  return;
+}
 
 /* Write the format number and maximum number of files per directory
    to a new format file in PATH, overwriting a previously existing
@@ -95,6 +106,43 @@ get_rev_contents(svn_revnum_t rev, apr_pool_t *pool)
   return apr_psprintf(pool, "%" APR_INT64_T_FMT "\n", num);
 }
 
+struct pack_notify_baton
+{
+  apr_int64_t expected_shard;
+  svn_fs_pack_notify_action_t expected_action;
+};
+
+static svn_error_t *
+pack_notify(void *baton,
+            apr_int64_t shard,
+            svn_fs_pack_notify_action_t action,
+            apr_pool_t *pool)
+{
+  struct pack_notify_baton *pnb = baton;
+
+  SVN_TEST_ASSERT(shard == pnb->expected_shard);
+  SVN_TEST_ASSERT(action == pnb->expected_action);
+
+  /* Update expectations. */
+  switch (action)
+    {
+      case svn_fs_pack_notify_start:
+        pnb->expected_action = svn_fs_pack_notify_end;
+        break;
+
+      case svn_fs_pack_notify_end:
+        pnb->expected_action = svn_fs_pack_notify_start;
+        pnb->expected_shard++;
+        break;
+
+      default:
+        return svn_error_create(SVN_ERR_TEST_FAILED, NULL,
+                                "Unknown notification action when packing");
+    }
+
+  return SVN_NO_ERROR;
+}
+
 /* Create a packed filesystem in DIR.  Set the shard size to
    SHARD_SIZE and create NUM_REVS number of revisions (in addition to
    r0).  Use POOL for allocations.  After this function successfully
@@ -113,6 +161,7 @@ create_packed_filesystem(const char *dir,
   const char *conflict;
   svn_revnum_t after_rev;
   apr_pool_t *subpool = svn_pool_create(pool);
+  struct pack_notify_baton pnb;
   apr_pool_t *iterpool;
   int version;
 
@@ -156,7 +205,80 @@ create_packed_filesystem(const char *dir,
   svn_pool_destroy(subpool);
 
   /* Now pack the FS */
-  return svn_fs_pack(dir, NULL, NULL, NULL, NULL, pool);
+  pnb.expected_shard = 0;
+  pnb.expected_action = svn_fs_pack_notify_start;
+  return svn_fs_pack(dir, pack_notify, &pnb, NULL, NULL, pool);
+}
+
+/* Create a packed FSFS filesystem for revprop tests at REPO_NAME with
+ * MAX_REV revisions and the given SHARD_SIZE and OPTS.  Return it in *FS.
+ * Use POOL for allocations.
+ */
+static svn_error_t *
+prepare_revprop_repo(svn_fs_t **fs,
+                     const char *repo_name,
+                     int max_rev,
+                     int shard_size,
+                     const svn_test_opts_t *opts,
+                     apr_pool_t *pool)
+{
+  svn_fs_txn_t *txn;
+  svn_fs_root_t *txn_root;
+  const char *conflict;
+  svn_revnum_t after_rev;
+  apr_pool_t *subpool;
+
+  /* Create the packed FS and open it. */
+  SVN_ERR(create_packed_filesystem(repo_name, opts, max_rev, shard_size, pool));
+  SVN_ERR(svn_fs_open(fs, repo_name, NULL, pool));
+
+  subpool = svn_pool_create(pool);
+  /* Do a commit to trigger packing. */
+  SVN_ERR(svn_fs_begin_txn(&txn, *fs, max_rev, subpool));
+  SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
+  SVN_ERR(svn_test__set_file_contents(txn_root, "iota", "new-iota",  subpool));
+  SVN_ERR(svn_fs_commit_txn(&conflict, &after_rev, txn, subpool));
+  SVN_TEST_ASSERT(SVN_IS_VALID_REVNUM(after_rev));
+  svn_pool_destroy(subpool);
+
+  /* Pack the repository. */
+  SVN_ERR(svn_fs_pack(repo_name, NULL, NULL, NULL, NULL, pool));
+
+  return SVN_NO_ERROR;
+}
+
+/* For revision REV, return a short log message allocated in POOL.
+ */
+static svn_string_t *
+default_log(svn_revnum_t rev, apr_pool_t *pool)
+{
+  return svn_string_createf(pool, "Default message for rev %ld", rev);
+}
+
+/* For revision REV, return a long log message allocated in POOL.
+ */
+static svn_string_t *
+large_log(svn_revnum_t rev, apr_size_t length, apr_pool_t *pool)
+{
+  svn_stringbuf_t *temp = svn_stringbuf_create_ensure(100000, pool);
+  int i, count = (int)(length - 50) / 6;
+
+  svn_stringbuf_appendcstr(temp, "A ");
+  for (i = 0; i < count; ++i)
+    svn_stringbuf_appendcstr(temp, "very, ");
+
+  svn_stringbuf_appendcstr(temp,
+    apr_psprintf(pool, "very long message for rev %ld, indeed", rev));
+
+  return svn_stringbuf__morph_into_string(temp);
+}
+
+/* For revision REV, return a long log message allocated in POOL.
+ */
+static svn_string_t *
+huge_log(svn_revnum_t rev, apr_pool_t *pool)
+{
+  return large_log(rev, 90000, pool);
 }
 
 
@@ -364,18 +486,13 @@ commit_packed_fs(const svn_test_opts_t *opts,
 /* ------------------------------------------------------------------------ */
 #define REPO_NAME "test-repo-get-set-revprop-packed-fs"
 #define SHARD_SIZE 4
-#define MAX_REV 1
+#define MAX_REV 10
 static svn_error_t *
 get_set_revprop_packed_fs(const svn_test_opts_t *opts,
                           apr_pool_t *pool)
 {
   svn_fs_t *fs;
-  svn_fs_txn_t *txn;
-  svn_fs_root_t *txn_root;
-  const char *conflict;
-  svn_revnum_t after_rev;
   svn_string_t *prop_value;
-  apr_pool_t *subpool;
 
   /* Bail (with success) on known-untestable scenarios */
   if ((strcmp(opts->fs_type, "fsfs") != 0)
@@ -383,29 +500,178 @@ get_set_revprop_packed_fs(const svn_test_opts_t *opts,
     return SVN_NO_ERROR;
 
   /* Create the packed FS and open it. */
-  SVN_ERR(create_packed_filesystem(REPO_NAME, opts, MAX_REV, SHARD_SIZE, pool));
-  SVN_ERR(svn_fs_open(&fs, REPO_NAME, NULL, pool));
+  SVN_ERR(prepare_revprop_repo(&fs, REPO_NAME, MAX_REV, SHARD_SIZE, opts,
+                               pool));
 
-  subpool = svn_pool_create(pool);
-  /* Do a commit to trigger packing. */
-  SVN_ERR(svn_fs_begin_txn(&txn, fs, MAX_REV, subpool));
-  SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
-  SVN_ERR(svn_test__set_file_contents(txn_root, "iota", "new-iota",  subpool));
-  SVN_ERR(svn_fs_commit_txn(&conflict, &after_rev, txn, subpool));
-  SVN_TEST_ASSERT(SVN_IS_VALID_REVNUM(after_rev));
-  svn_pool_clear(subpool);
-
-  /* Pack the repository. */
-  SVN_ERR(svn_fs_pack(REPO_NAME, NULL, NULL, NULL, NULL, pool));
-
-  /* Try to get revprop for revision 0. */
+  /* Try to get revprop for revision 0
+   * (non-packed due to special handling). */
   SVN_ERR(svn_fs_revision_prop(&prop_value, fs, 0, SVN_PROP_REVISION_AUTHOR,
                                pool));
 
-  /* Try to change revprop for revision 0. */
+  /* Try to change revprop for revision 0
+   * (non-packed due to special handling). */
   SVN_ERR(svn_fs_change_rev_prop(fs, 0, SVN_PROP_REVISION_AUTHOR,
                                  svn_string_create("tweaked-author", pool),
                                  pool));
+
+  /* verify */
+  SVN_ERR(svn_fs_revision_prop(&prop_value, fs, 0, SVN_PROP_REVISION_AUTHOR,
+                               pool));
+  SVN_TEST_STRING_ASSERT(prop_value->data, "tweaked-author");
+
+  /* Try to get packed revprop for revision 5. */
+  SVN_ERR(svn_fs_revision_prop(&prop_value, fs, 5, SVN_PROP_REVISION_AUTHOR,
+                               pool));
+
+  /* Try to change packed revprop for revision 5. */
+  SVN_ERR(svn_fs_change_rev_prop(fs, 5, SVN_PROP_REVISION_AUTHOR,
+                                 svn_string_create("tweaked-author2", pool),
+                                 pool));
+
+  /* verify */
+  SVN_ERR(svn_fs_revision_prop(&prop_value, fs, 5, SVN_PROP_REVISION_AUTHOR,
+                               pool));
+  SVN_TEST_STRING_ASSERT(prop_value->data, "tweaked-author2");
+
+  return SVN_NO_ERROR;
+}
+#undef REPO_NAME
+#undef MAX_REV
+#undef SHARD_SIZE
+
+/* ------------------------------------------------------------------------ */
+#define REPO_NAME "test-repo-get-set-large-revprop-packed-fs"
+#define SHARD_SIZE 4
+#define MAX_REV 11
+static svn_error_t *
+get_set_large_revprop_packed_fs(const svn_test_opts_t *opts,
+                                apr_pool_t *pool)
+{
+  svn_fs_t *fs;
+  svn_string_t *prop_value;
+  svn_revnum_t rev;
+
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "fsfs") != 0)
+      || (opts->server_minor_version && (opts->server_minor_version < 7)))
+    return SVN_NO_ERROR;
+
+  /* Create the packed FS and open it. */
+  SVN_ERR(prepare_revprop_repo(&fs, REPO_NAME, MAX_REV, SHARD_SIZE, opts,
+                               pool));
+
+  /* Set commit messages to different, large values that fill the pack
+   * files but do not exceed the pack size limit. */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    SVN_ERR(svn_fs_change_rev_prop(fs, rev, SVN_PROP_REVISION_LOG,
+                                   large_log(rev, 15000, pool),
+                                   pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+      SVN_TEST_STRING_ASSERT(prop_value->data,
+                             large_log(rev, 15000, pool)->data);
+    }
+
+  /* Put a larger revprop into the last, some middle and the first revision
+   * of a pack.  This should cause the packs to split in the middle. */
+  SVN_ERR(svn_fs_change_rev_prop(fs, 3, SVN_PROP_REVISION_LOG,
+                                 /* rev 0 is not packed */
+                                 large_log(3, 37000, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 5, SVN_PROP_REVISION_LOG,
+                                 large_log(5, 25000, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 8, SVN_PROP_REVISION_LOG,
+                                 large_log(8, 25000, pool),
+                                 pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+
+      if (rev == 3)
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               large_log(rev, 37000, pool)->data);
+      else if (rev == 5 || rev == 8)
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               large_log(rev, 25000, pool)->data);
+      else
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               large_log(rev, 15000, pool)->data);
+    }
+
+  return SVN_NO_ERROR;
+}
+#undef REPO_NAME
+#undef MAX_REV
+#undef SHARD_SIZE
+
+/* ------------------------------------------------------------------------ */
+#define REPO_NAME "test-repo-get-set-huge-revprop-packed-fs"
+#define SHARD_SIZE 4
+#define MAX_REV 10
+static svn_error_t *
+get_set_huge_revprop_packed_fs(const svn_test_opts_t *opts,
+                               apr_pool_t *pool)
+{
+  svn_fs_t *fs;
+  svn_string_t *prop_value;
+  svn_revnum_t rev;
+
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "fsfs") != 0)
+      || (opts->server_minor_version && (opts->server_minor_version < 7)))
+    return SVN_NO_ERROR;
+
+  /* Create the packed FS and open it. */
+  SVN_ERR(prepare_revprop_repo(&fs, REPO_NAME, MAX_REV, SHARD_SIZE, opts,
+                               pool));
+
+  /* Set commit messages to different values */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    SVN_ERR(svn_fs_change_rev_prop(fs, rev, SVN_PROP_REVISION_LOG,
+                                   default_log(rev, pool),
+                                   pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+      SVN_TEST_STRING_ASSERT(prop_value->data, default_log(rev, pool)->data);
+    }
+
+  /* Put a huge revprop into the last, some middle and the first revision
+   * of a pack.  They will cause the pack files to split accordingly. */
+  SVN_ERR(svn_fs_change_rev_prop(fs, 3, SVN_PROP_REVISION_LOG,
+                                 huge_log(3, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 5, SVN_PROP_REVISION_LOG,
+                                 huge_log(5, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 8, SVN_PROP_REVISION_LOG,
+                                 huge_log(8, pool),
+                                 pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+
+      if (rev == 3 || rev == 5 || rev == 8)
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               huge_log(rev, pool)->data);
+      else
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               default_log(rev, pool)->data);
+    }
 
   return SVN_NO_ERROR;
 }
@@ -477,6 +743,181 @@ recover_fully_packed(const svn_test_opts_t *opts,
 #undef SHARD_SIZE
 
 /* ------------------------------------------------------------------------ */
+/* Regression test for issue #4320 (fsfs file-hinting fails when reading a rep
+   from the transaction that is commiting rev = SHARD_SIZE). */
+#define REPO_NAME "test-repo-file-hint-at-shard-boundary"
+#define SHARD_SIZE 4
+#define MAX_REV (SHARD_SIZE - 1)
+static svn_error_t *
+file_hint_at_shard_boundary(const svn_test_opts_t *opts,
+                            apr_pool_t *pool)
+{
+  apr_pool_t *subpool;
+  svn_fs_t *fs;
+  svn_fs_txn_t *txn;
+  svn_fs_root_t *txn_root;
+  const char *file_contents;
+  svn_stringbuf_t *retrieved_contents;
+  svn_error_t *err = SVN_NO_ERROR;
+
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "fsfs") != 0)
+      || (opts->server_minor_version && (opts->server_minor_version < 8)))
+    return SVN_NO_ERROR;
+
+  /* Create a packed FS and MAX_REV revisions */
+  SVN_ERR(create_packed_filesystem(REPO_NAME, opts, MAX_REV, SHARD_SIZE, pool));
+
+  /* Reopen the filesystem */
+  subpool = svn_pool_create(pool);
+  SVN_ERR(svn_fs_open(&fs, REPO_NAME, NULL, subpool));
+
+  /* Revision = SHARD_SIZE */
+  file_contents = get_rev_contents(SHARD_SIZE, subpool);
+  SVN_ERR(svn_fs_begin_txn(&txn, fs, MAX_REV, subpool));
+  SVN_ERR(svn_fs_txn_root(&txn_root, txn, subpool));
+  SVN_ERR(svn_test__set_file_contents(txn_root, "iota", file_contents,
+                                      subpool));
+
+  /* Retrieve the file. */
+  SVN_ERR(svn_test__get_file_contents(txn_root, "iota", &retrieved_contents,
+                                      subpool));
+  if (strcmp(retrieved_contents->data, file_contents))
+    {
+      err = svn_error_create(SVN_ERR_TEST_FAILED, err,
+                              "Retrieved incorrect contents from iota.");
+    }
+
+  /* Close the repo. */
+  svn_pool_destroy(subpool);
+
+  return err;
+}
+#undef REPO_NAME
+#undef MAX_REV
+#undef SHARD_SIZE
+
+/* ------------------------------------------------------------------------ */
+#define REPO_NAME "get_set_multiple_huge_revprops_packed_fs"
+#define SHARD_SIZE 4
+#define MAX_REV 9
+static svn_error_t *
+get_set_multiple_huge_revprops_packed_fs(const svn_test_opts_t *opts,
+                                         apr_pool_t *pool)
+{
+  svn_fs_t *fs;
+  svn_string_t *prop_value;
+  svn_revnum_t rev;
+
+  /* Bail (with success) on known-untestable scenarios */
+  if ((strcmp(opts->fs_type, "fsfs") != 0)
+      || (opts->server_minor_version && (opts->server_minor_version < 7)))
+    return SVN_NO_ERROR;
+
+  /* Create the packed FS and open it. */
+  SVN_ERR(prepare_revprop_repo(&fs, REPO_NAME, MAX_REV, SHARD_SIZE, opts,
+                               pool));
+
+  /* Set commit messages to different values */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    SVN_ERR(svn_fs_change_rev_prop(fs, rev, SVN_PROP_REVISION_LOG,
+                                   default_log(rev, pool),
+                                   pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+      SVN_TEST_STRING_ASSERT(prop_value->data, default_log(rev, pool)->data);
+    }
+
+  /* Put a huge revprop into revision 1 and 2. */
+  SVN_ERR(svn_fs_change_rev_prop(fs, 1, SVN_PROP_REVISION_LOG,
+                                 huge_log(1, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 2, SVN_PROP_REVISION_LOG,
+                                 huge_log(2, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 5, SVN_PROP_REVISION_LOG,
+                                 huge_log(5, pool),
+                                 pool));
+  SVN_ERR(svn_fs_change_rev_prop(fs, 6, SVN_PROP_REVISION_LOG,
+                                 huge_log(6, pool),
+                                 pool));
+
+  /* verify */
+  for (rev = 0; rev <= MAX_REV; ++rev)
+    {
+      SVN_ERR(svn_fs_revision_prop(&prop_value, fs, rev,
+                                   SVN_PROP_REVISION_LOG, pool));
+
+      if (rev == 1 || rev == 2 || rev == 5 || rev == 6)
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               huge_log(rev, pool)->data);
+      else
+        SVN_TEST_STRING_ASSERT(prop_value->data,
+                               default_log(rev, pool)->data);
+    }
+
+  return SVN_NO_ERROR;
+}
+#undef REPO_NAME
+#undef MAX_REV
+#undef SHARD_SIZE
+
+/* ------------------------------------------------------------------------ */
+
+#define REPO_NAME "revprop_caching_on_off"
+static svn_error_t *
+revprop_caching_on_off(const svn_test_opts_t *opts,
+                       apr_pool_t *pool)
+{
+  svn_fs_t *fs1;
+  svn_fs_t *fs2;
+  apr_hash_t *fs_config;
+  svn_string_t *value;
+  const svn_string_t *another_value_for_avoiding_warnings_from_a_broken_api;
+  const svn_string_t *new_value = svn_string_create("new", pool);
+
+  if (strcmp(opts->fs_type, "fsfs") != 0)
+    return svn_error_create(SVN_ERR_TEST_SKIPPED, NULL, NULL);
+
+  /* Open two filesystem objects, enable revision property caching
+   * in one of them. */
+  SVN_ERR(svn_test__create_fs(&fs1, REPO_NAME, opts, pool));
+
+  fs_config = apr_hash_make(pool);
+  apr_hash_set(fs_config, SVN_FS_CONFIG_FSFS_CACHE_REVPROPS,
+               APR_HASH_KEY_STRING, "1");
+
+  SVN_ERR(svn_fs_open(&fs2, svn_fs_path(fs1, pool), fs_config, pool));
+
+  /* With inefficient named atomics, the filesystem will output a warning
+     and disable the revprop caching, but we still would like to test
+     these cases.  Ignore the warning(s). */
+  svn_fs_set_warning_func(fs2, ignore_fs_warnings, NULL);
+
+  SVN_ERR(svn_fs_revision_prop(&value, fs2, 0, "svn:date", pool));
+  another_value_for_avoiding_warnings_from_a_broken_api = value;
+  SVN_ERR(svn_fs_change_rev_prop2(
+              fs1, 0, "svn:date",
+              &another_value_for_avoiding_warnings_from_a_broken_api,
+              new_value, pool));
+
+  /* Expect the change to be visible through both objects.*/
+  SVN_ERR(svn_fs_revision_prop(&value, fs1, 0, "svn:date", pool));
+  SVN_TEST_STRING_ASSERT(value->data, "new");
+
+  SVN_ERR(svn_fs_revision_prop(&value, fs2, 0, "svn:date", pool));
+  SVN_TEST_STRING_ASSERT(value->data, "new");
+
+  return SVN_NO_ERROR;
+}
+
+#undef REPO_NAME
+
+/* ------------------------------------------------------------------------ */
 
 /* The test table.  */
 
@@ -493,7 +934,17 @@ struct svn_test_descriptor_t test_funcs[] =
                        "commit to a packed FSFS filesystem"),
     SVN_TEST_OPTS_PASS(get_set_revprop_packed_fs,
                        "get/set revprop while packing FSFS filesystem"),
+    SVN_TEST_OPTS_PASS(get_set_large_revprop_packed_fs,
+                       "get/set large packed revprops in FSFS"),
+    SVN_TEST_OPTS_PASS(get_set_huge_revprop_packed_fs,
+                       "get/set huge packed revprops in FSFS"),
     SVN_TEST_OPTS_PASS(recover_fully_packed,
                        "recover a fully packed filesystem"),
+    SVN_TEST_OPTS_PASS(file_hint_at_shard_boundary,
+                       "test file hint at shard boundary"),
+    SVN_TEST_OPTS_PASS(get_set_multiple_huge_revprops_packed_fs,
+                       "set multiple huge revprops in packed FSFS"),
+    SVN_TEST_OPTS_PASS(revprop_caching_on_off,
+                       "change revprops with enabled and disabled caching"),
     SVN_TEST_NULL
   };

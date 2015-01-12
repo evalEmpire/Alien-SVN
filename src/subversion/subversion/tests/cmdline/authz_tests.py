@@ -137,7 +137,7 @@ def broken_authz_file(sbox):
   exit_code, out, err = svntest.main.run_svn(1,
                                              "delete",
                                              sbox.repo_url + "/A",
-                                             "-m", "a log message");
+                                             "-m", "a log message")
   if out:
     raise svntest.verify.SVNUnexpectedStdout(out)
   if not err:
@@ -576,7 +576,8 @@ def authz_log_and_tracing_test(sbox):
   if sbox.repo_url.startswith('http'):
     expected_err2 = expected_err
   else:
-    expected_err2 = ".*svn: E220001: Item is not readable.*"
+    expected_err2 = ".*svn: E220001: ((Unreadable path encountered; " \
+                    "access denied)|(Item is not readable)).*"
 
   # if we do the same thing directly on the unreadable file, we get:
   # svn: Item is not readable
@@ -866,6 +867,7 @@ def authz_svnserve_anon_access_read(sbox):
                                      B_url, B_path)
 
 @XFail()
+@Issue(3796)
 @Skip(svntest.main.is_ra_type_file)
 def authz_switch_to_directory(sbox):
   "switched to directory, no read access on parents"
@@ -882,7 +884,8 @@ def authz_switch_to_directory(sbox):
   G_path = os.path.join(wc_dir, 'A', 'D', 'G')
 
   # Switch /A/B/E to /A/B/F.
-  svntest.main.run_svn(None, 'switch', sbox.repo_url + "/A/B/E", G_path)
+  svntest.main.run_svn(None, 'switch', sbox.repo_url + "/A/B/E", G_path,
+                       '--ignore-ancestry')
 
 # Test to reproduce the problem identified by Issue 3242 in which
 # Subversion's authz, as of Subversion 1.5, requires access to the
@@ -1111,7 +1114,7 @@ def authz_recursive_ls(sbox):
 @Issue(3781)
 @Skip(svntest.main.is_ra_type_file)
 def case_sensitive_authz(sbox):
-  "authz issue #3781, check case sensitiveness"
+  "authz issue #3781, check case sensitivity"
 
   sbox.build()
 
@@ -1221,12 +1224,13 @@ def authz_tree_conflict(sbox):
   expected_output = svntest.wc.State(wc_dir, {})
   expected_status = svntest.actions.get_virginal_state(wc_dir, 2)
   expected_status.tweak('A/C', status='A ', wc_rev='0')
+  expected_status.tweak('A', '', status='! ', wc_rev='1')
 
   svntest.actions.run_and_verify_update(wc_dir,
                                         expected_output,
                                         None,
                                         expected_status,
-                                        "Failed to mark '.*C' absent:",
+                                        "Failed to mark '.*C' (server|absent):",
                                         None, None, None, None, 0,
                                         '-r', '1', wc_dir)
 
@@ -1288,7 +1292,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing directory '.*Z' is forbidden)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*Z' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
 
@@ -1300,7 +1305,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing file '.*zeta' is forbidden)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*zeta' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
   sbox.simple_revert('A/zeta')
@@ -1321,7 +1327,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing file '.*lambda' is forbidden.*)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*lambda' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
 
@@ -1331,7 +1338,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing file '.*lambda' is forbidden.*)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*lambda' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
 
@@ -1341,7 +1349,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing directory '.*F' is forbidden.*)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*F' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
   sbox.simple_revert('A/B/F')
@@ -1350,7 +1359,8 @@ def wc_commit_error_handling(sbox):
   # Allow the informative error for dav and the ra_svn specific one that is
   # returned on editor->edit_close().
   expected_err = "(svn: E195023: Changing file '.*mu' is forbidden.*)|" + \
-                 "(svn: E220004: Access denied)"
+                 "(svn: E220004: Access denied)|" + \
+                 "(svn: E175013: Access to '.*mu' forbidden)"
   svntest.actions.run_and_verify_svn(None, None, expected_err,
                                      'ci', wc_dir, '-m', '')
 
@@ -1381,7 +1391,7 @@ def upgrade_absent(sbox):
   # Relocate to allow finding the repository
   svntest.actions.run_and_verify_svn(None, None, [], 'relocate',
                                      'svn://127.0.0.1/authz_tests-2',
-                                     sbox.repo_url, sbox.wc_dir)  
+                                     sbox.repo_url, sbox.wc_dir)
 
   expected_output = svntest.wc.State(sbox.wc_dir, {
   })
@@ -1389,6 +1399,122 @@ def upgrade_absent(sbox):
   # Expect no changes and certainly no errors
   svntest.actions.run_and_verify_update(sbox.wc_dir, expected_output,
                                         None, None)
+
+@Issue(4183)
+@XFail()
+@Skip(svntest.main.is_ra_type_file)
+def remove_subdir_with_authz_and_tc(sbox):
+  "remove a subdir with authz file"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  sbox.simple_rm('A/B')
+  sbox.simple_commit()
+
+  svntest.main.write_restrictive_svnserve_conf(sbox.repo_dir)
+  svntest.main.write_authz_file(sbox, { "/"      : "*=rw",
+                                        "/A/B/E" : "*="})
+
+  # Now update back to r1. This will reintroduce A/B except A/B/E.
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.remove('A/B/E', 'A/B/E/alpha', 'A/B/E/beta')
+
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/B'               : Item(status='A '),
+    'A/B/F'             : Item(status='A '),
+    'A/B/lambda'        : Item(status='A '),
+  })
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        None,
+                                        expected_status,
+                                        None,
+                                        None, None,
+                                        None, None, False,
+                                        wc_dir, '-r', '1')
+
+  # Perform some edit operation to introduce a tree conflict
+  svntest.main.file_write(sbox.ospath('A/B/lambda'), 'qq')
+
+  # And now update to r2. This tries to delete A/B and causes a tree conflict
+  # ### But is also causes an error in creating the copied state
+  # ###  svn: E220001: Cannot copy '<snip>\A\B\E' excluded by server
+  expected_output = svntest.wc.State(wc_dir, {
+    'A/B'               : Item(status='  ', treeconflict='C'),
+  })
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        expected_output,
+                                        None,
+                                        None,
+                                        None,
+                                        None, None,
+                                        None, None, False,
+                                        wc_dir)
+
+@SkipUnless(svntest.main.is_ra_type_svn)
+def authz_svnserve_groups(sbox):
+  "authz with configured global groups"
+
+  sbox.build(create_wc = False)
+
+  svntest.main.write_restrictive_svnserve_conf_with_groups(sbox.repo_dir)
+
+  svntest.main.write_authz_file(sbox, { "/A/B" : "@senate = r",
+                                        "/A/D" : "@senate = rw",
+                                        "/A/B/E" : "@senate = " })
+
+  svntest.main.write_groups_file(sbox, { "senate" : "jrandom" })
+
+  root_url = sbox.repo_url
+  A_url = root_url + '/A'
+  B_url = A_url + '/B'
+  E_url = B_url + '/E'
+  F_url = B_url + '/F'
+  D_url = A_url + '/D'
+  G_url = D_url + '/G'
+  lambda_url = B_url + '/lambda'
+  pi_url = G_url + '/pi'
+  alpha_url = E_url + '/alpha'
+
+  expected_err = ".*svn: E170001: Authorization failed.*"
+
+  # read a remote file
+  svntest.actions.run_and_verify_svn(None, ["This is the file 'lambda'.\n"],
+                                     [], 'cat',
+                                     lambda_url)
+
+  # read a remote file
+  svntest.actions.run_and_verify_svn(None, ["This is the file 'pi'.\n"],
+                                     [], 'cat',
+                                     pi_url)
+
+  # read a remote file, unreadable: should fail
+  svntest.actions.run_and_verify_svn(None,
+                                     None, expected_err,
+                                     'cat',
+                                     alpha_url)
+
+  # copy a remote file, source is unreadable: should fail
+  svntest.actions.run_and_verify_svn(None,
+                                     None, expected_err,
+                                     'cp',
+                                     '-m', 'logmsg',
+                                     alpha_url, B_url)
+
+  # copy a remote folder
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'cp',
+                                     '-m', 'logmsg',
+                                     F_url, D_url)
+
+  # copy a remote folder, source is unreadable: should fail
+  svntest.actions.run_and_verify_svn(None,
+                                     None, expected_err,
+                                     'cp',
+                                     '-m', 'logmsg',
+                                     E_url, D_url)
 
 @Skip(svntest.main.is_ra_type_file)
 @Issue(4332)
@@ -1404,6 +1530,65 @@ def authz_del_from_subdir(sbox):
   svntest.actions.run_and_verify_svn(None, None, [],
                                       'rm', sbox.repo_url + '/A/mu',
                                       '-m', '')
+
+
+@XFail()
+@SkipUnless(svntest.main.is_ra_type_dav) # dontdothat is dav only
+@SkipUnless(svntest.main.is_os_windows) # until the buildbots are configured
+def log_diff_dontdothat(sbox):
+  "log --diff on dontdothat"
+  sbox.build(create_wc = False)
+
+  ddt_url = sbox.repo_url.replace('/svn-test-work/', '/ddt-test-work/')
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                      'log', sbox.repo_url,
+                                      '-c', 1, '--diff')
+
+  # We should expect a PASS or a proper error message instead of
+  # svn: E175009: XML parsing failed: (403 Forbidden)
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                      'log', ddt_url,
+                                      '-c', 1, '--diff')
+
+@Issue(4422)
+@Skip(svntest.main.is_ra_type_file)
+def authz_file_external_to_authz(sbox):
+  "replace file external with authz node"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  write_authz_file(sbox, {"/": "* = rw"})
+  write_restrictive_svnserve_conf(sbox.repo_dir)
+
+  sbox.simple_propset('svn:externals', 'Z ' + repo_url + '/iota', '')
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.tweak('', status=' M')
+  expected_status.add({
+    'Z' : Item(status='  ', wc_rev='1', switched='X'),
+  })
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        None, None, expected_status)
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'cp', repo_url + '/A',
+                                           repo_url + '/Z',
+                                      '-m', 'Add Z')
+
+  write_authz_file(sbox, {"/": "* = rw", "/Z": "* = "})
+
+  expected_status.tweak(wc_rev=2)
+
+  # ### This used to assert with
+  # ### svn: E235000: In file 'update_editor.c' line 3043: assertion failed
+  # ###               (status != svn_wc__db_status_normal)
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        None, None, expected_status)
+
 
 ########################################################################
 # Run the tests
@@ -1434,7 +1619,11 @@ test_list = [ None,
               wc_delete,
               wc_commit_error_handling,
               upgrade_absent,
+              remove_subdir_with_authz_and_tc,
+              authz_svnserve_groups,
               authz_del_from_subdir,
+              log_diff_dontdothat,
+              authz_file_external_to_authz,
              ]
 serial_only = True
 

@@ -1,5 +1,5 @@
 /*
- * tests-main.c:  shared main() & friends for SVN test-suite programs
+ * svn_test_main.c:  shared main() & friends for SVN test-suite programs
  *
  * ====================================================================
  *    Licensed to the Apache Software Foundation (ASF) under one
@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <setjmp.h>
+#ifdef WIN32
+#include <crtdbg.h>
+#endif
 
 #include <apr_pools.h>
 #include <apr_general.h>
@@ -41,8 +44,11 @@
 #include "svn_io.h"
 #include "svn_path.h"
 #include "svn_ctype.h"
-#include "svn_private_config.h"
+#include "svn_utf.h"
 
+#include "private/svn_cmdline_private.h"
+
+#include "svn_private_config.h"
 
 /* Some Subversion test programs may want to parse options in the
    argument list, so we remember it here. */
@@ -52,13 +58,6 @@ const char **test_argv;
 
 /* Test option: Print more output */
 static svn_boolean_t verbose_mode = FALSE;
-
-/* Test option: Trap SVN_ERR_ASSERT failures in the code under test. Default
- * is false so the test can easily be run in a debugger with the debugger
- * catching the assertion failure. Test suites should enable this in order
- * to be able to continue with other sub-tests and report the results even
- * when a test hits an assertion failure. */
-static svn_boolean_t trap_assertion_failures = FALSE;
 
 /* Test option: Print only unexpected results */
 static svn_boolean_t quiet_mode = FALSE;
@@ -75,11 +74,11 @@ enum svn_test_mode_t mode_filter = svn_test_all;
 
 /* Option parsing enums and structures */
 enum {
-  cleanup_opt = SVN_OPT_FIRST_LONGOPT_ID,
+  help_opt = SVN_OPT_FIRST_LONGOPT_ID,
+  cleanup_opt,
   fstype_opt,
   list_opt,
   verbose_opt,
-  trap_assert_opt,
   quiet_opt,
   config_opt,
   server_minor_version_opt,
@@ -90,6 +89,8 @@ enum {
 
 static const apr_getopt_option_t cl_options[] =
 {
+  {"help",          help_opt, 0,
+                    N_("display this help")},
   {"cleanup",       cleanup_opt, 0,
                     N_("remove test directories after success")},
   {"config-file",   config_opt, 1,
@@ -100,14 +101,12 @@ static const apr_getopt_option_t cl_options[] =
                     N_("lists all the tests with their short description")},
   {"mode-filter",   mode_filter_opt, 1,
                     N_("only run/list tests with expected mode ARG = PASS, "
-                       "XFAIL, SKIP, or ALL (default)\n")},
+                       "XFAIL, SKIP, or ALL (default)")},
   {"verbose",       verbose_opt, 0,
                     N_("print extra information")},
   {"server-minor-version", server_minor_version_opt, 1,
-                    N_("set the minor version for the server ('3', '4',\n"
+                    N_("set the minor version for the server ('3', '4', "
                        "'5', or '6')")},
-  {"trap-assertion-failures", trap_assert_opt, 0,
-                    N_("catch and report SVN_ERR_ASSERT failures")},
   {"quiet",         quiet_opt, 0,
                     N_("print only unexpected results")},
   {"allow-segfaults", allow_segfault_opt, 0,
@@ -348,6 +347,26 @@ do_test_num(const char *progname,
 }
 
 
+static void help(const char *progname, apr_pool_t *pool)
+{
+  int i;
+
+  svn_error_clear(svn_cmdline_fprintf(stdout, pool,
+                                      _("usage: %s [options] [test-numbers]\n"
+                                      "\n"
+                                      "Valid options:\n"),
+                                      progname));
+  for (i = 0; cl_options[i].name && cl_options[i].optch; i++)
+    {
+      const char *optstr;
+
+      svn_opt_format_option(&optstr, cl_options + i, TRUE, pool);
+      svn_error_clear(svn_cmdline_fprintf(stdout, pool, "  %s\n", optstr));
+    }
+  svn_error_clear(svn_cmdline_fprintf(stdout, pool, "\n"));
+}
+
+
 /* Standard svn test program */
 int
 main(int argc, const char *argv[])
@@ -355,7 +374,6 @@ main(int argc, const char *argv[])
   const char *prog_name;
   int i;
   svn_boolean_t got_error = FALSE;
-  apr_allocator_t *allocator;
   apr_pool_t *pool, *test_pool;
   svn_boolean_t ran_a_test = FALSE;
   svn_boolean_t list_mode = FALSE;
@@ -378,16 +396,10 @@ main(int argc, const char *argv[])
       exit(1);
     }
 
-  /* set up the global pool.  Use a separate mutexless allocator,
-   * given this application is single threaded.
+  /* set up the global pool.  Use a separate allocator to limit memory
+   * usage but make it thread-safe to allow for multi-threaded tests.
    */
-  if (apr_allocator_create(&allocator))
-    return EXIT_FAILURE;
-
-  apr_allocator_max_free_set(allocator, SVN_ALLOCATOR_RECOMMENDED_MAX_FREE);
-
-  pool = svn_pool_create_ex(NULL, allocator);
-  apr_allocator_owner_set(allocator, pool);
+  pool = apr_allocator_owner_get(svn_pool_create_allocator(TRUE));
 
   /* Remember the command line */
   test_argc = argc;
@@ -412,6 +424,27 @@ main(int argc, const char *argv[])
         prog_name = argv[0];
     }
 
+#ifdef WIN32
+#if _MSC_VER >= 1400
+  /* ### This should work for VC++ 2002 (=1300) and later */
+  /* Show the abort message on STDERR instead of a dialog to allow
+     scripts (e.g. our testsuite) to continue after an abort without
+     user intervention. Allow overriding for easier debugging. */
+  if (!getenv("SVN_CMDLINE_USE_DIALOG_FOR_ABORT"))
+    {
+      /* In release mode: Redirect abort() errors to stderr */
+      _set_error_mode(_OUT_TO_STDERR);
+
+      /* In _DEBUG mode: Redirect all debug output (E.g. assert() to stderr.
+         (Ignored in releas builds) */
+      _CrtSetReportFile( _CRT_ASSERT, _CRTDBG_FILE_STDERR);
+      _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+      _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+      _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+    }
+#endif /* _MSC_VER >= 1400 */
+#endif
+
   if (err)
     return svn_cmdline_handle_exit_error(err, pool, prog_name);
   while (1)
@@ -431,6 +464,9 @@ main(int argc, const char *argv[])
         }
 
       switch (opt_id) {
+        case help_opt:
+          help(prog_name, pool);
+          exit(0);
         case cleanup_opt:
           cleanup_mode = TRUE;
           break;
@@ -439,6 +475,10 @@ main(int argc, const char *argv[])
           break;
         case fstype_opt:
           opts.fs_type = apr_pstrdup(pool, opt_arg);
+          break;
+        case srcdir_opt:
+          SVN_INT_ERR(svn_utf_cstring_to_utf8(&opts.srcdir, opt_arg, pool));
+          opts.srcdir = svn_dirent_internal_style(opts.srcdir, pool);
           break;
         case list_opt:
           list_mode = TRUE;
@@ -462,9 +502,6 @@ main(int argc, const char *argv[])
         case verbose_opt:
           verbose_mode = TRUE;
           break;
-        case trap_assert_opt:
-          trap_assertion_failures = TRUE;
-          break;
         case quiet_opt:
           quiet_mode = TRUE;
           break;
@@ -474,7 +511,7 @@ main(int argc, const char *argv[])
         case server_minor_version_opt:
           {
             char *end;
-            opts.server_minor_version = strtol(opt_arg, &end, 10);
+            opts.server_minor_version = (int) strtol(opt_arg, &end, 10);
             if (end == opt_arg || *end != '\0')
               {
                 fprintf(stderr, "FAIL: Non-numeric minor version given\n");
@@ -506,7 +543,7 @@ main(int argc, const char *argv[])
   cleanup_pool = svn_pool_create(pool);
   test_pool = svn_pool_create(pool);
 
-  if (trap_assertion_failures)
+  if (!allow_segfaults)
     svn_error_set_malfunction_handler(svn_error_raise_on_malfunction);
 
   if (argc >= 2)  /* notice command-line arguments */

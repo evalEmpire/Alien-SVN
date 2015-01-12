@@ -1,6 +1,11 @@
 These are the changes to the Alien::SVN wrapper distribution.
 Changes to Subversion itself can be seen in src/subversion/CHANGES.
 
+1.8.11.0
+    Features
+    * Upgraded to Subversion 1.8.11
+
+
 1.7.19.0  Mon Jan 12 15:22:51 PST 2015
     Features
     * Upgraded to Subversion 1.7.19
