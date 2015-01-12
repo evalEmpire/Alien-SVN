@@ -7,35 +7,34 @@ DESCRIPTION
     Alien::SVN instead and then the CPAN shell can handle automatic
     installation. This is particularly useful for programs like SVK.
 
-    It comes with a copy of Subversion 1.7.17 which it will compile but only
-    installs the Perl and Subversion libraries. The subversion binaries will
+    It comes with a copy of Subversion 1.7.19 which it will compile but only
+    installs the Perl and Subversion libraries. They will be installed to
+    your Perl library, not your system library. The subversion binaries will
     not be installed.
 
 BUGS and FEEDBACK
     Alien::SVN only wraps SVN::Core. We don't work on it.
 
-    Bug reports, problems and feedback about Alien::SVN and building
-    SVN::Core should come to us at <bug-Alien-SVN> at <rt.cpan.org>. Or use
-    the web interface at <http://rt.cpan.org>.
+    Bug reports, problems and feedback about the Alien::SVN distribution and
+    building SVN::Core should come to us at
+    <https://github.com/evalEmpire/Alien-SVN/issues>.
 
-    Issues and improvements to SVN::Core should go to the Subversion project
-    directly. <http://subversion.apache.org/issue-tracker.html>
+    Issues and improvements to SVN::Core should go to the Apache Subversion
+    project directly. <https://subversion.apache.org/reporting-issues.html>
 
     If you're not sure who to report to, you can always report to us and
     we'll point you in the right direction.
 
     Report early, report often.
 
-    The repository can be found at
-    http://github.com/schwern/alien-svn/tree/master.
+    The repository can be found at https://github.com/evalEmpire/Alien-SVN.
 
 LICENSE
-    Alien::SVN is copyright 2007-2009 Michael G Schwern <schwern@pobox.com>
+    Alien::SVN is copyright 2007-2015 Michael G Schwern <schwern@pobox.com>
     It is licensed under the same terms as Perl itself. See
     <http://www.perl.com/perl/misc/Artistic.html> for licensing.
 
-    This product includes software developed by CollabNet
-    (<http://www.Collab.Net/>). Subversion and SVN::Core are copyright (c)
-    2000-2009 CollabNet <http://www.colabnet.net>. All rights reserved. See
-    <http://subversion.tigris.org/license-1.html> for licensing.
+    This product includes Apache Subversion licensed under the Apache
+    License 2.0 or similar terms. See src/subversion/LICENSE for full
+    licensing information.
 

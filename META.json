@@ -1,8 +1,10 @@
 {
    "abstract" : "A wrapper for installing the SVN Perl bindings",
-   "author" : [],
+   "author" : [
+      "unknown"
+   ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.4205",
+   "generated_by" : "Module::Build version 0.4211",
    "license" : [
       "open_source"
    ],
@@ -40,7 +42,7 @@
    "provides" : {
       "Alien::SVN" : {
          "file" : "lib/Alien/SVN.pm",
-         "version" : "1.7.17.1"
+         "version" : "v1.7.19.0"
       },
       "SVN::Base" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm"
@@ -50,7 +52,7 @@
       },
       "SVN::Core" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Core.pm",
-         "version" : "1.7.17"
+         "version" : "v1.7.19"
       },
       "SVN::Delta" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Delta.pm"
@@ -71,14 +73,11 @@
    "release_status" : "stable",
    "resources" : {
       "bugtracker" : {
-         "web" : "http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN"
+         "web" : "https://github.com/evalEmpire/Alien-SVN/issues"
       },
-      "license" : [
-         "http://dev.perl.org/licenses/"
-      ],
       "repository" : {
-         "url" : "http://github.com/schwern/alien-svn"
+         "url" : "https://github.com/evalEmpire/Alien-SVN/"
       }
    },
-   "version" : "v1.7.17.1"
+   "version" : "v1.7.19.0"
 }
