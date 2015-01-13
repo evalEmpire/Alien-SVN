@@ -42,7 +42,7 @@
    "provides" : {
       "Alien::SVN" : {
          "file" : "lib/Alien/SVN.pm",
-         "version" : "v1.7.19.0"
+         "version" : "v1.8.11.0"
       },
       "SVN::Base" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Base.pm"
@@ -52,7 +52,7 @@
       },
       "SVN::Core" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Core.pm",
-         "version" : "v1.7.19"
+         "version" : "v1.8.11"
       },
       "SVN::Delta" : {
          "file" : "src/subversion/subversion/bindings/swig/perl/native/Delta.pm"
@@ -79,5 +79,5 @@
          "url" : "https://github.com/evalEmpire/Alien-SVN/"
       }
    },
-   "version" : "v1.7.19.0"
+   "version" : "v1.8.11.0"
 }
